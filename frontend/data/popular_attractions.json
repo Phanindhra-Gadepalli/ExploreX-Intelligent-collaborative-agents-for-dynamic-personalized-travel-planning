@@ -1,0 +1,72 @@
+[
+    {
+        "name": "Taj Mahal",
+        "city": "Agra",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1564507592333-c60657eea523?q=80&w=2071&auto=format&fit=crop",
+        "description": "Iconic marble mausoleum, one of the Seven Wonders of the World."
+    },
+    {
+        "name": "Jaipur City Palace",
+        "city": "Jaipur",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1599661046827-dacde8eadcc8?q=80&w=2070&auto=format&fit=crop",
+        "description": "Magnificent royal palace complex in the Pink City of Rajasthan."
+    },
+    {
+        "name": "Gateway of India",
+        "city": "Mumbai",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1570168007204-dfb528c6958f?q=80&w=2069&auto=format&fit=crop",
+        "description": "Historic monument overlooking the Arabian Sea in Mumbai."
+    },
+    {
+        "name": "Qutub Minar",
+        "city": "Delhi",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1587474260584-136574528ed5?q=80&w=2070&auto=format&fit=crop",
+        "description": "UNESCO World Heritage minaret and UNESCO listed ancient ruins."
+    },
+    {
+        "name": "Hampi Ruins",
+        "city": "Hampi",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1590766740734-97f3f6c28a86?q=80&w=2070&auto=format&fit=crop",
+        "description": "Ancient ruins of the Vijayanagara Empire, a UNESCO World Heritage Site."
+    },
+    {
+        "name": "Kerala Backwaters",
+        "city": "Alleppey",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1602216056096-3b40cc0c9944?q=80&w=2070&auto=format&fit=crop",
+        "description": "Tranquil network of lagoons, lakes, and canals perfect for houseboat trips."
+    },
+    {
+        "name": "Golden Temple",
+        "city": "Amritsar",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1609357871561-2b8a7a4b8d71?q=80&w=2071&auto=format&fit=crop",
+        "description": "The holiest shrine of Sikhism, shimmering in gold."
+    },
+    {
+        "name": "Varanasi Ghats",
+        "city": "Varanasi",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1561361058-c24e01e84a3d?q=80&w=2070&auto=format&fit=crop",
+        "description": "Ancient city on the Ganges with spiritual ghats and Ganga Aarti."
+    },
+    {
+        "name": "Hawa Mahal",
+        "city": "Jaipur",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1477587458883-47145ed94245?q=80&w=2070&auto=format&fit=crop",
+        "description": "Palace of Winds with its distinctive honeycomb facade."
+    },
+    {
+        "name": "Goa Beaches",
+        "city": "Goa",
+        "country": "India",
+        "image_url": "https://images.unsplash.com/photo-1512343879784-a960bf40e7f2?q=80&w=2074&auto=format&fit=crop",
+        "description": "Tropical beaches with vibrant nightlife and Portuguese heritage."
+    }
+]

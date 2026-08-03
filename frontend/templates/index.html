@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ExploreX: India Travel AI Assistant</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <!-- Leaflet for maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Marked for Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+            z-index: 1;
+        }
+        .leaflet-container {
+            height: 100%;
+            width: 100%;
+        }
+        /* Markdown styles */
+        .message-content {
+            line-height: 1.6;
+        }
+        .message-content h1, .message-content h2, .message-content h3 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+        }
+        .message-content p {
+            margin-bottom: 1em;
+        }
+        .message-content ul, .message-content ol {
+            margin-bottom: 1em;
+            padding-left: 2em;
+        }
+        .message-content code {
+            background-color: #f8f9fa;
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .message-content pre {
+            background-color: #f8f9fa;
+            padding: 1em;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .message-content blockquote {
+            border-left: 4px solid #dee2e6;
+            padding-left: 1em;
+            margin-left: 0;
+            color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <img src="{{ url_for('static', filename='images/PathPulse.png') }}" alt="ExploreX Logo" width="50" height="50" class="d-inline-block align-text-top me-2">
+                ExploreX: Explore India 🇮🇳
+            </a>
+            <button class="btn btn-outline-light" id="reset-btn" onclick="location.reload()">
+                <i class="fas fa-redo me-1"></i> New Trip
+            </button>
+        </div>
+    </nav>
+
+    <div class="container mt-5 mb-5" id="app-container">
+        
+        <!-- PHASE 1: LANDING VIEW -->
+        <div id="view-landing" class="view-section active fade-in">
+            <div class="row justify-content-center mt-5">
+                <div class="col-md-8 col-lg-6" id="chat-column-landing">
+                    <!-- Chat Master appended here dynamically via JS on load -->
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 2: RECOMMENDATIONS VIEW -->
+        <div id="view-recommendations" class="view-section">
+            <div class="row">
+                <div class="col-md-5" id="chat-column-recs">
+                    <!-- Chat Master moves here via JS -->
+                </div>
+                <div class="col-md-7">
+                    <!-- Map Master moves here via JS -->
+                    <div id="map-container-recs" class="mb-4"></div>
+                    
+                    <!-- Accommodations -->
+                    <div class="card mb-3 shadow-sm d-none" id="accommodations-card">
+                        <div class="card-header bg-info text-white">
+                            <i class="fas fa-bed me-2"></i> Select an Accommodation
+                        </div>
+                        <div class="card-body p-2" id="accommodations-container" style="max-height: 400px; overflow-y: auto;">
+                            <p class="text-center text-muted">Loading accommodations...</p>
+                        </div>
+                    </div>
+
+                    <!-- Recommended Places -->
+                    <div class="card mb-3 shadow-sm">
+                        <div class="card-header header-recommend">
+                            <i class="fas fa-star me-2"></i> Attractions
+                        </div>
+                        <div class="card-body p-2" id="attractions-list-container" style="max-height: 500px; overflow-y: auto;">
+                            <!-- Interest-based -->
+                            <h6 class="text-primary mt-2 mb-3 border-bottom pb-2 fw-bold"><i class="fas fa-bullseye me-2"></i> Recommended Based on Your Interests</h6>
+                            <div id="interest-attractions-area">
+                                <p class="text-center text-muted small">No interest-based attractions found.</p>
+                            </div>
+                            
+                            <!-- Popular fallback -->
+                            <h6 class="text-secondary mt-4 mb-3 border-bottom pb-2 fw-bold"><i class="fas fa-fire me-2"></i> Popular Attractions in the City</h6>
+                            <div id="popular-attractions-area">
+                                <p class="text-center text-muted small">No popular attractions found.</p>
+                            </div>
+                        </div>
+                        <div class="card-footer text-center d-none" id="confirm-all-selections-footer">
+                            <button class="btn btn-primary w-75" id="confirm-selected-attractions-btn">Confirm Selections & Build Plan</button>
+                        </div>
+                    </div>
+
+                    <!-- Selected Attractions -->
+                    <div class="card mt-3 shadow-sm">
+                        <div class="card-header header-selected">
+                            <i class="fas fa-check-circle me-2"></i> Selected Attractions
+                        </div>
+                        <div class="card-body" id="selected-attractions">
+                            <p class="text-center text-muted">No attractions selected yet.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 3: FINAL PLAN VIEW -->
+        <div id="view-plan" class="view-section">
+            <div class="row">
+                <div class="col-md-5">
+                    <!-- Itinerary -->
+                    <div class="card mb-4 shadow">
+                        <div class="card-header header-itinerary">
+                            <i class="fas fa-list-alt me-2"></i> Your Final Itinerary
+                        </div>
+                        <div class="card-body" id="itinerary-container">
+                            <p class="text-center text-muted">Your travel plan will appear here once generated.</p>
+                        </div>
+                    </div>
+
+                    <!-- Budget -->
+                    <div class="card mb-4 shadow">
+                        <div class="card-header header-budget">
+                            <i class="fas fa-wallet me-2"></i> Budget Estimate
+                        </div>
+                        <div class="card-body" id="budget-container">
+                            <p class="text-center text-muted">Budget details will appear here once generated.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-7">
+                    <!-- Map Master moves here via JS -->
+                    <div id="map-container-plan" class="mb-4"></div>
+
+                    <!-- Transit Options -->
+                    <div class="card mb-4 shadow" id="transit-card">
+                        <div class="card-header header-transit">
+                            <i class="fas fa-plane-departure me-2"></i> Transit Options
+                        </div>
+                        <div class="card-body p-0">
+                            <ul class="nav nav-tabs nav-fill" id="transitTabs" role="tablist">
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link active" id="flights-tab" data-bs-toggle="tab" data-bs-target="#flights" type="button" role="tab">✈️ Flights</button>
+                                </li>
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link" id="trains-tab" data-bs-toggle="tab" data-bs-target="#trains" type="button" role="tab">🚆 Trains</button>
+                                </li>
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link" id="buses-tab" data-bs-toggle="tab" data-bs-target="#buses" type="button" role="tab">🚌 Buses</button>
+                                </li>
+                            </ul>
+                            <div class="tab-content p-3" id="transitTabsContent">
+                                <div class="tab-pane fade show active" id="flights" role="tabpanel">
+                                    <p class="text-center text-muted">No flight data available.</p>
+                                </div>
+                                <div class="tab-pane fade" id="trains" role="tabpanel">
+                                    <p class="text-center text-muted">No train data available.</p>
+                                </div>
+                                <div class="tab-pane fade" id="buses" role="tabpanel">
+                                    <p class="text-center text-muted">No bus data available.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Detailed Plan / Confirmation -->
+                    <div class="card mb-4 shadow">
+                        <div class="card-header header-confirmation">
+                            <i class="fas fa-file-alt me-2"></i> Trip Confirmation
+                        </div>
+                        <div class="card-body" id="confirmation-container">
+                            <p class="text-center text-muted">Trip confirmation and details will appear here once generated.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HIDDEN MASTER DOM ELEMENTS -->
+        <div id="dom-storage" class="d-none">
+            
+            <!-- MASTER CHAT CARD -->
+            <div class="card shadow-lg mb-0" id="chat-card-master" style="min-height: 500px; display: flex; flex-direction: column;">
+                <div class="card-header header-chat text-center">
+                    <i class="fas fa-comments me-2"></i> Your Personal Travel Agent
+                </div>
+                <div class="card-body" id="chat-container" style="flex: 1;">
+                    <div class="chat-message assistant">
+                        <div class="message-content">
+                            🙏 Welcome to ExploreX! I'm your AI-powered <strong>India Travel Assistant</strong>. <br><br>
+                            What's your next trip? Tell me the city you'd like to visit, your budget, and what you love to do!
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-white border-top-0 pt-0 pb-3 px-3">
+                    <form id="chat-form">
+                        <div class="input-group input-group-lg shadow-sm">
+                            <input type="text" class="form-control border-primary" id="user-input" placeholder="e.g. I want to visit Jaipur for 5 days..." required>
+                            <button class="btn btn-primary px-4" type="submit">
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                    </form>
+                    <div id="missing-fields" class="alert alert-warning mt-2 mb-0 d-none small"></div>
+                </div>
+            </div>
+
+            <!-- MASTER MAP CARD -->
+            <div class="card shadow" id="map-card-master">
+                <div class="card-header header-map">
+                    <i class="fas fa-map-marked-alt me-2"></i> Interactive Map
+                </div>
+                <div class="card-body p-0">
+                    <div id="map"></div>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+    
+    <!-- Loading spinner -->
+    <div id="loading-spinner" class="position-fixed top-50 start-50 translate-middle d-none" style="z-index: 1050;">
+        <div class="spinner-border text-primary" style="width: 4rem; height: 4rem; border-width: 0.4em;" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+    <!-- Validation Warning Modal -->
+    <div class="modal fade" id="validationModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title text-dark"><i class="fas fa-exclamation-triangle me-2"></i> More Attractions Recommended</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="validation-message">You have selected 2 attractions, but for a 3-day trip, we recommend at least 6.</p>
+                    <p>Would you like to go back and add more attractions to fill out your itinerary, or proceed anyway?</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Go Back & Add More</button>
+                    <button type="button" class="btn btn-warning" id="force-proceed-btn">Proceed Anyway</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

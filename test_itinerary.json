@@ -1,0 +1,406 @@
+[
+  {
+    "day": 1,
+    "date": "2026-10-26",
+    "spots": [
+      {
+        "id": "ChIJHUE0_DXUVDoRW1X2_s7yJLA",
+        "name": "Arulmigu Peruvudaiyar (Brihadisvara) Temple, Gangaikonda Cholapuram Tamil Nadu",
+        "rating": 4.8,
+        "user_ratings_total": 7271,
+        "price_level": null,
+        "opening_hours": [
+          "Monday: 6:00\u202fAM\u2009\u2013\u200912:00\u202fPM, 4:00\u2009\u2013\u20098:00\u202fPM",
+          "Tuesday: 6:00\u202fAM\u2009\u2013\u200912:00\u202fPM, 4:00\u2009\u2013\u20098:00\u202fPM",
+          "Wednesday: 6:00\u202fAM\u2009\u2013\u200912:00\u202fPM, 4:00\u2009\u2013\u20098:00\u202fPM",
+          "Thursday: 6:00\u202fAM\u2009\u2013\u200912:00\u202fPM, 4:00\u2009\u2013\u20098:00\u202fPM",
+          "Friday: 6:00\u202fAM\u2009\u2013\u200912:00\u202fPM, 4:00\u2009\u2013\u20098:00\u202fPM",
+          "Saturday: 6:00\u202fAM\u2009\u2013\u200912:00\u202fPM, 4:00\u2009\u2013\u20098:00\u202fPM",
+          "Sunday: 6:00\u202fAM\u2009\u2013\u200912:00\u202fPM, 4:00\u2009\u2013\u20098:00\u202fPM"
+        ],
+        "address": "Gangaikonda Cholapuram, Guruvalapparkovil, Tamil Nadu 612901, India",
+        "location": {
+          "lat": 11.2063794,
+          "lng": 79.44948459999999
+        },
+        "category": "hindu_temple",
+        "types": [
+          "hindu_temple",
+          "place_of_worship",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 3.0,
+        "website": null,
+        "description": "Shiva temple from the 11th century, with an elaborately carved tower & statues of Hindu deities.",
+        "photo_references": [
+          "AWCwydjjPj_ja2nRpNlFxNT9KM43OwIPjr7k7ltLwTYpTXQM_Bq1a5O8RvcImSbzd6pTR-cGv1qsy7zPtvld1wTqRMr4VpXfe4Fky1m840fEN5JyT3QpfjYtDfnw8oH_iOebtdzj3OPFCqW6eyfhhy5ETuvZGpn8vaDKWO2iwuC6heeD8tkLB-D-W9qaRgtWu2D4DQYjii7ZCKJtvXNuwbrgcekygy0Mn3CWWWtIAhSVSiHkBWBtlcXHUZUEQhAfGVMLAtVobOOuRRK4KWEQP_7uJCSWusiqGGT-QjleaIicAlrwqcADQZGC0IyjebGj-Z9FCFS0cs759gVZ5ja2goi_0G6-8cWqKcJyF_s24xiBN4HaD3AQzaKOdlTvTqoFsezy3FSIOgCTWTY2ZCadc1IuYMf1uNsFxeWgYbC3pRmS69EvfZLx_kVm6nMi0DigdGVXCLrnP3uJKZHoH8mHxi7aBDXXDsJkfti9Ouol6tBe7IPgLTGeEh6OTZgHzzu1L0dA_PtXUdBeBVLyW_HiINpyZCMedwsn1zrZ6sd-2rq1LaJDCFgT9VCHmscMnN9zMxgXrwmpn6Mg"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydjjPj_ja2nRpNlFxNT9KM43OwIPjr7k7ltLwTYpTXQM_Bq1a5O8RvcImSbzd6pTR-cGv1qsy7zPtvld1wTqRMr4VpXfe4Fky1m840fEN5JyT3QpfjYtDfnw8oH_iOebtdzj3OPFCqW6eyfhhy5ETuvZGpn8vaDKWO2iwuC6heeD8tkLB-D-W9qaRgtWu2D4DQYjii7ZCKJtvXNuwbrgcekygy0Mn3CWWWtIAhSVSiHkBWBtlcXHUZUEQhAfGVMLAtVobOOuRRK4KWEQP_7uJCSWusiqGGT-QjleaIicAlrwqcADQZGC0IyjebGj-Z9FCFS0cs759gVZ5ja2goi_0G6-8cWqKcJyF_s24xiBN4HaD3AQzaKOdlTvTqoFsezy3FSIOgCTWTY2ZCadc1IuYMf1uNsFxeWgYbC3pRmS69EvfZLx_kVm6nMi0DigdGVXCLrnP3uJKZHoH8mHxi7aBDXXDsJkfti9Ouol6tBe7IPgLTGeEh6OTZgHzzu1L0dA_PtXUdBeBVLyW_HiINpyZCMedwsn1zrZ6sd-2rq1LaJDCFgT9VCHmscMnN9zMxgXrwmpn6Mg&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "interest_based",
+        "start_time": "09:00",
+        "end_time": "12:00"
+      },
+      {
+        "id": "ChIJH5G6xSrVVDoRs-rNJHm5rn0",
+        "name": "Gangai Konda Chola Puram",
+        "rating": 4.7,
+        "user_ratings_total": 214,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "6C4X+G9W, Gangaikonda Cholapuram, Guruvalapparkovil, Tamil Nadu 612901, India",
+        "location": {
+          "lat": 11.2063557,
+          "lng": 79.44846369999999
+        },
+        "category": "hindu_temple",
+        "types": [
+          "hindu_temple",
+          "place_of_worship",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 3.0,
+        "website": null,
+        "description": "Gangai Konda Chola Puram",
+        "photo_references": [
+          "AWCwydgWsvl1AdC1MpD92cAorhURinHOMJjseYBvcoS9yQ93z5ocMU1HlcEoZbKSfa00nOi_RP4Qp5gov7SK4xOiIblczjjE_GkgqRkUM4_7vaLieBdVMALZWctj3zwmZ8bjZaxspwH0PoBj0seXjiq5uh9iA8FHNNdaJ5RMlq2wQOoet7iV-ZAF3__5eoF2S9Fh5NJb-WGS4zP7nDAryPSz14a_-ZB_FnBajXLpYUAS2W8YMBXqPCOEijV63ftDfwGsskrKB4vl6kCbKO0yjamDxt5XS5iWrTPu7ou1KofZ2G9RR5qzZTgIzUTqyQaFI0v6lUmsBQIjf8UW2-khv4lEjm_TTSkHXaMJnXE_wRCC-1ttLEHifY_WQrgRfQnPWtM7bYSiBpGA9n101gfG44qLImMsL0--aZ3Unz_Pw2iwSIuoIdKsor4Ssm0KguK4mkWvKyOyrnK6IU_naDlY3Ted8r8xUxh-HDJzZL4ZGB4vS3bnYw_PfebE1yqw3F_e8e7PYgpKoczH_5hJ6sbCMaisGGLfjvASdc5E7Wcf50gLOGrhrIdOIYiUhd5VIPcV8UWaCvPAfeJlS1taapd_iMg0K6TRrMuYYQ"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydgWsvl1AdC1MpD92cAorhURinHOMJjseYBvcoS9yQ93z5ocMU1HlcEoZbKSfa00nOi_RP4Qp5gov7SK4xOiIblczjjE_GkgqRkUM4_7vaLieBdVMALZWctj3zwmZ8bjZaxspwH0PoBj0seXjiq5uh9iA8FHNNdaJ5RMlq2wQOoet7iV-ZAF3__5eoF2S9Fh5NJb-WGS4zP7nDAryPSz14a_-ZB_FnBajXLpYUAS2W8YMBXqPCOEijV63ftDfwGsskrKB4vl6kCbKO0yjamDxt5XS5iWrTPu7ou1KofZ2G9RR5qzZTgIzUTqyQaFI0v6lUmsBQIjf8UW2-khv4lEjm_TTSkHXaMJnXE_wRCC-1ttLEHifY_WQrgRfQnPWtM7bYSiBpGA9n101gfG44qLImMsL0--aZ3Unz_Pw2iwSIuoIdKsor4Ssm0KguK4mkWvKyOyrnK6IU_naDlY3Ted8r8xUxh-HDJzZL4ZGB4vS3bnYw_PfebE1yqw3F_e8e7PYgpKoczH_5hJ6sbCMaisGGLfjvASdc5E7Wcf50gLOGrhrIdOIYiUhd5VIPcV8UWaCvPAfeJlS1taapd_iMg0K6TRrMuYYQ&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "interest_based",
+        "start_time": "12:00",
+        "end_time": "15:00"
+      },
+      {
+        "id": "ChIJN6RAm9rVVDoR3ag78ErtDFg",
+        "name": "Historical Museum of Rajendra Chola",
+        "rating": 4.5,
+        "user_ratings_total": 38,
+        "price_level": null,
+        "opening_hours": [
+          "Monday: 10:00\u202fAM\u2009\u2013\u20096:00\u202fPM",
+          "Tuesday: 10:00\u202fAM\u2009\u2013\u20096:00\u202fPM",
+          "Wednesday: 10:00\u202fAM\u2009\u2013\u20096:00\u202fPM",
+          "Thursday: 10:00\u202fAM\u2009\u2013\u20096:00\u202fPM",
+          "Friday: 10:00\u202fAM\u2009\u2013\u20096:00\u202fPM",
+          "Saturday: 10:00\u202fAM\u2009\u2013\u20096:00\u202fPM",
+          "Sunday: 10:00\u202fAM\u2009\u2013\u20096:00\u202fPM"
+        ],
+        "address": "2/117, CHIDAMBARAMROAD, Gangaikonda Cholapuram, Tiruchirappalli, Tamil Nadu 612901, India",
+        "location": {
+          "lat": 11.207318,
+          "lng": 79.44869489999999
+        },
+        "category": "museum",
+        "types": [
+          "museum",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 2,
+        "website": null,
+        "description": "Historical Museum of Rajendra Chola",
+        "photo_references": [
+          "AWCwydgk0q1vbdDgNdE3EvNsipaajYZ345c-RhMnKy0XJBkRQvAfZX_pgW6Syn8ED9v9QC82yJNnXEpey-tTneFTtxsaAEXdwFE37sgajxf85lID8IFdo_t9303ejWVuuSB8aWvrFejzdLA7dVhmYzHGPZPZy6hMVJZxTBa99cPNmJL52a6kHpcmRjErO5c0yZvOpZldsdQz4PhQFUrJ8andXhIAwISndCEUnztvlwYR-kAk8ncSxnurBKQ2Ico5qPa0nQdPFhEIQ3oSizE0vH48d1LL0ogC4PY4hDFX_8hgyV896TVP4ZonUDcctAaELpeN8UK_btrZa-GntmgTdqyv_zJl1zL8xqTIr1ZxV7QJRn2jydF7GThEzeq506Ln8dW-cf8EP20QjCqtr65-avItzW5I0jXA0lpA43TlSsPfI8XyFPPaX6t9jks18j9F4Hz5-CSGscqFptptGYySyR04JSCfL6-tQnIdu3PQ63kY8fSRO7evnU8yDB34SSQMrZ71Q-1hV6ogNv61xsZ7rYWxIXRqJpsLzze6LVe681U6AD-HKHaLDGuWSntTom7yRWQ2gbbmlZ2gBN5MNOcCwLBhGUiu0qSvpw"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydgk0q1vbdDgNdE3EvNsipaajYZ345c-RhMnKy0XJBkRQvAfZX_pgW6Syn8ED9v9QC82yJNnXEpey-tTneFTtxsaAEXdwFE37sgajxf85lID8IFdo_t9303ejWVuuSB8aWvrFejzdLA7dVhmYzHGPZPZy6hMVJZxTBa99cPNmJL52a6kHpcmRjErO5c0yZvOpZldsdQz4PhQFUrJ8andXhIAwISndCEUnztvlwYR-kAk8ncSxnurBKQ2Ico5qPa0nQdPFhEIQ3oSizE0vH48d1LL0ogC4PY4hDFX_8hgyV896TVP4ZonUDcctAaELpeN8UK_btrZa-GntmgTdqyv_zJl1zL8xqTIr1ZxV7QJRn2jydF7GThEzeq506Ln8dW-cf8EP20QjCqtr65-avItzW5I0jXA0lpA43TlSsPfI8XyFPPaX6t9jks18j9F4Hz5-CSGscqFptptGYySyR04JSCfL6-tQnIdu3PQ63kY8fSRO7evnU8yDB34SSQMrZ71Q-1hV6ogNv61xsZ7rYWxIXRqJpsLzze6LVe681U6AD-HKHaLDGuWSntTom7yRWQ2gbbmlZ2gBN5MNOcCwLBhGUiu0qSvpw&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "interest_based",
+        "start_time": "15:00",
+        "end_time": "17:00"
+      }
+    ]
+  },
+  {
+    "day": 2,
+    "date": "2026-10-27",
+    "spots": [
+      {
+        "id": "ChIJa5jt74rTVDoRYp_JQBIAs5c",
+        "name": "Elephant Statue Azhagar Temple Saluppai",
+        "rating": 4.6,
+        "user_ratings_total": 135,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "Unnamed Road, 6CXW+285, Vethiyarvettu, Tamil Nadu 612903, India",
+        "location": {
+          "lat": 11.2475208,
+          "lng": 79.4458464
+        },
+        "category": "tourist_attraction",
+        "types": [
+          "tourist_attraction",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 3.0,
+        "website": null,
+        "description": "Elephant Statue Azhagar Temple Saluppai",
+        "photo_references": [
+          "AWCwydhjnQB8WP2C3avGx9I4v82D2k6GkGj6S_-VCte22V_O-WOIF-gl1ivoeEFniDQpS1ZYrcjEaSd_kxJZ3-tnbWXTD5tI-tgDUNTEx5tMH0DCB28Vxx7B53RT_sFoi7JqyO88SF-rHssJ5jp3wb9CPD0SymFWt8Ccmzd8CMHN3TpEoJ5odyE7AdgtIQlW3KiPjaY86n3HMRQGx33bOa2IUihSgZHYvHR8dSD7OEAdFC17gIiYfcemsEClnR0fHfMcO_cvJ3FhMxaemOQIaVjeM_YvJgJPxN0KSs97lb6jK3YVEBXmPNYtyE6BBzlZxr9nGzViXTvyIpeigcMGvvsWjiXQ6PFnGwZDhfBUQXjhztJbN_tdm1VevwoOCHUEgpoQIQVKd1EgJpNIra7S_XseyyMzpKdR127MHesBB34jUomNTM9EjoX_TlbrXNzzwPCx9vYjgATYJqLWpAbBApoWkeb59KJ09FUsOiabJP7d9dKAKruTuInOhyDrBsnXCCz975W_iw4iIftZgBeHNZ5z_y7HaAN_DUWI075wLqT9_yLcwjcShtXusljE5OMiafcg_Ba3Ng"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydhjnQB8WP2C3avGx9I4v82D2k6GkGj6S_-VCte22V_O-WOIF-gl1ivoeEFniDQpS1ZYrcjEaSd_kxJZ3-tnbWXTD5tI-tgDUNTEx5tMH0DCB28Vxx7B53RT_sFoi7JqyO88SF-rHssJ5jp3wb9CPD0SymFWt8Ccmzd8CMHN3TpEoJ5odyE7AdgtIQlW3KiPjaY86n3HMRQGx33bOa2IUihSgZHYvHR8dSD7OEAdFC17gIiYfcemsEClnR0fHfMcO_cvJ3FhMxaemOQIaVjeM_YvJgJPxN0KSs97lb6jK3YVEBXmPNYtyE6BBzlZxr9nGzViXTvyIpeigcMGvvsWjiXQ6PFnGwZDhfBUQXjhztJbN_tdm1VevwoOCHUEgpoQIQVKd1EgJpNIra7S_XseyyMzpKdR127MHesBB34jUomNTM9EjoX_TlbrXNzzwPCx9vYjgATYJqLWpAbBApoWkeb59KJ09FUsOiabJP7d9dKAKruTuInOhyDrBsnXCCz975W_iw4iIftZgBeHNZ5z_y7HaAN_DUWI075wLqT9_yLcwjcShtXusljE5OMiafcg_Ba3Ng&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "popular",
+        "start_time": "09:00",
+        "end_time": "12:00"
+      },
+      {
+        "id": "ChIJVfRr5OzXVDoRYpf9pMT2Uyo",
+        "name": "Kumaramangalam watar plant",
+        "rating": 2.7,
+        "user_ratings_total": 3,
+        "price_level": null,
+        "opening_hours": [
+          "Monday: Open 24 hours",
+          "Tuesday: Open 24 hours",
+          "Wednesday: Open 24 hours",
+          "Thursday: Open 24 hours",
+          "Friday: Open 24 hours",
+          "Saturday: Open 24 hours",
+          "Sunday: Open 24 hours"
+        ],
+        "address": "5GRQ+JW, Thiruchitrambalam, Tamil Nadu 608304, India",
+        "location": {
+          "lat": 11.1915529,
+          "lng": 79.5397855
+        },
+        "category": "tourist_attraction",
+        "types": [
+          "tourist_attraction",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 1.5,
+        "website": null,
+        "description": "Kumaramangalam watar plant",
+        "photo_references": [],
+        "image_url": null,
+        "recommendation_type": "popular",
+        "start_time": "12:00",
+        "end_time": "13:00"
+      },
+      {
+        "id": "ChIJPR5LIADXVDoRoUyTe8Zt2Xk",
+        "name": "Adhanur kumaramangalam dam",
+        "rating": 3.9,
+        "user_ratings_total": 11,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "5GRP+QW, Adhanur, Keelpuliyampattu, Tamil Nadu 608304, India",
+        "location": {
+          "lat": 11.1919331,
+          "lng": 79.5372739
+        },
+        "category": "tourist_attraction",
+        "types": [
+          "tourist_attraction",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 2,
+        "website": null,
+        "description": "Adhanur kumaramangalam dam",
+        "photo_references": [
+          "AWCwydg0zhaXWzphv-B0WskQIv0vnUlsPHeyPNlmeYkQLXsc8QiWO4hog7C4F3V05T50jSZ7VhxpfhSCIrnj7DPrWtBpz-ygeKRL_ISigxLS52ttZQbbNiQ6NiO-N4LG7kVsioX3cnotVm3-VodDiLQozItes9GASakO9CKtnVzVYXChQg7oJSswAaSEzMEPlToGfsmekYwImQcNf53aoXqLVHw_qO8cN2ZXEHIAkbB_l0oaiqBFVls1mLCw2OYByt_jEeYLgfWTRGkvI9KyqkKU8xVAzYUBEAY9oQWihJOZaBuUVKmDaGU8hjdp0fgzPYKK8uz1PdO69vkDRj7-Xn2SbnJGLCUeMzSDBtBjqAgRXPihVwjQWHmag5LG_S7UeftOnYdeYVmaDs_tUFA5lI9RXtKc0ICywRWoN7WNoTvKQBn-YmnFp70bnEja7Y4-EyDncMDZCrg0cZcPMzA1nVEc76hd-ublvTl6f5W6Pt5mbz0QQEWnSz_0C0dvXFpRNukKo1T2gyggDv0-ryVBACDLpW7QKB0mzM6MhbvjOSfEouuG275TOA9xDo9bJe4-WCOrTogW8BxgTnUbTXnslRkahHIScvO-zZCBsdoq3CujVPdqruWBlQuavAeIYwyOpapGTGCVDaIgeUCCFH4McAy7RA"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydg0zhaXWzphv-B0WskQIv0vnUlsPHeyPNlmeYkQLXsc8QiWO4hog7C4F3V05T50jSZ7VhxpfhSCIrnj7DPrWtBpz-ygeKRL_ISigxLS52ttZQbbNiQ6NiO-N4LG7kVsioX3cnotVm3-VodDiLQozItes9GASakO9CKtnVzVYXChQg7oJSswAaSEzMEPlToGfsmekYwImQcNf53aoXqLVHw_qO8cN2ZXEHIAkbB_l0oaiqBFVls1mLCw2OYByt_jEeYLgfWTRGkvI9KyqkKU8xVAzYUBEAY9oQWihJOZaBuUVKmDaGU8hjdp0fgzPYKK8uz1PdO69vkDRj7-Xn2SbnJGLCUeMzSDBtBjqAgRXPihVwjQWHmag5LG_S7UeftOnYdeYVmaDs_tUFA5lI9RXtKc0ICywRWoN7WNoTvKQBn-YmnFp70bnEja7Y4-EyDncMDZCrg0cZcPMzA1nVEc76hd-ublvTl6f5W6Pt5mbz0QQEWnSz_0C0dvXFpRNukKo1T2gyggDv0-ryVBACDLpW7QKB0mzM6MhbvjOSfEouuG275TOA9xDo9bJe4-WCOrTogW8BxgTnUbTXnslRkahHIScvO-zZCBsdoq3CujVPdqruWBlQuavAeIYwyOpapGTGCVDaIgeUCCFH4McAy7RA&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "popular",
+        "start_time": "13:00",
+        "end_time": "15:00"
+      }
+    ]
+  },
+  {
+    "day": 3,
+    "date": "2026-10-28",
+    "spots": [
+      {
+        "id": "ChIJ--fVETfXVDoRpQUwysNfqUk",
+        "name": "Sri Ruthrakodeeshwarar Temple, Keelakadambur",
+        "rating": 4.6,
+        "user_ratings_total": 32,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "6GQM+PPH, Keelakadambur, Tamil Nadu 608304, India",
+        "location": {
+          "lat": 11.2393106,
+          "lng": 79.534345
+        },
+        "category": "hindu_temple",
+        "types": [
+          "hindu_temple",
+          "place_of_worship",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 3.0,
+        "website": "http://www.kadambooran.blogspot.com/",
+        "description": "Sri Ruthrakodeeshwarar Temple, Keelakadambur",
+        "photo_references": [
+          "AWCwydiU1qkerD5T2kXfDtLr3FJ72W-8egfrVGEyJ5gT6kaYCCaxeNdeNzzvx1g-3semSjLJQbxBDduXYWv9sVRvbk4SDjFB75TKfTRkwSILWSQcjSLFZehhFTYlVN-4JxrT00DrKiFrFSQ055D4fGrHe1F58A5p__2wK-lV9UD7NubTilAATbFPyq5Mj8nhPcenswBi5BLjA9hzn1_sf8Wxyb-el5eC6gkmYjLjwyWzhrLGGe0v0arLXndN_BcUF9nYaQl_99bU66bbYODA8p9nrbYXfVg079cZZJt625Z2Fq6N58YSCHqeGpWSHnd_cD6UD88lk1rUg2j5xh4j3GCW9ttzuJtU8l4Wc4o2FnvYq5iTfBViZNykYCuRoprNzlsgUi-on9tAq9-hL_CCfPsYqd5e44OIJE90Z8pgSMqRaTzWQhXu83RXofLrhZ3eBBAV6qPFdDT_k-g79kopxlSFZCmwYLa7OZGofdTSAnhVpwHQequnwJH_naoAg7EpG5tAtdZjN9UNWeom5GzqfyyN41vryvxp2HL3YUbMRxHgTW76o-QH-YV6yFElh1zBFUJjKKkrEwhb"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydiU1qkerD5T2kXfDtLr3FJ72W-8egfrVGEyJ5gT6kaYCCaxeNdeNzzvx1g-3semSjLJQbxBDduXYWv9sVRvbk4SDjFB75TKfTRkwSILWSQcjSLFZehhFTYlVN-4JxrT00DrKiFrFSQ055D4fGrHe1F58A5p__2wK-lV9UD7NubTilAATbFPyq5Mj8nhPcenswBi5BLjA9hzn1_sf8Wxyb-el5eC6gkmYjLjwyWzhrLGGe0v0arLXndN_BcUF9nYaQl_99bU66bbYODA8p9nrbYXfVg079cZZJt625Z2Fq6N58YSCHqeGpWSHnd_cD6UD88lk1rUg2j5xh4j3GCW9ttzuJtU8l4Wc4o2FnvYq5iTfBViZNykYCuRoprNzlsgUi-on9tAq9-hL_CCfPsYqd5e44OIJE90Z8pgSMqRaTzWQhXu83RXofLrhZ3eBBAV6qPFdDT_k-g79kopxlSFZCmwYLa7OZGofdTSAnhVpwHQequnwJH_naoAg7EpG5tAtdZjN9UNWeom5GzqfyyN41vryvxp2HL3YUbMRxHgTW76o-QH-YV6yFElh1zBFUJjKKkrEwhb&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "interest_based",
+        "start_time": "09:00",
+        "end_time": "12:00"
+      },
+      {
+        "id": "ChIJSe43cqTXVDoRpaNjIopGdtk",
+        "name": "Kadambur maligai - kadambur temple",
+        "rating": 4.3,
+        "user_ratings_total": 58,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "6GQM+PPM, Keelakadambur, Tamil Nadu 608304, India",
+        "location": {
+          "lat": 11.2393388,
+          "lng": 79.5342817
+        },
+        "category": "hindu_temple",
+        "types": [
+          "hindu_temple",
+          "place_of_worship",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 2,
+        "website": null,
+        "description": "Kadambur maligai - kadambur temple",
+        "photo_references": [
+          "AWCwydi89SCLCpxIVso8RrDLpoSWhciCjp5BYpMt30mMy8u_ADjxQ8RUr7RqShl1joLNyQ8YILMgOhyTwfQ8TszJw38CnZjlVkqroDL8yebTWLbkDl1ZDE-nD23cCbqX74C5GVhwx74LQQg1ItBlmVGK-I6T7QeKRXj5T4KRJLfCwvdp4NBId6H9nCsd2n3JnT9SD7KUBWWZ_s_ojy1RnVd7pXTzxqPGureTht0Vux_rmQJGXvbxsGqU7zTclqQkNs7JUtUfYh5Z-P2DHlEoT38xpVdWaC9Rw1nY46byF4YUnvRyY0C8kcVqn50SKkfWDrg4w2l6BQNroQD-I3xEhj59Jyz86aT-WpWjP65RAdhWZyNHRRtJ1Ynmaq9tja9HBPqt5xG-VLi_DLHmMWTKrBUDBo2Y2VSj4YVM9PawfseBUiWl2lFY2nvx04upRaHAlZlCb9K6AGYeVvrTZvGzBpw5grqlGY9ruQvyyAYqNrrX8PusLWU7kBeZ_rP6duQXaelQJ4Ua4Ss9VysgVeqGP34sbaBR34Qafu_DeDEM0sQ2eCfsj6CnuWPXNw0MMIuJrLC0pkU1nAb-"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydi89SCLCpxIVso8RrDLpoSWhciCjp5BYpMt30mMy8u_ADjxQ8RUr7RqShl1joLNyQ8YILMgOhyTwfQ8TszJw38CnZjlVkqroDL8yebTWLbkDl1ZDE-nD23cCbqX74C5GVhwx74LQQg1ItBlmVGK-I6T7QeKRXj5T4KRJLfCwvdp4NBId6H9nCsd2n3JnT9SD7KUBWWZ_s_ojy1RnVd7pXTzxqPGureTht0Vux_rmQJGXvbxsGqU7zTclqQkNs7JUtUfYh5Z-P2DHlEoT38xpVdWaC9Rw1nY46byF4YUnvRyY0C8kcVqn50SKkfWDrg4w2l6BQNroQD-I3xEhj59Jyz86aT-WpWjP65RAdhWZyNHRRtJ1Ynmaq9tja9HBPqt5xG-VLi_DLHmMWTKrBUDBo2Y2VSj4YVM9PawfseBUiWl2lFY2nvx04upRaHAlZlCb9K6AGYeVvrTZvGzBpw5grqlGY9ruQvyyAYqNrrX8PusLWU7kBeZ_rP6duQXaelQJ4Ua4Ss9VysgVeqGP34sbaBR34Qafu_DeDEM0sQ2eCfsj6CnuWPXNw0MMIuJrLC0pkU1nAb-&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "interest_based",
+        "start_time": "12:00",
+        "end_time": "14:00"
+      },
+      {
+        "id": "ChIJU7GRbhDXVDoR3cjl2W9N8ZQ",
+        "name": "Cemant Kalam",
+        "rating": 5,
+        "user_ratings_total": 8,
+        "price_level": null,
+        "opening_hours": [
+          "Monday: Closed",
+          "Tuesday: Closed",
+          "Wednesday: Closed",
+          "Thursday: Closed",
+          "Friday: Closed",
+          "Saturday: 2:00\u2009\u2013\u20099:30\u202fPM",
+          "Sunday: 2:00\u2009\u2013\u20099:30\u202fPM"
+        ],
+        "address": "6G8H+J2V, Melpakkathurai, Ayangudi, Tamil Nadu 608304, India",
+        "location": {
+          "lat": 11.2166125,
+          "lng": 79.52754689999999
+        },
+        "category": "tourist_attraction",
+        "types": [
+          "tourist_attraction",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 3.0,
+        "website": null,
+        "description": "Cemant Kalam",
+        "photo_references": [
+          "AWCwydh5YnYTfzEvRQ9KiNuMjXNQ3ZuSTL5WzRUY3HbMhZ28Es_oJccQhJDYy9KZWxjkApII32vxnhOHBFw4Gkb8ST5FlUDw1aL-0bTdhuAOPV9IlO8jV3g_Rn7RvhVAdbxCmV-RAVoNI8wLFf8fj2wfYHVhMO8V9vdttyPOVnFH1C4sUfN5BKmuK1WOXcJdsh5hf8xGVdtnal-Ch7rP4L-VF5zjXLkFtr4TwYnoHW2j4xgYBgSJMFr_ye-im3kKZhlHuQWafiNZlVVL-9rfaCYcRk8tyAtLwlRtPzZ-hqcu_prsGRNDpUfnf7_JeePMgZaRprKHV9JfNW1GXZ_MZyL8VQkGrDFLfSHE3j7yTpQGbPQhBTpSPWJizVBP2tgmIf2opbsfPug32JQhdv2Ktk1r-ibxjvX5aBje34QRagFOg20bpDboKSaWY-BU1H0nnvD_aRAHcVkcRrLY4KnqmEYhQuMBuJhfQGYWA17VDPh-VFwUOg2KE-UNFrZR0bp2STuCNFeoyHRXhItjE5NevPf126noxvsi_QTUUFaAgMJo4Al0RrQx1msRSjUByFcpnBG3tQNjtMxhOCdXSBxcM0Dq33v0j7dtFVthQ1kIGXd8S6bif23_dJ1ZPEv5mzkYDOFMKwr0q9ZK"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydh5YnYTfzEvRQ9KiNuMjXNQ3ZuSTL5WzRUY3HbMhZ28Es_oJccQhJDYy9KZWxjkApII32vxnhOHBFw4Gkb8ST5FlUDw1aL-0bTdhuAOPV9IlO8jV3g_Rn7RvhVAdbxCmV-RAVoNI8wLFf8fj2wfYHVhMO8V9vdttyPOVnFH1C4sUfN5BKmuK1WOXcJdsh5hf8xGVdtnal-Ch7rP4L-VF5zjXLkFtr4TwYnoHW2j4xgYBgSJMFr_ye-im3kKZhlHuQWafiNZlVVL-9rfaCYcRk8tyAtLwlRtPzZ-hqcu_prsGRNDpUfnf7_JeePMgZaRprKHV9JfNW1GXZ_MZyL8VQkGrDFLfSHE3j7yTpQGbPQhBTpSPWJizVBP2tgmIf2opbsfPug32JQhdv2Ktk1r-ibxjvX5aBje34QRagFOg20bpDboKSaWY-BU1H0nnvD_aRAHcVkcRrLY4KnqmEYhQuMBuJhfQGYWA17VDPh-VFwUOg2KE-UNFrZR0bp2STuCNFeoyHRXhItjE5NevPf126noxvsi_QTUUFaAgMJo4Al0RrQx1msRSjUByFcpnBG3tQNjtMxhOCdXSBxcM0Dq33v0j7dtFVthQ1kIGXd8S6bif23_dJ1ZPEv5mzkYDOFMKwr0q9ZK&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "popular",
+        "start_time": "14:00",
+        "end_time": "17:00"
+      }
+    ]
+  },
+  {
+    "day": 4,
+    "date": "2026-10-29",
+    "spots": [
+      {
+        "id": "ChIJKynHUtkrVToR5_1TFQNfjHk",
+        "name": "lower anicut",
+        "rating": 3.9,
+        "user_ratings_total": 13,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "NH 36, Anaikarai, Vinayagantheru, Tamil Nadu 612502, India",
+        "location": {
+          "lat": 11.1391113,
+          "lng": 79.4525523
+        },
+        "category": "tourist_attraction",
+        "types": [
+          "tourist_attraction",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 2,
+        "website": null,
+        "description": "lower anicut",
+        "photo_references": [
+          "AWCwydgdsDTyMEGIcxf-FOJ8LkzEbN-64jaSPIRy1bceCNxeFUIb5RcJNNef41NhmvvpFA-Vmh38nmmzgce_82S3ZSZBeqQBCm0aPZDJs72nMp9aTq5VAbPBEJX1Gfi_fEsUm7g0ogpj83qq9GNMc8xsa_KY8zSYWXX2jCh3SS5BKAqor20vKCvRE2GcGLjn-lZarPorvHWA9fyNjtIHkikGG3kKtk_JEArAoYzXaXuqYicPNh9pa8lowCEGMQx2p2CFPic-VgeO63jNc3rESlYzV2V9iPdB2drEOfYoAl8LeMk0f_uc8PrNwBowryCpRAgSj-R6rgmc90jD3PdCLhG8e1yIPtB7SjHgSmbBHvGGfWto6k3K6qzUUcssP6B8XzFHSfvsN37-i4szMbsanwH_QOPJoz-5cyn6cyn2Pgt_yYl-zjgFP-kzB3smCv280q53cLr5EtdqTWH2115efwmrNfxOUiZjncKpdRpPJoGlFbj392LbgCz50sjFknNpFA1476JVp-INFsi98wO8hsY4btVmREk4P6pnVmcxy0XlgkQ04m0I0l-gHcbIznCbbZgjxw92A29uWB0gj16BwZAeMVU9BJgQxc0H_w9DBMgAxsH1QL6N-Lb8uVTbGAXkB4ve-oOI32Mz"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydgdsDTyMEGIcxf-FOJ8LkzEbN-64jaSPIRy1bceCNxeFUIb5RcJNNef41NhmvvpFA-Vmh38nmmzgce_82S3ZSZBeqQBCm0aPZDJs72nMp9aTq5VAbPBEJX1Gfi_fEsUm7g0ogpj83qq9GNMc8xsa_KY8zSYWXX2jCh3SS5BKAqor20vKCvRE2GcGLjn-lZarPorvHWA9fyNjtIHkikGG3kKtk_JEArAoYzXaXuqYicPNh9pa8lowCEGMQx2p2CFPic-VgeO63jNc3rESlYzV2V9iPdB2drEOfYoAl8LeMk0f_uc8PrNwBowryCpRAgSj-R6rgmc90jD3PdCLhG8e1yIPtB7SjHgSmbBHvGGfWto6k3K6qzUUcssP6B8XzFHSfvsN37-i4szMbsanwH_QOPJoz-5cyn6cyn2Pgt_yYl-zjgFP-kzB3smCv280q53cLr5EtdqTWH2115efwmrNfxOUiZjncKpdRpPJoGlFbj392LbgCz50sjFknNpFA1476JVp-INFsi98wO8hsY4btVmREk4P6pnVmcxy0XlgkQ04m0I0l-gHcbIznCbbZgjxw92A29uWB0gj16BwZAeMVU9BJgQxc0H_w9DBMgAxsH1QL6N-Lb8uVTbGAXkB4ve-oOI32Mz&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "popular",
+        "start_time": "09:00",
+        "end_time": "11:00"
+      },
+      {
+        "id": "ChIJKynHUtkrVToR5_1TFQNfjHk",
+        "name": "lower anicut",
+        "rating": 3.9,
+        "user_ratings_total": 13,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "NH 36, Anaikarai, Vinayagantheru, Tamil Nadu 612502, India",
+        "location": {
+          "lat": 11.1391113,
+          "lng": 79.4525523
+        },
+        "category": "tourist_attraction",
+        "types": [
+          "tourist_attraction",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 2,
+        "website": null,
+        "description": "lower anicut",
+        "photo_references": [
+          "AWCwydgdsDTyMEGIcxf-FOJ8LkzEbN-64jaSPIRy1bceCNxeFUIb5RcJNNef41NhmvvpFA-Vmh38nmmzgce_82S3ZSZBeqQBCm0aPZDJs72nMp9aTq5VAbPBEJX1Gfi_fEsUm7g0ogpj83qq9GNMc8xsa_KY8zSYWXX2jCh3SS5BKAqor20vKCvRE2GcGLjn-lZarPorvHWA9fyNjtIHkikGG3kKtk_JEArAoYzXaXuqYicPNh9pa8lowCEGMQx2p2CFPic-VgeO63jNc3rESlYzV2V9iPdB2drEOfYoAl8LeMk0f_uc8PrNwBowryCpRAgSj-R6rgmc90jD3PdCLhG8e1yIPtB7SjHgSmbBHvGGfWto6k3K6qzUUcssP6B8XzFHSfvsN37-i4szMbsanwH_QOPJoz-5cyn6cyn2Pgt_yYl-zjgFP-kzB3smCv280q53cLr5EtdqTWH2115efwmrNfxOUiZjncKpdRpPJoGlFbj392LbgCz50sjFknNpFA1476JVp-INFsi98wO8hsY4btVmREk4P6pnVmcxy0XlgkQ04m0I0l-gHcbIznCbbZgjxw92A29uWB0gj16BwZAeMVU9BJgQxc0H_w9DBMgAxsH1QL6N-Lb8uVTbGAXkB4ve-oOI32Mz"
+        ],
+        "image_url": "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=AWCwydgdsDTyMEGIcxf-FOJ8LkzEbN-64jaSPIRy1bceCNxeFUIb5RcJNNef41NhmvvpFA-Vmh38nmmzgce_82S3ZSZBeqQBCm0aPZDJs72nMp9aTq5VAbPBEJX1Gfi_fEsUm7g0ogpj83qq9GNMc8xsa_KY8zSYWXX2jCh3SS5BKAqor20vKCvRE2GcGLjn-lZarPorvHWA9fyNjtIHkikGG3kKtk_JEArAoYzXaXuqYicPNh9pa8lowCEGMQx2p2CFPic-VgeO63jNc3rESlYzV2V9iPdB2drEOfYoAl8LeMk0f_uc8PrNwBowryCpRAgSj-R6rgmc90jD3PdCLhG8e1yIPtB7SjHgSmbBHvGGfWto6k3K6qzUUcssP6B8XzFHSfvsN37-i4szMbsanwH_QOPJoz-5cyn6cyn2Pgt_yYl-zjgFP-kzB3smCv280q53cLr5EtdqTWH2115efwmrNfxOUiZjncKpdRpPJoGlFbj392LbgCz50sjFknNpFA1476JVp-INFsi98wO8hsY4btVmREk4P6pnVmcxy0XlgkQ04m0I0l-gHcbIznCbbZgjxw92A29uWB0gj16BwZAeMVU9BJgQxc0H_w9DBMgAxsH1QL6N-Lb8uVTbGAXkB4ve-oOI32Mz&key=AIzaSyBDY5D3bWeGkmuoIhuZxHmCr35Q3gnPTBE",
+        "recommendation_type": "popular",
+        "start_time": "11:00",
+        "end_time": "13:00"
+      },
+      {
+        "id": "ChIJz4U9WgDVVDoRgO9heZWKKHI",
+        "name": "Murugan kovil",
+        "rating": null,
+        "user_ratings_total": null,
+        "price_level": null,
+        "opening_hours": null,
+        "address": "5F74+J97, Anaikarai, Tamil Nadu 612901, India",
+        "location": {
+          "lat": 11.165292,
+          "lng": 79.4548386
+        },
+        "category": "tourist_attraction",
+        "types": [
+          "tourist_attraction",
+          "point_of_interest",
+          "establishment"
+        ],
+        "estimated_duration": 1.5,
+        "website": null,
+        "description": "Murugan kovil",
+        "photo_references": [],
+        "image_url": null,
+        "recommendation_type": "popular",
+        "start_time": "13:00",
+        "end_time": "14:00"
+      }
+    ]
+  }
+]

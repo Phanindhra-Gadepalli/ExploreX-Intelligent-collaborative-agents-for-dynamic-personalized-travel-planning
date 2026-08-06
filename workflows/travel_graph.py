@@ -10,6 +10,7 @@ from agents.retrieval_agent import RetrievalAgent
 from agents.recommend_agent import RecommendAgent
 from agents.strategy_agent import StrategyAgent
 from agents.route_agent import RouteAgent
+from agents.budget_agent import BudgetAgent
 from agents.communication_agent import CommunicationAgent
 from agents.transit_agent import TransitAgent
 from datetime import datetime, timedelta
@@ -97,6 +98,7 @@ class TravelGraph:
         self.recommend_agent = RecommendAgent() # Still used for map_data, etc.
         self.strategy_agent = StrategyAgent()
         self.route_agent = RouteAgent()
+        self.budget_agent = BudgetAgent()
         self.comm_agent = CommunicationAgent()
         self.transit_agent = TransitAgent()
         
@@ -761,7 +763,7 @@ class TravelGraph:
             except Exception as car_e:
                 print(f"[WARN] Could not fetch car/fuel info: {car_e}")
 
-        budget = self.route_agent.estimate_budget(
+        budget = self.budget_agent.estimate_budget(
             all_attractions_objects,
             self.state["user_info"],
             self.state.get("should_rent_car", False),

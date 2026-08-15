@@ -213,54 +213,40 @@ class TravelGraph:
         missing_after = chat_result.get("missing_fields", [])
         print(f"Missing Fields After: {missing_after}")
         
-        # ---- Early India city/state validation (catches it even mid-chat) ----
-        print(f"[DEBUG] Running city validation")
+        # ---- Destination detection (India → RAG, International → Web) ----
+        print(f"[DEBUG] Running destination detection")
         try:
             city = self.state["user_info"].get("city", "")
             city_validated = self.state["user_info"].get("city_validated", False)
-            
+
             if city and not city_validated:
                 city_lower = city.lower().strip()
-                
+
                 if city_lower in INDIA_STATE_KEYS:
+                    # Known Indian state — mark as Indian, validated
                     is_indian = True
+                    self.state["user_info"]["city_validated"] = True
+                    self.state["user_info"]["is_international"] = False
                 else:
                     print(f"[DEBUG] Calling validate_indian_location for city='{city}'")
                     is_indian = self.info_agent.validate_indian_location(city)
                     print(f"[DEBUG] validate_indian_location returned: {is_indian}")
-                    
-                if is_indian:
-                    self.state["user_info"]["city_validated"] = True
-                else:
-                    self.state["user_info"].pop("city", None)
-                    invalid_city = city
-                    print(f"[INFO] Non-India city rejected in chat: '{invalid_city}'")
 
-                    def outside_india_msg():
-                        yield AIMessage(content=(
-                            f"😊 I'm really sorry, but I'm only able to help you plan trips "
-                            f"**within India** 🇮🇳. Unfortunately, **'{invalid_city}'** is outside India "
-                            f"and we currently don't support international destinations.\n\n"
-                            f"But don't worry — India has incredible places to explore! "
-                            f"You can choose from destinations like:\n"
-                            f"✨ **Delhi, Mumbai, Jaipur, Goa, Agra (Taj Mahal), Varanasi, "
-                            f"Kerala, Amritsar, Udaipur, Leh-Ladakh, Rishikesh, Darjeeling**, and many more!\n\n"
-                            f"You can also name an entire **state** like Rajasthan, Kerala, or Himachal Pradesh "
-                            f"and I'll recommend the best places across the whole state! 🏔️🌊🏯"
-                        ))
-
-                    return {
-                        "next_step": "chat",
-                        "stream": outside_india_msg(),
-                        "missing_fields": ["city"],
-                        "state": self.state.copy()
-                    }
+                    if is_indian:
+                        self.state["user_info"]["city_validated"] = True
+                        self.state["user_info"]["is_international"] = False
+                        print(f"[INFO] Indian destination confirmed in chat: '{city}'")
+                    else:
+                        # International destination — allow through with flag set
+                        self.state["user_info"]["city_validated"] = True
+                        self.state["user_info"]["is_international"] = True
+                        print(f"[INFO] International destination detected in chat: '{city}' → will use web retrieval")
         except Exception:
             import traceback
             traceback.print_exc()
             raise
-        print(f"[DEBUG] City validation completed")
-        # ---- end early India city/state validation ----
+        print(f"[DEBUG] Destination detection completed")
+        # ---- end destination detection ----
 
         print(f"[DEBUG] Building response_data")
         try:
@@ -299,46 +285,34 @@ class TravelGraph:
         city = user_prefs.get("city")
 
         if not city:
-            def error_gen(): yield AIMessage(content="Please tell me which Indian city or state you'd like to visit.")
+            def error_gen(): yield AIMessage(content="Please tell me which city or destination you'd like to visit.")
             return {"next_step": "chat", "stream": error_gen(), "missing_fields": ["city"], "state": self.state.copy()}
 
         city_lower = city.lower().strip()
 
-        # ---- India-only failsafe validation ----
+        # ── Destination classification (India vs International) ─────────────
+        # Uses already-computed city_validated and is_international flags from
+        # _process_chat(). Falls back to API check only if not yet classified.
         city_validated = user_prefs.get("city_validated", False)
+        is_international = user_prefs.get("is_international", False)
+
         if not city_validated:
             if city_lower in INDIA_STATE_KEYS:
                 is_indian = True
             else:
                 is_indian = self.info_agent.validate_indian_location(city)
-            
-            if is_indian:
-                self.state["user_info"]["city_validated"] = True
-            else:
-                is_indian = False
-        else:
-            is_indian = True
-            
-        if not is_indian:
-            self.state["user_info"].pop("city", None)
-            print(f"[INFO] Non-India city blocked in _process_information: '{city}'")
-
-            def india_only_error():
-                yield AIMessage(content=(
-                    f"😊 I'm really sorry, but I'm only able to help you plan trips "
-                    f"**within India** 🇮🇳. Unfortunately, **'{city}'** is outside India "
-                    f"and we currently don't support international destinations.\n\n"
-                    f"But don't worry — India has incredible places to explore! "
-                    f"You can also name a whole **state** like Rajasthan or Kerala "
-                    f"and I'll find the best spots across it! 🏔️🌊🏯"
-                ))
-            return {"next_step": "chat", "stream": india_only_error(), "missing_fields": ["city"], "state": self.state.copy()}
-        # ---- end India-only failsafe ----
+            self.state["user_info"]["city_validated"] = True
+            self.state["user_info"]["is_international"] = not is_indian
+            is_international = not is_indian
+            if not is_indian:
+                print(f"[INFO] International destination confirmed in _process_information: '{city}'")
+        # ── end destination classification ──────────────────────────────────
 
         # ================================================================
-        # Detect whether input is an Indian STATE or a specific CITY
+        # Detect whether input is an Indian STATE, Indian CITY, or
+        # an International destination.
         # ================================================================
-        is_state_search = city_lower in INDIA_STATE_KEYS
+        is_state_search = (not is_international) and (city_lower in INDIA_STATE_KEYS)
         state_info = INDIA_STATES_MAP.get(city_lower) if is_state_search else None
 
         if is_state_search:
@@ -356,8 +330,13 @@ class TravelGraph:
         print(f"[DEBUG _process_information] city2geocode returned {repr(city_coordinates)}")
         if not city_coordinates:
             print(f"[DEBUG _process_information] city_coordinates is {repr(city_coordinates)}, yielding error for {repr(display_name)}")
-            def error_gen(): yield AIMessage(content=f"Sorry, I couldn't find location data for {display_name}. Please try a different city or state name.")
+            def error_gen(): yield AIMessage(content=f"Sorry, I couldn't find location data for {display_name}. Please try a different city or destination name.")
             return {"next_step": "chat", "stream": error_gen(), "state": self.state.copy()}
+
+        # Store coordinates in user_prefs so RetrievalAgent can use them for
+        # lat/lng bounding box India detection without an extra API call.
+        self.state["user_info"]["_dest_lat"] = city_coordinates["lat"]
+        self.state["user_info"]["_dest_lng"] = city_coordinates["lng"]
 
         # ---- Weather (uses geocode_city for both city and state search) ----
         weather_summary_str = None
@@ -442,17 +421,23 @@ class TravelGraph:
                         f"Here are the **{len(self.state['attractions'])} best attractions** curated from across "
                         f"{display_name}, personalised to your preferences. Please browse and select your favourites!"
                     ))
+                elif is_international:
+                    yield AIMessage(content=(
+                        f"🌍 Great choice! I've found **{len(self.state['attractions'])} attractions** "
+                        f"in **{display_name}** for you, tailored to your preferences. "
+                        f"Please browse and select your favorites!"
+                    ))
                 else:
                     yield AIMessage(content=(
                         f"I've prepared a personalized list of {len(self.state['attractions'])} attractions "
-                        f"in **{display_name}**, India for you, considering your preferences and the weather. "
+                        f"in **{display_name}** for you, considering your preferences and the weather. "
                         f"Please take a look and select your favorites!"
                     ))
             else:
                 if is_state_search:
                     yield AIMessage(content=f"I couldn't find attractions across {display_name} right now. Try specifying a particular city within the state.")
                 else:
-                    yield AIMessage(content=f"I couldn't find attractions in {display_name} matching your preferences right now. Try a different Indian city or broaden your interests.")
+                    yield AIMessage(content=f"I couldn't find attractions in {display_name} matching your preferences right now. Please try a different destination or broaden your interests.")
 
         return {
             "next_step": "retrieval",

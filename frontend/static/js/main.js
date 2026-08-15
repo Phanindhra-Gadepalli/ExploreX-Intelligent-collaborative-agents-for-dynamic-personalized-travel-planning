@@ -6,13 +6,10 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
     }
 
-    // India centre coordinates and bounds
-    const INDIA_CENTER = [20.5937, 78.9629];  // Geographic centre of India
-    const INDIA_DEFAULT_ZOOM = 5;             // Zoom level that shows whole India
-    const INDIA_BOUNDS = L.latLngBounds(
-        L.latLng(6.4627, 68.1766),   // SW corner (near Kanyakumari / Lakshadweep)
-        L.latLng(37.0902, 97.4026)   // NE corner (near Arunachal Pradesh / Ladakh)
-    );
+    // World-map defaults: centered on a neutral world view on load,
+    // then auto-fits to whatever destination markers are added.
+    const WORLD_DEFAULT_CENTER = [20.0, 0.0];   // Roughly world centre (equator, Greenwich)
+    const WORLD_DEFAULT_ZOOM   = 2;              // Shows the entire world
 
     let map;
     let markersLayer = L.layerGroup();
@@ -28,18 +25,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     try {
         map = L.map('map', {
-            center: INDIA_CENTER,
-            zoom: INDIA_DEFAULT_ZOOM,
-            minZoom: 4,           // Don't zoom out further than showing all of India
-            maxBounds: INDIA_BOUNDS.pad(0.3),  // Soft boundary — restricts panning far outside India
-            maxBoundsViscosity: 0.85           // 0=no resistance, 1=hard lock; 0.85 = gentle stop
+            center: WORLD_DEFAULT_CENTER,
+            zoom: WORLD_DEFAULT_ZOOM,
+            minZoom: 2,   // Shows the entire world; no country restriction
+            maxBoundsViscosity: 0.0   // No boundary resistance — free worldwide panning
         });
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | India Travel Planner 🇮🇳',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | ExploreX Travel Planner',
             maxZoom: 19
         }).addTo(map);
         markersLayer.addTo(map);
-        console.log('Map initialized — centred on India');
+        console.log('Map initialized — worldwide view');
     } catch (error) {
         console.error('Error initializing map:', error);
     }
@@ -540,10 +536,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 map.fitBounds(bounds.pad(0.1));
             } catch (error) {
                 console.error('Error fitting map bounds:', error);
-                map.setView(INDIA_CENTER, INDIA_DEFAULT_ZOOM); // Fallback to India view
+                map.setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM); // Fallback to world view
             }
         } else {
-            map.setView(INDIA_CENTER, INDIA_DEFAULT_ZOOM); // Reset to India view
+            map.setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM); // Reset to world view
         }
     }
     // Update attractions and accommodations display
@@ -951,8 +947,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 mapMarkers.forEach(marker => map.removeLayer(marker));
                 mapMarkers = [];
                 
-                // Reset map view to India
-                map.setView(INDIA_CENTER, INDIA_DEFAULT_ZOOM);
+                // Reset map view to world default
+                map.setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM);
                 
                 // Reset state
                 state = {

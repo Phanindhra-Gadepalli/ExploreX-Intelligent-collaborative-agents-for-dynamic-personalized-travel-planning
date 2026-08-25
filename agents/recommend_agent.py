@@ -157,4 +157,59 @@ class RecommendAgent:
                 return attraction
         
         return None
+        
+    def extract_pois_from_text(self, text, city, lat, lng):
+        """Extracts structured POI dictionaries from RAG text using LLM."""
+        if not text or "No additional background knowledge" in text or len(text) < 20:
+            return []
+            
+        prompt = f"""
+        Extract all tourist attractions, points of interest, and famous places mentioned in the following text about {city}.
+        
+        Text:
+        {text}
+        
+        Format the output EXACTLY as a JSON array of objects. Do not include markdown blocks or any other text.
+        Each object must follow this schema:
+        {{
+            "id": "a unique string identifier based on name (e.g. 'rag_kashi_vishwanath')",
+            "name": "Name of the attraction",
+            "rating": 4.5,
+            "user_ratings_total": 100,
+            "price_level": 2,
+            "address": "{city}, India",
+            "location": {{"lat": {lat}, "lng": {lng}}},
+            "category": "tourist_attraction",
+            "types": ["tourist_attraction"],
+            "description": "A short summary of what this place is based on the text",
+            "source": "rag_extraction"
+        }}
+        """
+        
+        try:
+            response = self.model.invoke([HumanMessage(content=prompt)])
+            
+            content = response.content
+            if isinstance(content, list):
+                # Extract text from list of content blocks
+                content = " ".join([str(part.get("text", "")) for part in content if isinstance(part, dict)])
+            elif not isinstance(content, str):
+                content = str(content)
+                
+            content = content.strip()
+            
+            # Clean up potential markdown formatting
+            if content.startswith("```json"):
+                content = content[7:-3]
+            elif content.startswith("```"):
+                content = content[3:-3]
+                
+            pois = json.loads(content.strip())
+            if isinstance(pois, list):
+                print(f"[RECOMMEND_AGENT] Successfully extracted {len(pois)} POIs from RAG knowledge.")
+                return pois
+        except Exception as e:
+            print(f"[RECOMMEND_AGENT] Failed to extract POIs from RAG: {e}")
+            
+        return []
     

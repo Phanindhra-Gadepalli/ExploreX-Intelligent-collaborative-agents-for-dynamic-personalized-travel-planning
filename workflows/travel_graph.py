@@ -87,6 +87,14 @@ INDIA_STATES_MAP = {
 # Convenience set for fast O(1) state-name lookup
 INDIA_STATE_KEYS = set(INDIA_STATES_MAP.keys())
 
+# Flat set of all city names from INDIA_STATES_MAP tourism lists.
+# Used as a zero-network tiebreaker when ALL geocoding providers (including the
+# static fallback table) are unavailable, preventing valid Indian cities such as
+# Varanasi from being misclassified as international destinations.
+_INDIA_LOCAL_CITY_SET = frozenset(
+    c.lower() for v in INDIA_STATES_MAP.values() for c in v.get("cities", [])
+)
+
 # ---------------------------------------------------------------------------
 
 # This is a simplified state graph manager since we're not using the actual langgraph library
@@ -229,18 +237,33 @@ class TravelGraph:
                     self.state["user_info"]["is_international"] = False
                 else:
                     print(f"[DEBUG] Calling validate_indian_location for city='{city}'")
-                    is_indian = self.info_agent.validate_indian_location(city)
-                    print(f"[DEBUG] validate_indian_location returned: {is_indian}")
+                    validation = self.info_agent.validate_indian_location(city)
+                    print(f"[DEBUG] validate_indian_location returned: {validation!r}")
 
-                    if is_indian:
+                    if validation is True:
+                        # Geocoding confirmed the destination is in India
                         self.state["user_info"]["city_validated"] = True
                         self.state["user_info"]["is_international"] = False
                         print(f"[INFO] Indian destination confirmed in chat: '{city}'")
-                    else:
-                        # International destination — allow through with flag set
+                    elif validation is False:
+                        # Geocoding confirmed the destination is outside India
                         self.state["user_info"]["city_validated"] = True
                         self.state["user_info"]["is_international"] = True
-                        print(f"[INFO] International destination detected in chat: '{city}' → will use web retrieval")
+                        print(f"[INFO] International destination confirmed in chat: '{city}' → web retrieval")
+                    else:
+                        # None — all geocoding providers unavailable (API failure, not found, etc.)
+                        # Use local city set as tiebreaker — do NOT default to international.
+                        city_l = city.lower().strip()
+                        is_local_indian = (city_l in _INDIA_LOCAL_CITY_SET
+                                           or city_l in INDIA_STATE_KEYS)
+                        self.state["user_info"]["city_validated"] = True
+                        self.state["user_info"]["is_international"] = not is_local_indian
+                        self.state["user_info"]["validation_uncertain"] = True
+                        print(
+                            f"[WARN] All geocoders unavailable for '{city}'. "
+                            f"Local fallback classifies as "
+                            f"{'Indian' if is_local_indian else 'international (unrecognised city)'}"
+                        )
         except Exception:
             import traceback
             traceback.print_exc()
@@ -298,14 +321,26 @@ class TravelGraph:
 
         if not city_validated:
             if city_lower in INDIA_STATE_KEYS:
-                is_indian = True
+                is_international = False
             else:
-                is_indian = self.info_agent.validate_indian_location(city)
+                validation = self.info_agent.validate_indian_location(city)
+                if validation is True:
+                    is_international = False
+                elif validation is False:
+                    is_international = True
+                else:
+                    # None — all geocoders unavailable; use local city set as tiebreaker
+                    is_local_indian = (city_lower in _INDIA_LOCAL_CITY_SET
+                                       or city_lower in INDIA_STATE_KEYS)
+                    is_international = not is_local_indian
+                    print(
+                        f"[WARN] Geocoders unavailable for '{city}' in _process_information. "
+                        f"Local fallback: {'Indian' if not is_international else 'international (unrecognised)'}"
+                    )
             self.state["user_info"]["city_validated"] = True
-            self.state["user_info"]["is_international"] = not is_indian
-            is_international = not is_indian
-            if not is_indian:
-                print(f"[INFO] International destination confirmed in _process_information: '{city}'")
+            self.state["user_info"]["is_international"] = is_international
+            if is_international:
+                print(f"[INFO] International destination in _process_information: '{city}'")
         # ── end destination classification ──────────────────────────────────
 
         # ================================================================
@@ -329,9 +364,26 @@ class TravelGraph:
         city_coordinates = self.info_agent.city2geocode(geocode_city)
         print(f"[DEBUG _process_information] city2geocode returned {repr(city_coordinates)}")
         if not city_coordinates:
-            print(f"[DEBUG _process_information] city_coordinates is {repr(city_coordinates)}, yielding error for {repr(display_name)}")
-            def error_gen(): yield AIMessage(content=f"Sorry, I couldn't find location data for {display_name}. Please try a different city or destination name.")
-            return {"next_step": "chat", "stream": error_gen(), "state": self.state.copy()}
+            if not is_international:
+                # Indian destination confirmed but all geocoders returned None.
+                # Use India geographic centroid so the pipeline continues rather
+                # than sending the user back to an infinite chat loop.
+                print(
+                    f"[WARN] All geocoders failed for Indian destination '{display_name}'. "
+                    f"Using India centroid (20.59°N, 78.96°E) to keep pipeline running."
+                )
+                city_coordinates = {"lat": 20.5937, "lng": 78.9629}
+                self.state["user_info"]["coords_from_centroid"] = True
+            else:
+                # International destination with no coordinates — cannot proceed meaningfully.
+                print(f"[WARN] All geocoders failed for international destination '{display_name}'.")
+                def error_gen():
+                    yield AIMessage(content=(
+                        f"I couldn't retrieve location data for **{display_name}**. "
+                        f"Please verify the destination name and try again, "
+                        f"or try a nearby major city."
+                    ))
+                return {"next_step": "chat", "stream": error_gen(), "state": self.state.copy()}
 
         # Store coordinates in user_prefs so RetrievalAgent can use them for
         # lat/lng bounding box India detection without an extra API call.
@@ -343,7 +395,16 @@ class TravelGraph:
         user_start_date = user_prefs.get("start_date", "not decided")
         user_days_str   = user_prefs.get("days")
 
-        if user_start_date == "not decided":
+        is_valid_date = False
+        if user_start_date not in ["not decided", "flexible", ""]:
+            try:
+                datetime.strptime(user_start_date, "%Y-%m-%d")
+                is_valid_date = True
+            except ValueError:
+                print(f"[WARN] Invalid start_date '{user_start_date}', defaulting to 7 days from now.")
+                is_valid_date = False
+
+        if not is_valid_date:
             user_start_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
             user_prefs["start_date"] = user_start_date
 
@@ -457,6 +518,28 @@ class TravelGraph:
         retrieved_knowledge = self.retrieval_agent.retrieve_context(user_prefs, city)
         self.state["retrieved_knowledge"] = retrieved_knowledge
         
+        # Attempt to extract POIs from RAG knowledge
+        rag_pois = []
+        if retrieved_knowledge and "No additional background knowledge" not in retrieved_knowledge:
+            lat = user_prefs.get("_dest_lat", 0.0)
+            lng = user_prefs.get("_dest_lng", 0.0)
+            rag_pois = self.recommend_agent.extract_pois_from_text(retrieved_knowledge, city, lat, lng)
+            
+        if rag_pois:
+            existing_pois = self.state.get("attractions", [])
+            existing_names = {p.get("name", "").lower().strip() for p in existing_pois if p.get("name")}
+            
+            new_rag_pois = []
+            for rp in rag_pois:
+                name_lower = rp.get("name", "").lower().strip()
+                if name_lower and name_lower not in existing_names:
+                    new_rag_pois.append(rp)
+                    existing_names.add(name_lower)
+            
+            if new_rag_pois:
+                print(f"[DEBUG] Adding {len(new_rag_pois)} RAG-extracted POIs to state['attractions']")
+                self.state["attractions"] = existing_pois + new_rag_pois
+                
         return {
             "next_step": "recommend",
             "retrieved_knowledge": retrieved_knowledge,

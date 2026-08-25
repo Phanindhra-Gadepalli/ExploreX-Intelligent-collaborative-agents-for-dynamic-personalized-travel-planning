@@ -20,21 +20,6 @@ def check_gemini_key(key, name):
     except Exception as e:
         print(f"  [FAIL] {name} encountered an error: {e}")
 
-def check_maps_key(key):
-    print("Testing MAPS_API_KEY...")
-    if not key:
-        print("  [FAIL] MAPS_API_KEY is missing")
-        return
-    url = f"https://maps.googleapis.com/maps/api/geocode/json?address=New+York&key={key}"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if response.status_code == 200 and data.get("status") == "OK":
-            print("  [OK] MAPS_API_KEY works fine!")
-        else:
-            print(f"  [FAIL] MAPS_API_KEY failed: Status code {response.status_code}, API Status: {data.get('status')} - {data.get('error_message', '')}")
-    except Exception as e:
-        print(f"  [FAIL] MAPS_API_KEY encountered an error: {e}")
 
 def check_rapidapi_key(key):
     print("Testing RAPIDAPI_KEY...")
@@ -72,10 +57,8 @@ def check_rapidapi_key(key):
 if __name__ == "__main__":
     gemini_key = os.environ.get("GEMINI_API_KEY")
     google_key = os.environ.get("GOOGLE_API_KEY")
-    maps_key = os.environ.get("MAPS_API_KEY")
     rapidapi_key = os.environ.get("RAPIDAPI_KEY")
 
     check_gemini_key(gemini_key, "GEMINI_API_KEY")
     check_gemini_key(google_key, "GOOGLE_API_KEY")
-    check_maps_key(maps_key)
     check_rapidapi_key(rapidapi_key)

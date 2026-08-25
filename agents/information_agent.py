@@ -8,7 +8,6 @@ import os
 import sys
 import json
 import hashlib
-import googlemaps
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from datetime import datetime
@@ -18,10 +17,11 @@ load_dotenv()
 # Add the parent directory to sys.path to allow imports from services
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.maps_api import POIApi
+# Removed services.maps_api import
 from services.weather_api import WeatherService
 from services.car_rental_api import CarRentalService
 from services.fuel_price_api import get_gas_price
+from services.geocoding import GeocodingManager
 
 def format_duration(seconds):
     """Format duration in seconds to a human-readable string (hours and minutes)."""
@@ -48,18 +48,22 @@ def format_distance(meters):
     return f"{km:.1f} km / {miles:.1f} miles"
 
 class InformationAgent:
-    def __init__(self, maps_api_key=None, car_api_key=None, llm_model_name="gemini-flash-lite-latest"):
+    def __init__(self, car_api_key=None, llm_model_name="gemini-flash-lite-latest"):
         """Initialize the InformationAgent with API keys and LLM model name."""
-        self.maps_api_key = maps_api_key or os.getenv("MAPS_API_KEY")
-        self.rapidapi_key = car_api_key or os.getenv("RAPIDAPI_KEY")
+        from services.weather_api import WeatherService
+        from services.poi_fallback import POIManager
+        from dotenv import load_dotenv
         
-        if not self.maps_api_key:
-            raise ValueError("MAPS_API_KEY is required for InformationAgent.")
-
-        self.gmaps = googlemaps.Client(key=self.maps_api_key)
-        self.poi_api = POIApi(self.maps_api_key)
+        # Load environment variables
+        load_dotenv()
+        
+        self.poi_manager = POIManager()
+        # Multi-provider geocoding cascade: Geoapify → Nominatim → Photon → Static
+        self.geocoder = GeocodingManager()
         self.weather_service = WeatherService()
         self.car_rental_service = None
+        self.rapidapi_key = car_api_key or os.getenv("RAPIDAPI_KEY")
+
         if self.rapidapi_key and self.rapidapi_key != "YOUR_RAPIDAPI_KEY" and len(self.rapidapi_key) >= 30:
             try:
                 self.car_rental_service = CarRentalService(rapidapi_key=self.rapidapi_key)
@@ -226,94 +230,65 @@ class InformationAgent:
         print(f"[INFO_AGENT_LLM] Re-ranked list size: {len(ordered_attractions)}")
         return ordered_attractions
 
-    def validate_indian_location(self, location_name: str) -> bool:
+    def validate_indian_location(self, location_name: str):
         """
-        Uses Google Maps Geocoding API to check if the given location is in India.
-        This provides robust validation for all Indian cities, towns, and villages.
-        Handles disputed territories (like Kashmir/Arunachal) where Google omits the country component.
+        Determine whether a given location is in India.
+
+        Uses a multi-provider geocoding cascade (Google Maps → Geoapify → Nominatim
+        → Photon → static lookup table) so that a single-provider failure such as
+        Google Maps REQUEST_DENIED cannot produce an incorrect classification.
+
+        Returns:
+            True  — confirmed Indian destination
+            False — confirmed international destination
+            None  — ALL geocoding providers unavailable or city not found;
+                    the caller MUST NOT interpret this as "not India".
         """
-        try:
-            results = self.gmaps.geocode(location_name)
-            
-            # If no results from geocode, fallback to Places API (good for small tourist spots like Auli)
-            if not results:
-                places_result = self.gmaps.places(query=location_name)
-                if not places_result or not places_result.get('results'):
-                    return False
-                first_place = places_result['results'][0]
-                lat = first_place['geometry']['location']['lat']
-                lng = first_place['geometry']['location']['lng']
-                # Check bounding box of India
-                return 6.4 <= lat <= 36.0 and 68.0 <= lng <= 97.5
-                
-            first_result = results[0]
-            
-            # Check address components for country
-            has_country = False
-            is_india = False
-            address_components = first_result.get('address_components', [])
-            for component in address_components:
-                if 'country' in component.get('types', []):
-                    has_country = True
-                    short_name = component.get('short_name', '').upper()
-                    long_name = component.get('long_name', '').lower()
-                    if short_name == 'IN' or long_name == 'india':
-                        is_india = True
-                    break
-            
-            if has_country:
-                return is_india
-                
-            # If no country component is returned (common for disputed regions like Leh, Srinagar, Ziro)
-            # Check if the coordinates fall within the approximate bounding box of India
-            lat = first_result['geometry']['location']['lat']
-            lng = first_result['geometry']['location']['lng']
-            if 6.4 <= lat <= 36.0 and 68.0 <= lng <= 97.5:
-                return True
-                
-            return False
-        except Exception as e:
-            print(f"[ERROR] Exception in validate_indian_location for '{location_name}': {e}")
-            try:
-                places_result = self.gmaps.places(query=location_name)
-                if places_result and places_result.get('results'):
-                    first_place = places_result['results'][0]
-                    lat = first_place['geometry']['location']['lat']
-                    lng = first_place['geometry']['location']['lng']
-                    return 6.4 <= lat <= 36.0 and 68.0 <= lng <= 97.5
-            except Exception as inner_e:
-                print(f"[ERROR] Places API fallback failed in validate_indian_location for '{location_name}': {inner_e}")
-            return False
+        result = self.geocoder.geocode(location_name)
+
+        if result is None:
+            # Every provider (including the static fallback) returned nothing.
+            # Return None so the caller uses its own tiebreaker rather than
+            # silently classifying an unknown city as international.
+            print(
+                f"[GEOCODER] All providers unavailable for '{location_name}'. "
+                f"Returning None — caller must not classify this as international."
+            )
+            return None
+
+        is_indian = result.is_in_india()
+        label = "Indian" if is_indian else "International"
+        print(
+            f"[GEOCODER] validate_indian_location('{location_name}') → {label} "
+            f"(provider={result.provider}, cc='{result.country_code}', "
+            f"lat={result.lat:.4f}, lng={result.lng:.4f}"
+            + (", cached" if result.cached else "") + ")"
+        )
+        return is_indian
 
     def city2geocode(self, city: str):
-        """Convert city name to geographic coordinates (latitude and longitude)."""
-        try:
-            print(f"[DEBUG city2geocode] Geocoding city: '{city}'")
-            coordinates = self.gmaps.geocode(city)
-            print(f"[DEBUG city2geocode] Result: {coordinates}")
-            
-            if not coordinates:
-                print(f"[DEBUG city2geocode] Geocode failed, falling back to Places API for '{city}'")
-                places_result = self.gmaps.places(query=city)
-                if not places_result or not places_result.get('results'):
-                    print(f"[DEBUG city2geocode] Places API fallback failed for '{city}'")
-                    return None
-                first_place = places_result['results'][0]
-                return first_place['geometry']['location']
-                
-            return coordinates[0]['geometry']['location']
-        except Exception as e:
-            import traceback
-            print(f"[ERROR city2geocode] Error for '{city}': {e}")
-            traceback.print_exc()
-            try:
-                places_result = self.gmaps.places(query=city)
-                if places_result and places_result.get('results'):
-                    first_place = places_result['results'][0]
-                    return first_place['geometry']['location']
-            except Exception as inner_e:
-                print(f"[ERROR city2geocode] Places API fallback failed for '{city}': {inner_e}")
-            return None
+        """
+        Convert a city name to geographic coordinates.
+
+        Uses the multi-provider geocoding cascade:
+            Google Maps → Geoapify → Nominatim → Photon → static lookup table.
+
+        Returns:
+            dict with 'lat' and 'lng' keys (same format as before), or None
+            if every provider fails.
+        """
+        result = self.geocoder.geocode(city)
+        if result is not None:
+            cached_label = " [cached]" if result.cached else ""
+            print(
+                f"[GEOCODER] city2geocode('{city}') → "
+                f"lat={result.lat:.4f}, lng={result.lng:.4f} "
+                f"via {result.provider}{cached_label}"
+            )
+            return {"lat": result.lat, "lng": result.lng}
+
+        print(f"[GEOCODER] city2geocode('{city}') → None (all providers failed)")
+        return None
     
     def get_attractions(self, lat: float, lng: float, user_prefs: dict, weather_summary: str = None,
                         number: int = 20, 
@@ -327,145 +302,15 @@ class InformationAgent:
             rerank_with_llm: If False, skip LLM re-ranking (used for multi-city state searches
                              where a single combined rerank is done after merging all cities).
         """
-        location = (lat, lng)
-        initial_fetch_limit = 30 # Fetch more initially to allow for better LLM ranking
-        
-        results = []
-        
-        # 1. Targeted Fetching based on hobbies
         hobbies = user_prefs.get('hobbies') if user_prefs else None
-        if hobbies:
-            try:
-                print(f"[INFO_AGENT] Fetching specific places for hobbies: '{hobbies}'")
-                hobby_results = self.gmaps.places_nearby(
-                    location=location, radius=radius, keyword=hobbies, language='en'
-                ).get('results', [])
-                results.extend(hobby_results)
-            except Exception as e:
-                print(f"Error fetching places_nearby with hobbies: {e}")
-
-        # 2. Fallback / Padding with generic popular spots and shopping malls
-        if len(results) < initial_fetch_limit:
-            try:
-                print(f"[INFO_AGENT] Fetching generic '{poi_type}' to pad results.")
-                generic_results = self.gmaps.places_nearby(
-                    location=location, radius=radius, type=poi_type, language='en'
-                ).get('results', [])
-                
-                # Fetch popular shopping malls and famous places
-                popular_results = self.gmaps.places_nearby(
-                    location=location, radius=radius, keyword="famous popular sightseeing shopping malls", language='en'
-                ).get('results', [])
-                
-                generic_results.extend(popular_results)
-                
-                # Filter out undesired places like travel agencies, restaurants, etc.
-                undesired_types = {
-                    "travel_agency", "tour_operator", "restaurant", "food", 
-                    "cafe", "meal_takeaway", "meal_delivery", "lodging",
-                    "real_estate_agency", "car_rental", "atm", "bank", "convenience_store"
-                }
-                
-                generic_results = [r for r in generic_results if not undesired_types.intersection(set(r.get("types", [])))]
-                results = [r for r in results if not undesired_types.intersection(set(r.get("types", [])))]
-                
-                # Append while avoiding duplicates by place_id
-                seen_ids = {r.get('place_id') for r in results if r.get('place_id')}
-                for gr in generic_results:
-                    pid = gr.get('place_id')
-                    if pid and pid not in seen_ids:
-                        results.append(gr)
-                        seen_ids.add(pid)
-            except Exception as e:
-                print(f"Error fetching places_nearby generic: {e}")
-
-        initial_pois = []
-        print(f"[INFO_AGENT] Fetched {len(results)} total raw places. Processing up to {initial_fetch_limit} for details.")
         
-        # Define the fields to request from Place Details API.
-        # 'types' and 'photos' are not valid for Place Details 'fields' parameter.
-        # 'types' are available from the places_nearby result.
-        # 'photos' (photo_references) are available from places_nearby result.
-        place_details_fields = [
-            'name', 'rating', 'price_level', 'opening_hours', 'formatted_address', 
-            'geometry/location', # Basic geometry is sufficient
-            'place_id', # Essential
-            'user_ratings_total', 'website', 'editorial_summary', 
-            'international_phone_number', 'permanently_closed', 'business_status'
-            # Valid photo field is 'photo', but it returns an array of photo objects.
-            # It's often better to get photo_references from nearby_search and construct URLs.
-        ]
-
-
-        for place in results[:initial_fetch_limit]: 
-            pid = place.get('place_id')
-            if not pid: continue
-            try:
-                # Get types directly from the 'place' object from nearby search
-                place_types_list = place.get('types', ["unknown"])
-                primary_category_from_place = place_types_list[0] if place_types_list else "unknown"
-
-                # Get photo references directly from the 'place' object
-                photo_references_from_place = []
-                if place.get('photos'):
-                    for photo_info_nearby in place['photos'][:1]: # Get first photo reference
-                         if photo_info_nearby.get('photo_reference'):
-                            photo_references_from_place.append(photo_info_nearby['photo_reference'])
-                
-                # Fetch details, excluding 'types' and 'photos' from fields
-                details_response = self.poi_api.get_poi_details(
-                    place_id=pid,
-                    fields=place_details_fields 
-                )
-                details = details_response.get('result', {})
-                if not details: 
-                    print(f"[WARN] No details found for place_id {pid}. Skipping.")
-                    continue
-
-                # Ensure location_data is an object with lat/lng, even if values are None
-                raw_location = details.get('geometry', {}).get('location', {})
-                location_data = {
-                    'lat': raw_location.get('lat'),
-                    'lng': raw_location.get('lng')
-                }
-                if not isinstance(location_data['lat'], (int, float)):
-                    print(f"[WARN] Invalid or missing lat for place_id {pid}. Name: {details.get('name')}. Setting to None.")
-                    location_data['lat'] = None
-                if not isinstance(location_data['lng'], (int, float)):
-                    print(f"[WARN] Invalid or missing lng for place_id {pid}. Name: {details.get('name')}. Setting to None.")
-                    location_data['lng'] = None
-                
-                description = details.get('editorial_summary', {}).get('overview', '')
-                if not description: description = details.get('name', 'No description available.')
-                
-                # Construct image URL from photo reference, default to None
-                image_url = None
-                if photo_references_from_place and self.maps_api_key and photo_references_from_place[0]:
-                    image_url = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference={photo_references_from_place[0]}&key={self.maps_api_key}"
-                elif not photo_references_from_place or not photo_references_from_place[0]:
-                    print(f"[WARN] No photo reference for place_id {pid}. Name: {details.get('name')}. Image URL will be None.")
-
-                initial_pois.append({
-                    'id': pid, 
-                    'name': details.get('name'), 
-                    'rating': details.get('rating'), 
-                    'user_ratings_total': details.get('user_ratings_total'), 
-                    'price_level': details.get('price_level'), 
-                    'opening_hours': details.get('opening_hours', {}).get('weekday_text'), 
-                    'address': details.get('formatted_address'), 
-                    'location': location_data, 
-                    'category': primary_category_from_place,
-                    'types': place_types_list,
-                    'estimated_duration': self.estimate_duration(primary_category_from_place, details),
-                    'website': details.get('website'), 
-                    'description': description,
-                    'photo_references': photo_references_from_place,
-                    'image_url': image_url 
-                })
-            except Exception as e:
-                print(f"[ERROR] Exception during processing of place_id {pid} in get_attractions: {e}")
-                continue
+        initial_pois = self.poi_manager.get_attractions(lat, lng, radius, hobbies, poi_type)
         
+        # Add estimated_duration if missing
+        for poi in initial_pois:
+            if 'estimated_duration' not in poi:
+                poi['estimated_duration'] = self.estimate_duration(poi.get('category', 'tourist_attraction'), {})
+                
         print(f"[INFO_AGENT] Processed details for {len(initial_pois)} POIs.")
         if not initial_pois:
             return []
@@ -550,59 +395,7 @@ class InformationAgent:
 
     def get_accommodations(self, lat: float, lng: float, budget: str, number: int = 4):
         """Fetch accommodation options based on user budget."""
-        location = (lat, lng)
-        if budget and budget.lower() == 'low':
-            keyword = "hostel cheap budget hotel guest house"
-        elif budget and budget.lower() == 'high':
-            keyword = "luxury hotel 5 star resort"
-        else:
-            keyword = "hotel"
-            
-        print(f"[INFO_AGENT] Fetching accommodations with keyword: '{keyword}'")
-        try:
-            results = self.gmaps.places_nearby(
-                location=location, radius=15000, keyword=keyword, type="lodging", language='en'
-            ).get('results', [])
-        except Exception as e:
-            print(f"Error fetching accommodations: {e}")
-            return []
-            
-        accommodations = []
-        for place in results[:10]:
-            pid = place.get('place_id')
-            if not pid: continue
-            try:
-                details_response = self.poi_api.get_poi_details(
-                    place_id=pid,
-                    fields=['name', 'rating', 'user_ratings_total', 'price_level', 'formatted_address', 'website']
-                )
-                details = details_response.get('result', {})
-                if not details: continue
-                
-                # Extract one photo if available
-                image_url = None
-                if place.get('photos') and self.maps_api_key:
-                    photo_ref = place['photos'][0].get('photo_reference')
-                    if photo_ref:
-                        image_url = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference={photo_ref}&key={self.maps_api_key}"
-
-                accommodations.append({
-                    'id': pid,
-                    'name': details.get('name'),
-                    'rating': details.get('rating'),
-                    'user_ratings_total': details.get('user_ratings_total'),
-                    'price_level': details.get('price_level'),
-                    'address': details.get('formatted_address'),
-                    'website': details.get('website'),
-                    'image_url': image_url,
-                    'type': 'accommodation'
-                })
-            except Exception as e:
-                print(f"[ERROR] Exception processing accommodation {pid}: {e}")
-                
-        # Sort by rating
-        accommodations.sort(key=lambda x: (x.get('rating') is None, -(float(x.get('rating', 0.0) or 0.0))))
-        return accommodations[:number]
+        return self.poi_manager.get_accommodations(lat, lng, budget, number)
 
     def estimate_duration(self, category, details):
         """
@@ -1039,73 +832,10 @@ class InformationAgent:
             dict: Dictionary containing information about nearby restaurants (top 3 by rating).
                   Returns mock data if API calls fail.
         """
-        try:
-            # Check if POI API is available
-            if not self.poi_api:
-                raise Exception("POI API is not initialized")
-
-            # Search for nearby restaurants
-            restaurants_result = self.poi_api.get_nearby_places(
-                location=(lat, lng),
-                type='restaurant',
-                radius=radius
-            )
-            
-            # Process restaurant information
-            processed_restaurants = []
-            # Sort all fetched restaurants by rating (descending) before further processing
-            # Handle cases where rating might be missing by defaulting to 0 for sorting
-            all_fetched_restaurants = restaurants_result.get('results', [])
-            all_fetched_restaurants.sort(key=lambda p: p.get('rating', 0), reverse=True)
-
-            for place in all_fetched_restaurants[:3]:  # Only take the top 3 after sorting
-                try:
-                    # Get detailed information
-                    place_details = self.poi_api.get_poi_details(
-                        place_id=place['place_id'],
-                        fields=['name', 'rating', 'price_level', 'formatted_address', 'photo', 'type', 'geometry']
-                    )
-                    
-                    if not place_details or 'result' not in place_details:
-                        continue
-                        
-                    place_details = place_details['result']
-                    
-                    # Get photos
-                    photos = []
-                    if 'photos' in place:  # Get photo info from the original search result
-                        for photo in place['photos'][:3]:  # Up to 3 photos
-                            photo_url = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference={photo['photo_reference']}&key={self.maps_api_key}"
-                            photos.append({
-                                'url': photo_url,
-                                'width': photo.get('width', 800),
-                                'height': photo.get('height', 600)
-                            })
-                    
-                    restaurant = {
-                        'name': place_details.get('name', 'Unknown Restaurant'),
-                        'type': 'restaurant',
-                        'rating': place_details.get('rating', 0),
-                        'price_level': place_details.get('price_level', 0),
-                        'address': place_details.get('formatted_address', 'Unknown address'),
-                        'photos': photos,
-                        'features': self._get_restaurant_features(place)  # Use type info from the original search result
-                    }
-                    processed_restaurants.append(restaurant)
-                except Exception as e:
-                    print(f"Error processing restaurant info: {str(e)}")
-                    continue
-            
-            return {
-                'restaurants': processed_restaurants
-            }
-            
-        except Exception as e:
-            print(f"Error searching nearby places: {str(e)}")
-            # Return mock data
-            return {
-                'restaurants': [
-                    {
+        # Return mock data as Google Places API has been removed.
+        return {
+            'restaurants': [
+                {
                         'name': 'Sample Restaurant',
                         'type': 'restaurant',
                         'rating': 4.5,

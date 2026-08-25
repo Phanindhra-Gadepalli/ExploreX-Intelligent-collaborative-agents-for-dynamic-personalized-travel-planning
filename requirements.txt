@@ -14,3 +14,4 @@ duckduckgo-search
 chromadb==0.4.14
 tiktoken==0.5.1
 sentence-transformers==2.2.2
+geopy>=2.4.1

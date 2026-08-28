@@ -13,7 +13,29 @@ import time
 class POIManager:
     def __init__(self):
         self.geoapify_key = os.environ.get("GEOAPIFY_API_KEY", "").strip()
+        self.pexels_key = os.environ.get("PEXELS_API_KEY", "61rwGmkV5QiMaa09spVra8Jtu6itcRovaDurdOiKrRgBLgCsAHAKLzyM").strip()
 
+    from functools import lru_cache
+
+    @lru_cache(maxsize=1024)
+    def _fetch_pexels_image(self, query, fallback_query=None):
+        if not hasattr(self, 'pexels_key') or not self.pexels_key:
+            return None
+        url = "https://api.pexels.com/v1/search"
+        headers = {"Authorization": self.pexels_key}
+        
+        for q in [query, fallback_query]:
+            if not q: continue
+            params = {"query": q, "per_page": 1}
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get('photos'):
+                        return data['photos'][0]['src']['medium']
+            except Exception:
+                pass
+        return None
     def get_attractions(self, lat: float, lng: float, radius: int = 10000, hobbies: str = None, poi_type: str = "tourist_attraction"):
         """
         Attempts to fetch attractions using the provider cascade.
@@ -21,19 +43,7 @@ class POIManager:
         """
         print(f"[POI_MANAGER] Fetching attractions for lat={lat}, lng={lng}")
         
-        # 1. Try Geoapify (if enabled)
-        if self.geoapify_key:
-            try:
-                results = self._fetch_geoapify_attractions(lat, lng, radius, hobbies)
-                if results:
-                    print(f"[POI_MANAGER] Geoapify succeeded, returning {len(results)} POIs.")
-                    return results
-            except Exception as e:
-                print(f"[POI_MANAGER][Geoapify] Failed: {e}")
-        else:
-            print("[POI_MANAGER] Skipping Geoapify (no API key).")
-
-        # 2. Try OpenStreetMap (Overpass)
+        # 1. Try OpenStreetMap (Overpass) FIRST
         try:
             results = self._fetch_osm_attractions(lat, lng, radius, hobbies)
             if results:
@@ -41,6 +51,18 @@ class POIManager:
                 return results
         except Exception as e:
             print(f"[POI_MANAGER][OSM] Failed: {e}")
+
+        # 2. Try Geoapify (if enabled) as fallback
+        if self.geoapify_key:
+            try:
+                results = self._fetch_geoapify_attractions(lat, lng, radius, hobbies)
+                if results:
+                    print(f"[POI_MANAGER] Geoapify succeeded, returning {len(results)} POIs.")
+                    return results
+            except Exception:
+                pass # Silenced to avoid console clutter (400/401)
+        else:
+            print("[POI_MANAGER] Skipping Geoapify (no API key).")
 
         # All providers failed
         print("[POI_MANAGER] All live POI providers failed to return attractions.")
@@ -52,22 +74,22 @@ class POIManager:
         """
         print(f"[POI_MANAGER] Fetching accommodations for lat={lat}, lng={lng}, budget={budget}")
         
-        # 1. Try Geoapify
-        if self.geoapify_key:
-            try:
-                results = self._fetch_geoapify_accommodations(lat, lng, radius, budget, number)
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[POI_MANAGER][Geoapify] Accommodations failed: {e}")
-
-        # 2. Try OSM Overpass
+        # 1. Try OSM Overpass FIRST
         try:
             results = self._fetch_osm_accommodations(lat, lng, radius, budget, number)
             if results:
                 return results
         except Exception as e:
             print(f"[POI_MANAGER][OSM] Accommodations failed: {e}")
+
+        # 2. Try Geoapify as fallback
+        if self.geoapify_key:
+            try:
+                results = self._fetch_geoapify_accommodations(lat, lng, radius, budget, number)
+                if results:
+                    return results
+            except Exception:
+                pass # Silenced
 
         return []
 
@@ -76,10 +98,14 @@ class POIManager:
     # -------------------------------------------------------------------------
 
     def _fetch_geoapify_attractions(self, lat, lng, radius, hobbies):
-        categories = "tourism.attraction,tourism.sights,natural,historic,entertainment"
+        categories = "tourism.attraction,natural,historic,entertainment"
         url = f"https://api.geoapify.com/v2/places?categories={categories}&filter=circle:{lng},{lat},{radius}&limit=30&apiKey={self.geoapify_key}"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            safe_msg = str(e).replace(self.geoapify_key, "****") if self.geoapify_key else str(e)
+            raise Exception(f"Geoapify Request Failed: {safe_msg}")
         features = resp.json().get('features', [])
         
         normalized = []
@@ -102,7 +128,7 @@ class POIManager:
                 'types': cats,
                 'website': props.get('website', ''),
                 'description': props.get('description', f"A beautiful {primary_cat} located in {props.get('city', 'the area')}."),
-                'image_url': None,
+                'image_url': self._fetch_pexels_image(props.get('name'), fallback_query=primary_cat.replace('_', ' ')),
                 'source': 'geoapify'
             })
             
@@ -110,8 +136,12 @@ class POIManager:
 
     def _fetch_geoapify_accommodations(self, lat, lng, radius, budget, number):
         url = f"https://api.geoapify.com/v2/places?categories=accommodation&filter=circle:{lng},{lat},{radius}&limit={max(10, number)}&apiKey={self.geoapify_key}"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            safe_msg = str(e).replace(self.geoapify_key, "****") if self.geoapify_key else str(e)
+            raise Exception(f"Geoapify Request Failed: {safe_msg}")
         features = resp.json().get('features', [])
         
         accommodations = []
@@ -127,7 +157,7 @@ class POIManager:
                 'price_level': 1 if budget == 'low' else (4 if budget == 'high' else 2),
                 'address': props.get('formatted', ''),
                 'website': props.get('website', ''),
-                'image_url': None,
+                'image_url': self._fetch_pexels_image(props.get('name')),
                 'type': 'accommodation',
                 'source': 'geoapify'
             })
@@ -142,7 +172,6 @@ class POIManager:
         """Execute query against Overpass API with fallbacks and robust headers."""
         endpoints = [
             "https://overpass-api.de/api/interpreter",
-            "https://overpass.kumi.systems/api/interpreter",
             "https://lz4.overpass-api.de/api/interpreter"
         ]
         
@@ -159,7 +188,7 @@ class POIManager:
                     endpoint, 
                     data={"data": query}, 
                     headers=headers, 
-                    timeout=15
+                    timeout=8
                 )
                 resp.raise_for_status()
                 return resp.json().get('elements', [])
@@ -204,7 +233,7 @@ class POIManager:
                 'types': [el_type],
                 'website': tags.get('website', ''),
                 'description': tags.get('description', f"A renowned {el_type} in the area, popular among tourists and locals."),
-                'image_url': None,
+                'image_url': self._fetch_pexels_image(name, fallback_query=el_type),
                 'source': 'osm'
             })
             
@@ -236,7 +265,7 @@ class POIManager:
                 'price_level': 1 if budget == 'low' else 2,
                 'address': f"{tags.get('addr:street', '')} {tags.get('addr:city', '')}".strip() or "Local Accommodation",
                 'website': tags.get('website', ''),
-                'image_url': None,
+                'image_url': self._fetch_pexels_image(name),
                 'type': 'accommodation',
                 'source': 'osm'
             })

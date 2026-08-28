@@ -91,7 +91,7 @@ class GeocodingProvider(ABC):
     def name(self) -> str: ...
 
     @abstractmethod
-    def geocode(self, city: str) -> Optional[GeocodingResult]:
+    def geocode(self, city: str, expected_country: str = None) -> Optional[GeocodingResult]:
         """Return a GeocodingResult or None if the city was not found / provider failed."""
         ...
 
@@ -111,7 +111,7 @@ class GeoapifyGeocoder(GeocodingProvider):
     def __init__(self, api_key: str = None):
         self._key = api_key or os.getenv("GEOAPIFY_API_KEY", "")
 
-    def geocode(self, city: str) -> Optional[GeocodingResult]:
+    def geocode(self, city: str, expected_country: str = None) -> Optional[GeocodingResult]:
         if not self._key:
             return None
         try:
@@ -136,8 +136,8 @@ class GeoapifyGeocoder(GeocodingProvider):
                 country_code=r.get("country_code", "").lower(),
                 provider=self.name,
             )
-        except Exception as e:
-            logger.warning(f"[GEOCODER][Geoapify] '{city}': {e}")
+        except Exception:
+            # Silenced to avoid 400/401 polluting the logs
             return None
 
 
@@ -170,7 +170,7 @@ class NominatimGeocoder(GeocodingProvider):
             time.sleep(self._MIN_S - elapsed)
         self._last = time.monotonic()
 
-    def geocode(self, city: str) -> Optional[GeocodingResult]:
+    def geocode(self, city: str, expected_country: str = None) -> Optional[GeocodingResult]:
         self._throttle()
         try:
             import requests as _req
@@ -214,7 +214,7 @@ class PhotonGeocoder(GeocodingProvider):
     name = "photon"
     _BASE = "https://photon.komoot.io/api/"
 
-    def geocode(self, city: str) -> Optional[GeocodingResult]:
+    def geocode(self, city: str, expected_country: str = None) -> Optional[GeocodingResult]:
         try:
             import requests as _req
             resp = _req.get(self._BASE, params={"q": city, "limit": 1, "lang": "en"}, timeout=8)
@@ -600,7 +600,7 @@ class StaticTableGeocoder(GeocodingProvider):
 
     name = "static"
 
-    def geocode(self, city: str) -> Optional[GeocodingResult]:
+    def geocode(self, city: str, expected_country: str = None) -> Optional[GeocodingResult]:
         key = city.lower().strip()
         entry = _STATIC_COORDS.get(key)
         if entry is None:
@@ -636,20 +636,19 @@ class GeocodingManager:
 
         self._providers: list[GeocodingProvider] = []
 
-        # 2. Geoapify
-        if os.getenv("GEOAPIFY_API_KEY", ""):
-            self._providers.append(GeoapifyGeocoder())
-            print("[GEOCODER] Geoapify provider enabled")
-        else:
-            print("[GEOCODER] Geoapify disabled (GEOAPIFY_API_KEY not set) — "
-                  "set it for a free additional fallback")
-
-        # 3. Nominatim
+        # 2. Nominatim
         if os.getenv("NOMINATIM_ENABLED", "true").lower() != "false":
             self._providers.append(NominatimGeocoder())
             print("[GEOCODER] Nominatim provider enabled")
         else:
             print("[GEOCODER] Nominatim disabled (NOMINATIM_ENABLED=false)")
+
+        # 3. Geoapify (fallback)
+        if os.getenv("GEOAPIFY_API_KEY", ""):
+            self._providers.append(GeoapifyGeocoder())
+            print("[GEOCODER] Geoapify provider enabled as fallback")
+        else:
+            print("[GEOCODER] Geoapify disabled (GEOAPIFY_API_KEY not set)")
 
         # 4. Photon (opt-in)
         if os.getenv("PHOTON_ENABLED", "false").lower() == "true":
@@ -662,7 +661,7 @@ class GeocodingManager:
 
     # ─────────────────────────────────────────────────────────────────────
 
-    def geocode(self, city: str) -> Optional[GeocodingResult]:
+    def geocode(self, city: str, expected_country: str = None) -> Optional[GeocodingResult]:
         """
         Geocode a city name using the provider cascade.
 
@@ -681,8 +680,13 @@ class GeocodingManager:
 
         for provider in self._providers:
             try:
-                result = provider.geocode(city)
+                result = provider.geocode(city, expected_country=expected_country)
                 if result is not None:
+                    if expected_country and result.country_code:
+                        if result.country_code.lower() != expected_country.lower():
+                            print(f"[GEOCODER] '{city}' → {provider.name} returned country '{result.country_code}', expected '{expected_country}'. Rejecting.")
+                            continue
+
                     print(f"[GEOCODER] '{city}' → {provider.name}: "
                           f"lat={result.lat:.4f}, lng={result.lng:.4f}, "
                           f"cc='{result.country_code}'")

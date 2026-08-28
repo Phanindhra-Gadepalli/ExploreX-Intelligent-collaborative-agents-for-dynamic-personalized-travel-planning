@@ -15,6 +15,9 @@ from workflows.travel_graph import TravelGraph
 import requests
 import time
 
+# Disable chromadb telemetry
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
 # Load environment variables
 load_dotenv()
 
@@ -288,8 +291,8 @@ def stream():
                 print(f"[DIAGNOSTIC] Step '{current_step}' completed. Returned next_step='{next_step}'")
                 
                 # Auto-transition logic ON THE BACKEND
-                # If the next step is retrieval or recommend (from retrieval), or route (from strategy), loop immediately!
-                if next_step in ['retrieval'] or \
+                # If the next step is information, retrieval, or recommend (from retrieval), or route (from strategy), loop immediately!
+                if next_step in ['information', 'retrieval'] or \
                    (current_step == 'retrieval' and next_step == 'recommend') or \
                    (current_step == 'recommend' and next_step == 'strategy') or \
                    (current_step == 'strategy' and next_step == 'communication') or \
@@ -309,6 +312,9 @@ def stream():
                 'type': 'complete',
                 'session_id': session_id,   # Always send back so frontend can reuse it
                 'next_step': result.get('next_step'),
+                'validation_warning': result.get('validation_warning'),
+                'required_count': result.get('required_count'),
+                'selected_count': result.get('selected_count'),
                 'missing_fields': result.get('missing_fields', []),
                 'state': result.get('state'),
                 'attractions': result.get('recommended_attractions') or result.get('attractions'),

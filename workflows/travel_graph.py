@@ -291,17 +291,17 @@ class TravelGraph:
             print(f"[DEBUG] Returning response from _process_chat (chat not complete)")
             return response_data
             
-        print(f"Next State: recommend_attractions (via _process_information)")
+        print(f"Next State: information")
         print(f"Reason for Transition: All required information collected successfully.")
-        print(f"[DEBUG] Calling _process_information")
-        try:
-            result = self._process_information()
-        except Exception:
-            import traceback
-            traceback.print_exc()
-            raise
-        print(f"[DEBUG] _process_information returned")
-        return result
+        
+        # Mark chat as complete and transition to information step
+        response_data["next_step"] = "information"
+        
+        def transition_message():
+            yield AIMessage(content="I have all the information I need! Let me search for the best attractions for your trip...")
+            
+        response_data["stream"] = transition_message()
+        return response_data
     
     def _process_information(self, **kwargs):
         user_prefs = self.state["user_info"]
@@ -355,13 +355,15 @@ class TravelGraph:
             state_cities  = state_info["cities"]
             print(f"[STATE_SEARCH] '{city}' detected as Indian state '{display_name}'. Cities: {state_cities}")
             # Use the first (capital/main) city's coordinates for weather + map centre
-            geocode_city = state_cities[0]
+            geocode_city = f"{state_cities[0]}, {display_name}, India"
+            expected_country = "in"
         else:
             display_name = city
-            geocode_city = city
+            expected_country = "in" if not is_international else None
+            geocode_city = f"{city}, India" if not is_international else city
 
         print(f"[DEBUG _process_information] Calling city2geocode with geocode_city={repr(geocode_city)} (type: {type(geocode_city)})")
-        city_coordinates = self.info_agent.city2geocode(geocode_city)
+        city_coordinates = self.info_agent.city2geocode(geocode_city, expected_country=expected_country)
         print(f"[DEBUG _process_information] city2geocode returned {repr(city_coordinates)}")
         if not city_coordinates:
             if not is_international:
@@ -434,28 +436,35 @@ class TravelGraph:
         # ================================================================
         # Fetch attractions — STATE path vs CITY path
         # ================================================================
-        if is_state_search:
-            print(f"[STATE_SEARCH] Running state-wide search for {display_name}.")
-            attractions_from_info_agent = self.info_agent.get_attractions_for_state(
-                state_name=display_name,
-                user_prefs=user_prefs,
-                weather_summary=self.state.get("weather_summary"),
-                total_number=20
-            )
+        if self.state.get("information_processed") and self.state.get("attractions"):
+            print("[STATE_MACHINE][WARNING] Duplicate stage execution detected: _process_information. Reusing cached attractions.")
+            attractions_from_info_agent = self.state["attractions"]
         else:
-            print(f"[DEBUG] Calling info_agent.get_attractions for city '{city}'.")
-            attractions_from_info_agent = self.info_agent.get_attractions(
-                lat=city_coordinates["lat"],
-                lng=city_coordinates["lng"],
-                user_prefs=user_prefs,
-                weather_summary=self.state.get("weather_summary"),
-                number=20,
-                poi_type="tourist_attraction"
-            )
+            if is_state_search:
+                print(f"[STATE_SEARCH] Running state-wide search for {display_name}.")
+                attractions_from_info_agent = self.info_agent.get_attractions_for_state(
+                    state_name=display_name,
+                    state_cities=state_cities,
+                    user_prefs=user_prefs,
+                    weather_summary=self.state.get("weather_summary"),
+                    total_number=20
+                )
+            else:
+                print(f"[DEBUG] Calling info_agent.get_attractions for city '{city}'.")
+                attractions_from_info_agent = self.info_agent.get_attractions(
+                    lat=city_coordinates["lat"],
+                    lng=city_coordinates["lng"],
+                    user_prefs=user_prefs,
+                    weather_summary=self.state.get("weather_summary"),
+                    number=20,
+                    poi_type="tourist_attraction"
+                )
+            
+            self.state["attractions"] = attractions_from_info_agent if attractions_from_info_agent else []
+            self.state["information_processed"] = True
+            print(f"[ATTRACTION_PIPELINE] completed total_pois={len(self.state['attractions'])}")
 
-        self.state["attractions"] = attractions_from_info_agent if attractions_from_info_agent else []
         print(f"[DEBUG] Attractions updated: {len(self.state['attractions'])} items.")
-
         # ---- Accommodations ----
         budget = user_prefs.get("budget", "medium")
         try:
@@ -533,6 +542,11 @@ class TravelGraph:
             for rp in rag_pois:
                 name_lower = rp.get("name", "").lower().strip()
                 if name_lower and name_lower not in existing_names:
+                    # Ensure valid image_url for RAG POIs
+                    img_url = rp.get("image_url")
+                    if not img_url or not str(img_url).startswith("http"):
+                        rp["image_url"] = self.info_agent.poi_manager._fetch_pexels_image(rp.get("name", ""))
+                    
                     new_rag_pois.append(rp)
                     existing_names.add(name_lower)
             
@@ -602,9 +616,11 @@ class TravelGraph:
             else:
                 # Recommend attractions to the user
                 if not attractions:
+                    def error_gen():
+                        yield AIMessage(content="I couldn't find attractions for your destination right now. Please try specifying a different location or broaden your interests.")
                     return {
-                        "next_step": "recommend",
-                        "stream": None,
+                        "next_step": "chat",
+                        "stream": error_gen(),
                         "response": "No attractions available for recommendation.",
                         "recommended_attractions": [],
                         "accommodations": [],
@@ -614,6 +630,13 @@ class TravelGraph:
                 # We already ranked and categorized them in InformationAgent, so we don't call recommend_core_attractions.
                 # Just use them directly.
                 recommended = attractions
+                
+                # Add specific logging for recommendations
+                interest_count = sum(1 for a in recommended if a.get('recommendation_type') == 'interest_based')
+                popular_count = sum(1 for a in recommended if a.get('recommendation_type') == 'popular')
+                print(f"[RECOMMENDATION DEBUG] total recommendations = {len(recommended)}")
+                print(f"[RECOMMENDATION DEBUG] interest based count = {interest_count}")
+                print(f"[RECOMMENDATION DEBUG] popular count = {popular_count}")
                 
                 # Create a generator that yields the recommendation message
                 def recommendation_generator():

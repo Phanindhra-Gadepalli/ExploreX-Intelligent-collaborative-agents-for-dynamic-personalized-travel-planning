@@ -199,13 +199,27 @@ class RecommendAgent:
             content = content.strip()
             
             # Clean up potential markdown formatting
-            if content.startswith("```json"):
-                content = content[7:-3]
-            elif content.startswith("```"):
-                content = content[3:-3]
+            import re
+            json_match = re.search(r'\[.*\]', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
                 
-            pois = json.loads(content.strip())
+            try:
+                pois = json.loads(content)
+            except json.JSONDecodeError as e:
+                print(f"[RECOMMEND_AGENT] JSON decode error: {e}. Attempting ast.literal_eval.")
+                import ast
+                try:
+                    pois = ast.literal_eval(content)
+                except Exception as eval_e:
+                    print(f"[RECOMMEND_AGENT] ast.literal_eval failed: {eval_e}")
+                    return []
+
             if isinstance(pois, list):
+                import uuid
+                for p in pois:
+                    if "id" not in p or not p["id"]:
+                        p["id"] = f"rag_{uuid.uuid4().hex[:8]}"
                 print(f"[RECOMMEND_AGENT] Successfully extracted {len(pois)} POIs from RAG knowledge.")
                 return pois
         except Exception as e:

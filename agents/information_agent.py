@@ -134,6 +134,67 @@ class InformationAgent:
         """
         return prompt
 
+    def _heuristic_interest_match(self, attr, user_prefs):
+        raw_hobbies = user_prefs.get('hobbies', '')
+        hobbies = str(raw_hobbies).lower().strip()
+        
+        print(f"\\n[INTEREST DEBUG] raw interests = {raw_hobbies}", flush=True)
+        
+        if not hobbies or hobbies == 'none':
+            return False
+            
+        # Normalize keywords
+        keyword_map = {
+            'waterfalls': ['water falls', 'waterfalls', 'waterfall', 'falls', 'cascade'],
+            'beaches': ['beaches', 'beach', 'sea beach', 'coast', 'coastal', 'shore'],
+            'temples': ['temples', 'temple', 'hindu temple', 'place of worship', 'religious', 'spiritual places', 'mandir', 'shrine'],
+            'sightseeing': ['general sightseeing', 'sight seeing', 'sightseeing', 'tourist attraction', 'tourism', 'landmark', 'monument', 'viewpoint', 'museum', 'history', 'fort', 'palace', 'heritage', 'places to visit', 'tourist attractions'],
+            'nature': ['nature', 'forest', 'wildlife', 'national park', 'mountain', 'hill', 'trek', 'hike'],
+        }
+        
+        # Determine which keyword groups the user is interested in
+        matched_groups = []
+        for group_name, keywords in keyword_map.items():
+            if any(k in hobbies for k in keywords):
+                matched_groups.append(group_name)
+                
+        print(f"[INTEREST DEBUG] normalized interests = {matched_groups}", flush=True)
+                
+        # Extract and normalize attraction fields
+        a_name = str(attr.get('name', '')).lower()
+        a_category = str(attr.get('category', '')).lower()
+        a_desc = str(attr.get('description', '')).lower()
+        a_type = str(attr.get('type', '')).lower()
+        a_source = str(attr.get('source', '')).lower()
+        
+        # Tags could be a list or dict depending on source
+        a_tags_raw = attr.get('tags', [])
+        a_osm_tags = attr.get('osm_tags', {})
+        a_types = attr.get('types', [])
+        
+        # Combine all relevant text fields into one searchable string for robustness
+        attr_text_pool = f"{a_name} {a_category} {a_desc} {a_type} {a_source} {str(a_tags_raw).lower()} {str(a_osm_tags).lower()} {str(a_types).lower()}"
+        
+        print(f"[ATTRACTION DEBUG] name='{a_name}' category='{a_category}' tags='{a_tags_raw}' types='{a_types}'", flush=True)
+
+        if not matched_groups:
+            # Fallback to simple substring match for unrecognized hobbies
+            parts = [p.strip() for p in hobbies.replace(',', ' ').split() if len(p.strip()) > 3]
+            for p in parts:
+                if p in attr_text_pool:
+                    print(f"  -> Matched fallback '{p}'", flush=True)
+                    return True
+            return False
+            
+        # Check if the attraction matches any of the user's matched groups
+        for group_name in matched_groups:
+            keywords = keyword_map[group_name]
+            if any(k in attr_text_pool for k in keywords):
+                print(f"  -> Matched group '{group_name}'", flush=True)
+                return True
+                
+        return False
+
     def _rerank_attractions_with_llm(self, attractions_list: list, user_prefs: dict, weather_summary: str = None):
         """Re-rank attractions using an LLM based on user preferences and weather."""
         if not self.llm:
@@ -154,7 +215,7 @@ class InformationAgent:
                 "price_level": attr.get("price_level"), "rating": attr.get("rating"),
             })
         
-        attraction_ids_tuple = tuple(sorted([attr.get('id', '') for attr in attractions_for_llm]))
+        attraction_ids_tuple = tuple(sorted([str(attr.get('id') or '') for attr in attractions_for_llm]))
         cache_key = self._get_rerank_cache_key(user_prefs, attraction_ids_tuple, weather_summary)
 
         if cache_key in self.llm_rerank_cache:
@@ -206,6 +267,12 @@ class InformationAgent:
         seen_ids = set()
         
         # Process interest-based first
+        for attr in attractions_list:
+            if self._heuristic_interest_match(attr, user_prefs) and attr['id'] not in seen_ids:
+                attr["recommendation_type"] = "interest_based"
+                ordered_attractions.append(attr)
+                seen_ids.add(attr['id'])
+                
         for id_ in ranked_ids_data.get("interest_based", []):
             if id_ in id_to_attraction_map and id_ not in seen_ids:
                 attr = id_to_attraction_map[id_]
@@ -266,7 +333,7 @@ class InformationAgent:
         )
         return is_indian
 
-    def city2geocode(self, city: str):
+    def city2geocode(self, city: str, expected_country: str = None):
         """
         Convert a city name to geographic coordinates.
 
@@ -277,7 +344,7 @@ class InformationAgent:
             dict with 'lat' and 'lng' keys (same format as before), or None
             if every provider fails.
         """
-        result = self.geocoder.geocode(city)
+        result = self.geocoder.geocode(city, expected_country=expected_country)
         if result is not None:
             cached_label = " [cached]" if result.cached else ""
             print(
@@ -306,10 +373,14 @@ class InformationAgent:
         
         initial_pois = self.poi_manager.get_attractions(lat, lng, radius, hobbies, poi_type)
         
-        # Add estimated_duration if missing
+        # Add estimated_duration if missing and validate image_url
         for poi in initial_pois:
             if 'estimated_duration' not in poi:
                 poi['estimated_duration'] = self.estimate_duration(poi.get('category', 'tourist_attraction'), {})
+            
+            img_url = poi.get("image_url")
+            if not img_url or not str(img_url).startswith("http"):
+                poi["image_url"] = self.poi_manager._fetch_pexels_image(poi.get("name", ""))
                 
         print(f"[INFO_AGENT] Processed details for {len(initial_pois)} POIs.")
         if not initial_pois:
@@ -328,56 +399,64 @@ class InformationAgent:
             print(f"[INFO_AGENT] Skipping LLM re-ranking. Returning all {len(initial_pois)} attractions from initial sort.")
             return initial_pois
 
-    def get_attractions_for_state(self, state_name: str, user_prefs: dict,
+    def get_attractions_for_state(self, state_name: str, state_cities: list, user_prefs: dict,
                                   weather_summary: str = None, total_number: int = 20):
         """
-        Fetch and rank attractions across an entire Indian state using Text Search.
+        Fetch and rank attractions across an entire Indian state using POIManager.
         """
         all_pois = []
         seen_ids = set()
 
         hobbies = user_prefs.get('hobbies') if user_prefs else None
         
-        queries = [
-            f"top tourist attractions in {state_name}",
-            f"famous forts and historical places in {state_name}",
-            f"famous temples and spiritual places in {state_name}"
-        ]
-        
-        if hobbies:
-            queries.append(f"top {hobbies} places in {state_name}")
-            
-        for query in queries:
-            print(f"[STATE_SEARCH] Running text search query: '{query}'")
-            try:
-                results = self.gmaps.places(query=query).get('results', [])
-                for place in results:
-                    pid = place.get('place_id')
-                    if pid and pid not in seen_ids:
-                        place['state_city'] = state_name
-                        
-                        # Filter out undesired types just in case
-                        undesired_types = {
-                            "travel_agency", "tour_operator", "restaurant", "food", 
-                            "cafe", "meal_takeaway", "meal_delivery", "lodging",
-                            "real_estate_agency", "car_rental", "atm", "bank", "convenience_store"
-                        }
-                        if not undesired_types.intersection(set(place.get("types", []))):
-                            all_pois.append(place)
+        success_count = 0
+        failed_count = 0
+        for city_name in state_cities:
+            city_query = f"{city_name}, {state_name}, India"
+            coords = self.city2geocode(city_query, expected_country="in")
+            if coords:
+                print(f"[STATE_SEARCH] Fetching attractions for {city_query}")
+                try:
+                    pois = self.poi_manager.get_attractions(
+                        lat=coords['lat'], lng=coords['lng'], 
+                        radius=15000, hobbies=hobbies, poi_type="tourist_attraction"
+                    )
+                    if pois:
+                        success_count += 1
+                        print(f"[ATTRACTION_PIPELINE] city={city_name} status=success poi_count={len(pois)}")
+                    else:
+                        failed_count += 1
+                        print(f"[ATTRACTION_PIPELINE] city={city_name} status=failed")
+
+                    for poi in pois:
+                        pid = poi.get('id')
+                        if pid and pid not in seen_ids:
+                            poi['state_city'] = state_name
+                            all_pois.append(poi)
                             seen_ids.add(pid)
-            except Exception as e:
-                print(f"[STATE_SEARCH_ERROR] Query '{query}' failed: {e}")
-                
-        print(f"[STATE_SEARCH] Found {len(all_pois)} raw POIs across state {state_name}.")
-        
+                except Exception as e:
+                    failed_count += 1
+                    print(f"[ATTRACTION_PIPELINE] city={city_name} status=provider_failure error={e}")
+
+        print(f"[ATTRACTION_PIPELINE] State search completed. Total cities attempted: {len(state_cities)}. Successful: {success_count}. Failed: {failed_count}. Raw POIs deduplicated: {len(all_pois)}")
+                        
         if not all_pois:
             return []
             
         # Add basic info to POIs from their first search result structure
         for poi in all_pois:
-            poi['id'] = poi.get('place_id')
+            raw_id = poi.get('place_id') or poi.get('id')
+            if raw_id:
+                poi['id'] = str(raw_id)
             if 'geometry' in poi and 'location' in poi['geometry']:
                 poi['location'] = poi['geometry']['location']
+                
+            if 'estimated_duration' not in poi:
+                poi['estimated_duration'] = self.estimate_duration(poi.get('category', 'tourist_attraction'), {})
+                
+            img_url = poi.get("image_url")
+            if not img_url or not str(img_url).startswith("http"):
+                poi["image_url"] = self.poi_manager._fetch_pexels_image(poi.get("name", ""))
 
         # Sort combined pool by rating before LLM rerank
         all_pois.sort(key=lambda x: (x.get('rating') is None, -(float(x.get('rating', 0) or 0))))

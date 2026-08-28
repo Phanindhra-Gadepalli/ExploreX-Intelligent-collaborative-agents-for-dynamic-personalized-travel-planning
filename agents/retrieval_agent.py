@@ -11,6 +11,7 @@ regardless of source, so all downstream agents work without modification.
 """
 
 import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import time
 import hashlib
 from langchain.vectorstores import Chroma

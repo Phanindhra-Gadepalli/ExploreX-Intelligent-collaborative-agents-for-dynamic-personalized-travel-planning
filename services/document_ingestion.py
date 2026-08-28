@@ -1,4 +1,5 @@
 import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import json
 import sys
 from langchain.vectorstores import Chroma

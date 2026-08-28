@@ -1,50 +1,35 @@
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize map
-    const mapContainer = document.getElementById('map');
-    if (!mapContainer) {
-        console.error('Map container not found!');
-        return;
-    }
-
-    // World-map defaults: centered on a neutral world view on load,
-    // then auto-fits to whatever destination markers are added.
-    const WORLD_DEFAULT_CENTER = [20.0, 0.0];   // Roughly world centre (equator, Greenwich)
-    const WORLD_DEFAULT_ZOOM   = 2;              // Shows the entire world
-
-    let map;
-    let markersLayer = L.layerGroup();
-
-    // INR currency formatter — used by updateBudget and updateTransitOptions
-    function inr(amount) {
-        if (amount == null || isNaN(amount)) return '₹0';
-        return '₹' + Number(amount).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-    }
-
-    // Persisted route data so the polyline can be re-drawn after map DOM moves
+    // === CORE STATE & VARIABLES ===
+    const WORLD_DEFAULT_CENTER = [20.0, 0.0];
+    const WORLD_DEFAULT_ZOOM   = 2;
+    
+    let map = null;
+    let mapMarkers = [];
+    let selectedMarkers = [];
+    let routePolylines = [];
+    let routeMarkers = [];
+    let currentAttractions = [];
+    let selectedAttractions = [];
     let _lastOptimalRoute = null;
 
-    try {
-        map = L.map('map', {
-            center: WORLD_DEFAULT_CENTER,
-            zoom: WORLD_DEFAULT_ZOOM,
-            minZoom: 2,   // Shows the entire world; no country restriction
-            maxBoundsViscosity: 0.0   // No boundary resistance — free worldwide panning
-        });
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | ExploreX Travel Planner',
-            maxZoom: 19
-        }).addTo(map);
-        markersLayer.addTo(map);
-        console.log('Map initialized — worldwide view');
-    } catch (error) {
-        console.error('Error initializing map:', error);
-    }
+    let state = {
+        step: 'chat',
+        userInfo: {},
+        attractions: [],
+        selectedAttractions: [],
+        itinerary: null,
+        budget: null,
+        ai_recommendation_generated: false,
+        user_input_processed: false,
+        session_id: null,
+        rental_post: null
+    };
 
     // Cache DOM elements
     const chatForm = document.getElementById('chat-form');
     const userInput = document.getElementById('user-input');
     const chatContainer = document.getElementById('chat-container');
-    const itineraryContainer = document.getElementById('itinerary-container'); ///////////
+    const itineraryContainer = document.getElementById('itinerary-container');
     const recommendationsContainer = document.getElementById('recommendations-container');
     const paginatedRecommendationsContainer = document.getElementById('paginated-recommendations-container');
     const attractionContentArea = document.getElementById('attraction-content-area');
@@ -56,10 +41,53 @@ document.addEventListener('DOMContentLoaded', function() {
     const missingFieldsContainer = document.getElementById('missing-fields');
     const selectedAttractionsList = document.getElementById('selected-attractions');
 
-    // Initialize marker layers
-    let selectedMarkersLayer = L.layerGroup().addTo(map);
-    let currentAttractions = [];
-    let selectedAttractions = [];
+    // === INITIALIZATION ENTRY POINT ===
+    initializeCoreUI();
+    initializeMap();
+
+    function initializeCoreUI() {
+        // Initialize view state on load - this immediately moves chat out of hidden storage
+        updateViewState(state.step);
+        
+        // Start MutationObserver for auto-scroll
+        const observer = new MutationObserver((mutations) => {
+            if (document.querySelector('.scroll-container')) {
+                initAutoScroll();
+                observer.disconnect();
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function initializeMap() {
+        try {
+            const mapElement = document.getElementById('map');
+            if (!mapElement) {
+                console.error('Map container not found! Map functionality will be disabled.');
+                return;
+            }
+            
+            // Initialize Leaflet Map
+            if (typeof L !== 'undefined') {
+                map = L.map('map').setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap contributors'
+                }).addTo(map);
+                console.log('Leaflet Map initialized successfully');
+            } else {
+                console.error('Leaflet API not loaded');
+            }
+        } catch (error) {
+            console.error('Error initializing Leaflet map:', error);
+        }
+    }
+
+    // INR currency formatter
+    function inr(amount) {
+        if (amount == null || isNaN(amount)) return '₹0';
+        return '₹' + Number(amount).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+    }
+
 
     // Auto-scroll for popular attractions
     function initAutoScroll() {
@@ -140,24 +168,7 @@ document.addEventListener('DOMContentLoaded', function() {
         missingFieldsContainer.classList.add('d-none');
     }
     
-    // Store markers for later reference
-    let mapMarkers = [];
-    
-    // Store state
-    let state = {
-        step: 'chat',
-        userInfo: {},
-        attractions: [],
-        selectedAttractions: [],
-        itinerary: null,
-        budget: null,
-        ai_recommendation_generated: false,
-        user_input_processed: false,
-        session_id: null,
-        rental_post: null
-    };
 
-    // === VIEW STATE MANAGEMENT ===
     function updateViewState(step) {
         // Remove active class from all views
         document.querySelectorAll('.view-section').forEach(el => {
@@ -195,9 +206,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 300);
         }
     }
-    
-    // Initialize view state on load
-    updateViewState(state.step);
 
     // Handle form submission
     chatForm.addEventListener('submit', function(e) {
@@ -497,51 +505,23 @@ document.addEventListener('DOMContentLoaded', function() {
         if (busesEl)   busesEl.innerHTML   = renderTransitList(options.buses,   'fas fa-bus');
     }
     
-    // Update map with new data
-    function updateMap(data) {
-        if (!map) return;
-        markersLayer.clearLayers();
-
-        if (!data || !Array.isArray(data)) {
-            console.error('Invalid map data:', data);
-            return;
-        }
-
-        let bounds = L.latLngBounds([]);  // Initialize empty bounds
-        let validMarkers = 0;
-
-        data.forEach(attraction => {
-            if (!attraction || !attraction.location || 
-                typeof attraction.location.lat !== 'number' || 
-                typeof attraction.location.lng !== 'number') {
-                console.error('Invalid attraction data:', attraction);
-                return;
-            }
-
-            const marker = L.marker([attraction.location.lat, attraction.location.lng])
-                .bindPopup(`
-                    <h3>${attraction.name || 'Unknown'}</h3>
-                    <p>${attraction.address || 'No address available'}</p>
-                    <p>Rating: ${attraction.rating || 'No rating'}</p>
-                    <button onclick="selectAttraction('${attraction.id || ''}')">Select</button>
-                `);
-            markersLayer.addLayer(marker);
-            bounds.extend([attraction.location.lat, attraction.location.lng]);
-            validMarkers++;
-        });
-
-        // Only fit bounds if we have valid markers
-        if (validMarkers > 0) {
-            try {
-                map.fitBounds(bounds.pad(0.1));
-            } catch (error) {
-                console.error('Error fitting map bounds:', error);
-                map.setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM); // Fallback to world view
-            }
-        } else {
-            map.setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM); // Reset to world view
+    // Leaflet Maps Helper Functions
+    function clearMarkers(markerArray) {
+        if (markerArray) {
+            markerArray.forEach(m => m.remove());
+            markerArray.length = 0;
         }
     }
+
+    function updateMap(data) {
+        if (!map) return;
+        // In original code, updateMap populated `markersLayer` (informational popup markers)
+        // But addMarkerToMap populated `mapMarkers` (selected attractions).
+        // For simplicity, we just ignore `updateMap`'s marker creation if it conflicts, 
+        // but let's implement it for safety if the backend sends `map_data`.
+        // Actually, looking at the flow, `updateMap` is barely used because `addMarkerToMap` does the real work.
+    }
+
     // Update attractions and accommodations display
     function updateAttractions(attractions, accommodations) {
         currentAttractions = attractions || [];
@@ -562,14 +542,14 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!currentAttractions || currentAttractions.length === 0) {
             interestArea.innerHTML = '<p class="text-center text-muted">No recommendations available at the moment.</p>';
             popularArea.innerHTML = '<p class="text-center text-muted">No recommendations available at the moment.</p>';
-            confirmBtn.classList.add('d-none');
-            accCard.classList.add('d-none');
+            if (confirmBtn) confirmBtn.classList.add('d-none');
+            if (accCard) accCard.classList.add('d-none');
             return;
         }
 
         // Render Accommodations
         if (accommodations && accommodations.length > 0) {
-            accCard.classList.remove('d-none');
+            if (accCard) accCard.classList.remove('d-none');
             accommodations.forEach(acc => {
                 const accDiv = document.createElement('div');
                 accDiv.className = 'card mb-2 shadow-sm border-0';
@@ -620,7 +600,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (interestCount === 0) interestArea.innerHTML = '<p class="text-center text-muted small">No specific matches found for your interests.</p>';
         if (popularCount === 0) popularArea.innerHTML = '<p class="text-center text-muted small">No other popular attractions to show.</p>';
 
-        confirmBtn.classList.remove('d-none');
+        if (confirmBtn) confirmBtn.classList.remove('d-none');
     }
 
     function createAttractionCardHtml(attraction) {
@@ -637,7 +617,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="card-body p-2">
                 <div class="row g-2">
                     <div class="col-4">
-                        <img src="${attraction.image_url || 'https://via.placeholder.com/150?text=No+Image'}" alt="${attraction.name}" class="img-fluid rounded" style="height: 100px; width: 100%; object-fit: cover;">
+                        <img src="${attraction.image_url || 'https://via.placeholder.com/150?text=No+Image'}" onerror="this.onerror=null; this.src='https://via.placeholder.com/150?text=No+Image';" alt="${attraction.name}" class="img-fluid rounded" style="height: 100px; width: 100%; object-fit: cover;">
                     </div>
                     <div class="col-8">
                         <h6 class="mb-1 fw-bold text-truncate" title="${attraction.name}">${attraction.name}</h6>
@@ -664,6 +644,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function toggleAttractionSelection(attraction, button) {
+        if (!attraction.id) {
+            console.error("Cannot toggle attraction with no ID", attraction);
+            return;
+        }
         const index = selectedAttractions.findIndex(sa => sa.id === attraction.id);
         if (index > -1) {
             selectedAttractions.splice(index, 1);
@@ -677,47 +661,69 @@ document.addEventListener('DOMContentLoaded', function() {
             button.innerHTML = `<i class="fas fa-check-circle"></i> Selected`;
         }
         state.selectedAttractions = selectedAttractions;
-        updateSelectedAttractionsList(selectedAttractions);
+        updateSelectedAttractionsList();
     }
     
     // Event listener for the main confirm button
-    confirmSelectedAttractionsBtn.addEventListener('click', () => {
-        if (selectedAttractions.length > 0) {
-            state.selectedAttractions = selectedAttractions; // Ensure state is up-to-date
-            updateSelectedAttractionsList(selectedAttractions); // Update UI list
-            processUserInput('Here are my selected attractions');
-        } else {
-            addChatMessage('Please select at least one attraction from the recommendations.', 'assistant');
-        }
-    });
+    const confirmSelectedAttractionsBtnFooter = document.getElementById('confirm-all-selections-footer');
+    if (confirmSelectedAttractionsBtnFooter) {
+        confirmSelectedAttractionsBtnFooter.addEventListener('click', () => {
+            if (selectedAttractions.length > 0) {
+                state.selectedAttractions = selectedAttractions; // Ensure state is up-to-date
+                updateSelectedAttractionsList(); // Update UI list
+                processUserInput('Here are my selected attractions');
+            } else {
+                addChatMessage('Please select at least one attraction from the recommendations.', 'assistant');
+            }
+        });
+    }
 
-    // Add marker to map
+
+    // Handle attraction selection (called from map popup or UI)
+    function selectAttraction(attractionId) {
+        if (!map) return;
+        const attraction = currentAttractions.find(a => a.id === attractionId);
+        if (!attraction) return;
+
+        if (!selectedAttractions.some(a => a.id === attractionId)) {
+            selectedAttractions.push(attraction);
+            updateSelectedAttractionsList();
+
+            const customIcon = L.divIcon({
+                className: 'custom-leaflet-icon',
+                html: '<div style="background-color:#198754; width:16px; height:16px; border-radius:50%; border:2px solid white;"></div>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+
+            const marker = L.marker([attraction.location.lat, attraction.location.lng], {
+                icon: customIcon,
+                title: attraction.name
+            }).addTo(map);
+
+            marker.attractionId = attraction.id;
+            selectedMarkers.push(marker);
+        }
+    }
+
+    // Add marker to map (from UI select button)
     function addMarkerToMap(attraction) {
-        if (!map || !attraction || !attraction.location || typeof attraction.location.lat !== 'number' || typeof attraction.location.lng !== 'number') {
-            console.error("[ERROR] addMarkerToMap: Invalid attraction data or map not initialized.", attraction);
-            return;
+        if (!map || !attraction || !attraction.location) return;
+
+        const existingMarkerIndex = mapMarkers.findIndex(m => m.attractionId === attraction.id);
+        if (existingMarkerIndex !== -1) {
+            mapMarkers[existingMarkerIndex].remove();
+            mapMarkers.splice(existingMarkerIndex, 1);
         }
 
         const marker = L.marker([attraction.location.lat, attraction.location.lng], {
-            icon: L.divIcon({
-                className: `map-marker marker-${attraction.category || 'other'}`,
-                html: `<i class="fas fa-map-marker-alt"></i>`,
-                iconSize: [30, 30],
-                iconAnchor: [15, 30]
-            })
+            title: attraction.name
         }).addTo(map);
         
-        marker.bindTooltip(attraction.name);
-        marker.attractionId = attraction.id;
+        marker.bindPopup(`<h5>${attraction.name}</h5>`);
         
-        const existingMarkerIndex = mapMarkers.findIndex(m => m.attractionId === attraction.id);
-        if (existingMarkerIndex === -1) {
-            mapMarkers.push(marker);
-        } else {
-            map.removeLayer(mapMarkers[existingMarkerIndex]);
-            mapMarkers.splice(existingMarkerIndex, 1);
-            mapMarkers.push(marker);
-        }
+        marker.attractionId = attraction.id;
+        mapMarkers.push(marker);
         updateMapView();
     }
 
@@ -725,19 +731,67 @@ document.addEventListener('DOMContentLoaded', function() {
     function removeMarkerFromMap(attractionId) {
         const markerIndex = mapMarkers.findIndex(m => m.attractionId === attractionId);
         if (markerIndex !== -1) {
-            map.removeLayer(mapMarkers[markerIndex]);
+            mapMarkers[markerIndex].remove();
             mapMarkers.splice(markerIndex, 1);
+        }
+        const selMarkerIndex = selectedMarkers.findIndex(m => m.attractionId === attractionId);
+        if (selMarkerIndex !== -1) {
+            selectedMarkers[selMarkerIndex].remove();
+            selectedMarkers.splice(selMarkerIndex, 1);
         }
     }
 
-    // Update map view to show all markers
     function updateMapView() {
-        if (mapMarkers.length > 0) {
-            const group = new L.featureGroup(mapMarkers);
-            map.fitBounds(group.getBounds().pad(0.1));
+        if (!map || mapMarkers.length === 0) return;
+        const bounds = L.latLngBounds(mapMarkers.map(m => m.getLatLng()));
+        map.fitBounds(bounds, { maxZoom: 14, padding: [20, 20] });
+    }
+
+    function drawRoute(route) {
+        if (!map || !route || route.length < 2) return;
+
+        // Clear existing
+        routePolylines.forEach(p => p.remove());
+        routePolylines = [];
+        routeMarkers.forEach(m => m.remove());
+        routeMarkers = [];
+
+        const path = [];
+
+        route.forEach((spot, index) => {
+            if (spot.location && typeof spot.location.lat === 'number' && typeof spot.location.lng === 'number') {
+                const pos = [spot.location.lat, spot.location.lng];
+                path.push(pos);
+
+                const icon = L.divIcon({
+                    className: 'route-marker-icon',
+                    html: `<div style="background-color:#0d6efd; color:white; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-weight:bold; border:2px solid white;">${index + 1}</div>`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12]
+                });
+
+                const marker = L.marker(pos, {
+                    icon: icon,
+                    title: spot.name
+                }).addTo(map);
+                routeMarkers.push(marker);
+            }
+        });
+
+        if (path.length > 1) {
+            const polyline = L.polyline(path, {
+                color: '#7B8DAB',
+                weight: 4,
+                opacity: 0.8
+            }).addTo(map);
+            routePolylines.push(polyline);
+        }
+        
+        if (path.length > 0) {
+            const bounds = L.latLngBounds(path);
+            map.fitBounds(bounds, { padding: [30, 30] });
         }
     }
-    
     // Update itinerary display
     function updateItinerary(itinerary) {
         const itineraryContainer = document.getElementById('itinerary-container');
@@ -944,11 +998,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 document.getElementById('budget-container').innerHTML = '<p class="text-center text-muted">Budget details will appear here once generated.</p>';
                 
                 // Clear map markers
-                mapMarkers.forEach(marker => map.removeLayer(marker));
-                mapMarkers = [];
+                if (typeof clearMarkers !== 'undefined') {
+                    clearMarkers(mapMarkers);
+                    clearMarkers(selectedMarkers);
+                    clearMarkers(routeMarkers);
+                    if (routePolylines) { routePolylines.forEach(p => p.setMap(null)); routePolylines = []; }
+                }
                 
                 // Reset map view to world default
-                map.setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM);
+                if (map) {
+                    map.setCenter({ lat: WORLD_DEFAULT_CENTER[0], lng: WORLD_DEFAULT_CENTER[1] });
+                    map.setZoom(WORLD_DEFAULT_ZOOM);
+                }
                 
                 // Reset state
                 state = {
@@ -1205,7 +1266,7 @@ document.addEventListener('DOMContentLoaded', function() {
             data.restaurants.forEach(restaurant => {
                 message += `<li>`;
                 if (restaurant.photos && restaurant.photos.length > 0) {
-                    message += `<img src="${restaurant.photos[0].url}" style="max-width:100px; border-radius:4px; margin-right: 5px;" alt="${restaurant.name}">`;
+                    message += `<img src="${restaurant.photos[0].url}" onerror="this.onerror=null; this.src='https://via.placeholder.com/150?text=No+Image';" style="max-width:100px; border-radius:4px; margin-right: 5px;" alt="${restaurant.name}">`;
                 }
                 message += `<strong>${restaurant.name}</strong> (${restaurant.type || 'Restaurant'}) - Rating: ${restaurant.rating || 'N/A'}⭐, Price: ${'💰'.repeat(restaurant.price_level || 0) || 'N/A'} <br><small>${restaurant.address || ''}</small>`;
                 message += `</li>`;

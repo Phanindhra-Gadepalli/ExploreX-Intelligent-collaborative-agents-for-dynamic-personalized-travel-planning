@@ -14,6 +14,7 @@ class POIManager:
     def __init__(self):
         self.geoapify_key = os.environ.get("GEOAPIFY_API_KEY", "").strip()
         self.pexels_key = os.environ.get("PEXELS_API_KEY", "61rwGmkV5QiMaa09spVra8Jtu6itcRovaDurdOiKrRgBLgCsAHAKLzyM").strip()
+        self._cache = {} # In-memory cache for POIs
 
     from functools import lru_cache
 
@@ -38,35 +39,84 @@ class POIManager:
         return None
     def get_attractions(self, lat: float, lng: float, radius: int = 10000, hobbies: str = None, poi_type: str = "tourist_attraction"):
         """
-        Attempts to fetch attractions using the provider cascade.
-        Returns a list of normalized POI dictionaries.
+        Fetches attractions by merging results from Geoapify (if available) and OSM (Overpass).
+        Returns a deduplicated list of normalized POI dictionaries.
         """
         print(f"[POI_MANAGER] Fetching attractions for lat={lat}, lng={lng}")
+        cache_key = f"{lat:.4f},{lng:.4f}"
         
-        # 1. Try OpenStreetMap (Overpass) FIRST
-        try:
-            results = self._fetch_osm_attractions(lat, lng, radius, hobbies)
-            if results:
-                print(f"[POI_MANAGER] Overpass OSM succeeded, returning {len(results)} POIs.")
-                return results
-        except Exception as e:
-            print(f"[POI_MANAGER][OSM] Failed: {e}")
-
-        # 2. Try Geoapify (if enabled) as fallback
+        # Check cache (valid for 1 hour)
+        if cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
+            if time.time() - cache_entry['timestamp'] < 3600:
+                print(f"[POI_MANAGER] Cache hit for {cache_key}. Returning {len(cache_entry['data'])} POIs.")
+                return cache_entry['data']
+        
+        candidates = []
+        
+        # 1. Try Geoapify (if enabled)
         if self.geoapify_key:
             try:
-                results = self._fetch_geoapify_attractions(lat, lng, radius, hobbies)
-                if results:
-                    print(f"[POI_MANAGER] Geoapify succeeded, returning {len(results)} POIs.")
-                    return results
-            except Exception:
-                pass # Silenced to avoid console clutter (400/401)
+                geo_results = self._fetch_geoapify_attractions(lat, lng, radius, hobbies)
+                if geo_results:
+                    print(f"[POI_MANAGER] Geoapify returned {len(geo_results)} POIs.")
+                    candidates.extend(geo_results)
+            except Exception as e:
+                print(f"[POI_MANAGER][Geoapify] Failed: {e}")
         else:
             print("[POI_MANAGER] Skipping Geoapify (no API key).")
-
-        # All providers failed
-        print("[POI_MANAGER] All live POI providers failed to return attractions.")
-        return []
+            
+        # 2. Try OpenStreetMap (Overpass)
+        try:
+            osm_results = self._fetch_osm_attractions(lat, lng, radius, hobbies)
+            if osm_results:
+                print(f"[POI_MANAGER] OSM returned {len(osm_results)} POIs.")
+                candidates.extend(osm_results)
+        except Exception as e:
+            print(f"[POI_MANAGER][OSM] Failed: {e}")
+            
+        if not candidates:
+            print("[POI_MANAGER] All live POI providers failed to return attractions.")
+            return []
+            
+        # Deduplicate and normalize candidates
+        final_pois = self._deduplicate_pois(candidates)
+        print(f"[POI_MANAGER] Merged & Deduplicated: {len(final_pois)} total final POIs.")
+        
+        # Save to cache
+        self._cache[cache_key] = {
+            'timestamp': time.time(),
+            'data': final_pois
+        }
+        
+        return final_pois
+        
+    def _deduplicate_pois(self, pois):
+        """Deduplicates POIs based on normalized name and proximity."""
+        seen_names = set()
+        deduplicated = []
+        for poi in pois:
+            name = poi.get('name', '').strip().lower()
+            if not name:
+                continue
+                
+            # Basic string matching for exact names
+            if name in seen_names:
+                continue
+                
+            # Could also check lat/lng proximity here, but name is generally sufficient
+            # when merged from providers that might have slight coordinate variations.
+            is_dup = False
+            for seen in seen_names:
+                if (name in seen and len(name) > 5) or (seen in name and len(seen) > 5):
+                    is_dup = True
+                    break
+            
+            if not is_dup:
+                seen_names.add(name)
+                deduplicated.append(poi)
+                
+        return deduplicated
 
     def get_accommodations(self, lat: float, lng: float, budget: str, number: int = 4, radius: int = 15000):
         """
@@ -99,9 +149,15 @@ class POIManager:
 
     def _fetch_geoapify_attractions(self, lat, lng, radius, hobbies):
         categories = "tourism.attraction,natural,historic,entertainment"
-        url = f"https://api.geoapify.com/v2/places?categories={categories}&filter=circle:{lng},{lat},{radius}&limit=30&apiKey={self.geoapify_key}"
+        url = "https://api.geoapify.com/v2/places"
+        params = {
+            "categories": categories,
+            "filter": f"circle:{lng},{lat},{radius}",
+            "limit": 30,
+            "apiKey": self.geoapify_key
+        }
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
         except requests.exceptions.RequestException as e:
             safe_msg = str(e).replace(self.geoapify_key, "****") if self.geoapify_key else str(e)
@@ -135,9 +191,15 @@ class POIManager:
         return normalized
 
     def _fetch_geoapify_accommodations(self, lat, lng, radius, budget, number):
-        url = f"https://api.geoapify.com/v2/places?categories=accommodation&filter=circle:{lng},{lat},{radius}&limit={max(10, number)}&apiKey={self.geoapify_key}"
+        url = "https://api.geoapify.com/v2/places"
+        params = {
+            "categories": "accommodation",
+            "filter": f"circle:{lng},{lat},{radius}",
+            "limit": max(10, number),
+            "apiKey": self.geoapify_key
+        }
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
         except requests.exceptions.RequestException as e:
             safe_msg = str(e).replace(self.geoapify_key, "****") if self.geoapify_key else str(e)
@@ -169,10 +231,11 @@ class POIManager:
     # -------------------------------------------------------------------------
 
     def _execute_overpass_query(self, query: str):
-        """Execute query against Overpass API with fallbacks and robust headers."""
+        """Execute query against Overpass API with fallbacks and robust headers/retries."""
         endpoints = [
             "https://overpass-api.de/api/interpreter",
-            "https://lz4.overpass-api.de/api/interpreter"
+            "https://lz4.overpass-api.de/api/interpreter",
+            "https://z.overpass-api.de/api/interpreter"
         ]
         
         headers = {
@@ -182,33 +245,42 @@ class POIManager:
         }
         
         last_exception = None
+        max_retries = 2
+        
         for endpoint in endpoints:
-            try:
-                resp = requests.post(
-                    endpoint, 
-                    data={"data": query}, 
-                    headers=headers, 
-                    timeout=8
-                )
-                resp.raise_for_status()
-                return resp.json().get('elements', [])
-            except Exception as e:
-                last_exception = e
-                print(f"[POI_MANAGER][OSM] Failed endpoint {endpoint}: {e}")
-                time.sleep(1) # Small delay before trying next fallback
-                
-        raise Exception(f"All Overpass endpoints failed. Last error: {last_exception}")
+            for attempt in range(max_retries):
+                try:
+                    resp = requests.post(
+                        endpoint, 
+                        data={"data": query}, 
+                        headers=headers, 
+                        timeout=15
+                    )
+                    if resp.status_code == 429:
+                        print(f"[POI_MANAGER][OSM] Rate limited on {endpoint}. Backing off.")
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                        
+                    resp.raise_for_status()
+                    return resp.json().get('elements', [])
+                except Exception as e:
+                    last_exception = e
+                    print(f"[POI_MANAGER][OSM] Attempt {attempt+1} failed on {endpoint}: {e}")
+                    time.sleep(1.5 * (attempt + 1)) # Exponential backoff
+            
+        raise Exception(f"All Overpass endpoints exhausted. Last error: {last_exception}")
 
     def _fetch_osm_attractions(self, lat, lng, radius, hobbies):
         query = f"""
-        [out:json][timeout:15];
+        [out:json][timeout:25];
         (
-          node["tourism"~"attraction|museum|viewpoint|gallery"](around:{radius},{lat},{lng});
-          node["historic"](around:{radius},{lat},{lng});
-          node["leisure"~"park|nature_reserve"](around:{radius},{lat},{lng});
-          node["amenity"~"place_of_worship"](around:{radius},{lat},{lng});
+          nwr["tourism"~"attraction|museum|viewpoint|gallery|theme_park"](around:{radius},{lat},{lng});
+          nwr["historic"](around:{radius},{lat},{lng});
+          nwr["leisure"~"park|nature_reserve"](around:{radius},{lat},{lng});
+          nwr["natural"~"waterfall|beach|peak"](around:{radius},{lat},{lng});
+          nwr["amenity"~"place_of_worship"](around:{radius},{lat},{lng});
         );
-        out 30 tags center;
+        out 200 tags center;
         """
         
         elements = self._execute_overpass_query(query)
@@ -218,6 +290,12 @@ class POIManager:
             tags = el.get('tags', {})
             name = tags.get('name') or tags.get('name:en')
             if not name: continue
+            
+            # Strict skip of irrelevant incidental amenities
+            if tags.get('amenity') in ['bank', 'atm', 'hospital', 'clinic', 'dentist', 'pharmacy', 'police', 'post_office', 'waste_basket', 'vending_machine', 'parking', 'fuel', 'taxi']:
+                continue
+            if tags.get('shop') or tags.get('office') or tags.get('highway'):
+                continue
             
             el_type = tags.get('tourism') or tags.get('historic') or tags.get('amenity') or tags.get('leisure') or "attraction"
             

@@ -6,6 +6,10 @@ if sys.stdout.encoding != 'utf-8':
 if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+# Definitive fix for chromadb posthog telemetry errors and SQLite threading issues
+from unittest.mock import MagicMock
+sys.modules['posthog'] = MagicMock()
+
 from flask import Flask, render_template, request, jsonify, session, send_from_directory, send_file, Response
 from flask_session import Session
 import os

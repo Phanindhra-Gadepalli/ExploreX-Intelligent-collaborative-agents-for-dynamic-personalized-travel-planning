@@ -541,7 +541,19 @@ class TravelGraph:
             new_rag_pois = []
             for rp in rag_pois:
                 name_lower = rp.get("name", "").lower().strip()
-                if name_lower and name_lower not in existing_names:
+                if not name_lower: continue
+                
+                is_duplicate = False
+                for ex_name in existing_names:
+                    if len(name_lower) > 5 and len(ex_name) > 5:
+                        if name_lower in ex_name or ex_name in name_lower:
+                            is_duplicate = True
+                            break
+                    elif name_lower == ex_name:
+                        is_duplicate = True
+                        break
+                        
+                if not is_duplicate:
                     # Ensure valid image_url for RAG POIs
                     img_url = rp.get("image_url")
                     if not img_url or not str(img_url).startswith("http"):
@@ -627,16 +639,33 @@ class TravelGraph:
                         "map_data": []
                     }
                 
-                # We already ranked and categorized them in InformationAgent, so we don't call recommend_core_attractions.
-                # Just use them directly.
-                recommended = attractions
+                # CRITICAL FIX: InformationAgent._rerank_attractions_with_llm() already:
+                #   1. Calls _heuristic_interest_match() to set matched_interests
+                #   2. Sets recommendation_type = 'interest_based' | 'popular'
+                #   3. Sorts by _internal_score
+                # Do NOT re-run RecommendAgent which uses a different opaque scorer
+                # that discards the correct interest matching. Use state attractions directly.
+                
+                # Apply lightweight fallback classification for any POIs missing recommendation_type
+                hobbies = user_prefs.get('hobbies', '').lower()
+                for attr in attractions:
+                    if 'recommendation_type' not in attr:
+                        # Apply heuristic from InformationAgent
+                        matched = self.info_agent._heuristic_interest_match(attr, user_prefs)
+                        attr['matched_interests'] = matched
+                        attr['recommendation_type'] = 'interest_based' if matched else 'popular'
+                
+                recommended = attractions  # Already ranked and labelled by InformationAgent
                 
                 # Add specific logging for recommendations
                 interest_count = sum(1 for a in recommended if a.get('recommendation_type') == 'interest_based')
                 popular_count = sum(1 for a in recommended if a.get('recommendation_type') == 'popular')
+                print(f"[RECOMMENDATION DEBUG] destination={user_prefs.get('city')} interests={hobbies}")
                 print(f"[RECOMMENDATION DEBUG] total recommendations = {len(recommended)}")
                 print(f"[RECOMMENDATION DEBUG] interest based count = {interest_count}")
                 print(f"[RECOMMENDATION DEBUG] popular count = {popular_count}")
+                if interest_count == 0 and hobbies:
+                    print(f"[RECOMMENDATION WARNING] 0 interest-based matches despite hobbies='{hobbies}'. Check keyword_map in InformationAgent._heuristic_interest_match().")
                 
                 # Create a generator that yields the recommendation message
                 def recommendation_generator():
@@ -978,9 +1007,14 @@ class TravelGraph:
                     "end_time": "15:00",
                     "is_accommodation": True
                 }
-                # Insert at the beginning of day 1, or after the first activity if it starts before 14:00
+                # Insert accommodation then re-sort the whole day by start_time
+                # so the displayed order is always chronological (e.g. 14:00
+                # check-in appears after the 09:00–13:00 morning attractions).
                 if "spots" in itinerary[0]:
-                    itinerary[0]["spots"].insert(0, acc_spot)
+                    itinerary[0]["spots"].append(acc_spot)
+                    itinerary[0]["spots"] = self.route_agent._sort_spots_by_time(
+                        itinerary[0]["spots"]
+                    )
                     
             # Store in state
             self.state["itinerary"] = itinerary

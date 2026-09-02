@@ -106,6 +106,8 @@ class StrategyAgent:
                 - Group nearby attractions on the same day.
                 - Consider India-specific factors: midday heat (plan outdoor activities in morning/evening),
                   local transport availability, religious site timings, and festival seasons.
+                - IMPORTANT: Do NOT duplicate the same attractions across multiple days just to fill the itinerary.
+                - IMPORTANT: If there are fewer available attractions than required for the days, leave some days empty or allocate them to "Relaxation" or "Leisure". Do NOT invent fake attractions.
                 
                 User preference considerations:
                 - Adjust for mobility/health conditions, families with children.
@@ -194,9 +196,23 @@ class StrategyAgent:
                     if name in name_to_all_map:
                         additional_attractions_details.append(name_to_all_map[name])
                     else:
-                        # Handle case where a planned attraction name might not be in our initial list (e.g. slight name mismatch from LLM)
-                        # For now, we'll just skip it, but ideally, we'd have fuzzy matching or a way to confirm
-                        print(f"Warning: Planned attraction '{name}' not found in the provided all_attractions list.")
+                        # Handle case where a planned attraction name might not be in our initial list
+                        # Try fuzzy matching (case-insensitive, substring)
+                        name_lower = name.lower().strip()
+                        matched_obj = None
+                        for key, obj in name_to_all_map.items():
+                            key_lower = key.lower().strip()
+                            if name_lower == key_lower:
+                                matched_obj = obj
+                                break
+                            if len(name_lower) > 5 and (name_lower in key_lower or key_lower in name_lower):
+                                matched_obj = obj
+                                break
+                        if matched_obj:
+                            print(f"[STRATEGY] Fuzzy matched '{name}' -> '{matched_obj['name']}'")
+                            additional_attractions_details.append(matched_obj)
+                        else:
+                            print(f"[STRATEGY WARNING] Planned attraction '{name}' not found even with fuzzy match. Skipping.")
 
 
             # The function needs to return "additional_attractions" which is used later as the primary list of attractions.

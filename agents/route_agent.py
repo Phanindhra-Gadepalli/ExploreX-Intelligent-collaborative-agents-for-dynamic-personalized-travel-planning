@@ -199,6 +199,59 @@ class RouteAgent:
         return distance
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Chronological sort helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _time_to_minutes(time_str):
+        """
+        Convert a time string to minutes from midnight for numeric comparison.
+
+        Handles formats:
+            "09:00"  → 540      (24-hour, zero-padded)
+            "9:00"   → 540      (24-hour, no pad)
+            "9:30"   → 570
+            "2:00 PM"→ 840
+            "10:00 AM"→ 600
+            "12:00 PM"→ 720
+            "12:00 AM"→ 0
+
+        Returns 9999 (sorts to end) for any unparseable string.
+        """
+        if not time_str or not isinstance(time_str, str):
+            return 9999
+        t = time_str.strip().upper()
+        try:
+            # AM/PM form
+            if 'AM' in t or 'PM' in t:
+                for fmt in ("%I:%M %p", "%I:%M%p"):
+                    try:
+                        dt = datetime.strptime(t, fmt)
+                        return dt.hour * 60 + dt.minute
+                    except ValueError:
+                        continue
+                return 9999
+            # 24-hour form  HH:MM or H:MM
+            parts = t.split(':')
+            if len(parts) == 2:
+                return int(parts[0]) * 60 + int(parts[1])
+        except (ValueError, IndexError):
+            pass
+        return 9999
+
+    def _sort_spots_by_time(self, spots):
+        """
+        Return *spots* sorted ascending by start_time (minutes from midnight).
+
+        This is the single, authoritative sort applied to every day's spot list
+        before the itinerary is finalised.  Time-window order (chronological)
+        always takes priority over TSP geographic order; TSP only decides the
+        visit sequence when multiple spots share the same time slot.
+        """
+        return sorted(spots, key=lambda s: self._time_to_minutes(s.get("start_time", "")))
+
+
+    # ─────────────────────────────────────────────────────────────────────────
     # TSP solvers
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -303,6 +356,14 @@ class RouteAgent:
                 current_day_spots_timed.append(spot_with_time)
 
                 start_offset_hours += spot_duration  # Next spot starts after this one
+
+            # ── CHRONOLOGICAL SORT ──────────────────────────────────────────
+            # Sort the day's spots by start_time ascending so the displayed
+            # order is always chronological regardless of TSP output order or
+            # LLM suggestion order.  Accommodation events added later will be
+            # re-sorted at the call site before the itinerary is finalised.
+            current_day_spots_timed = self._sort_spots_by_time(current_day_spots_timed)
+            # ────────────────────────────────────────────────────────────────
 
             itinerary.append({
                 "day": day_number,

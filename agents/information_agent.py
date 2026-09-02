@@ -97,9 +97,8 @@ class InformationAgent:
         weather_str = weather_summary if weather_summary else "No specific weather summary provided."
 
         prompt = f"""
-        You are an expert India travel recommender. Your task is to rank the provided list of attractions
+        You are an expert travel recommender. Your task is to rank the provided list of attractions
         based on the user's preferences, attraction details, and current weather summary.
-        Only consider attractions within India.
 
         User Preferences:
         {user_prefs_str}
@@ -107,195 +106,235 @@ class InformationAgent:
         Weather Summary for the trip period:
         {weather_str}
 
-        Attractions List (with details including 'id', 'name', 'category', 'estimated_duration', 'price_level', 'rating', and 'description'):
+        Attractions List:
         {attractions_str}
 
-        Please rank attractions considering:
-        1.  **User Hobbies & Interests**: Match with hobbies (e.g., '{user_prefs.get('hobbies', 'general sightseeing')}').
-            India-specific: temples/ghats for spirituality, forts/palaces for history, beaches for leisure, etc.
-        2.  **User Health & Accessibility**: Consider health ('{user_prefs.get('health', 'good')}') and accessibility.
-        3.  **Suitability for Children**: If traveling with kids (Kids: '{user_prefs.get('kids', 'no')}'), prioritize family-friendly.
-        4.  **Budget Constraints**: Align with budget '{user_prefs.get('budget', 'medium')}'.
-        5.  **Weather Impact**: Prioritize indoor/outdoor activities based on weather.
-        6.  CRITICAL: Completely avoid and remove any "travel agencies", "tour operators", "food courts", "restaurants", or "booking services" from the recommendations! Only recommend actual tourist attractions, landmarks, parks, museums, viewpoints, temples, beaches, forts, etc.
+        Please evaluate each attraction considering:
+        1.  **User Hobbies & Interests**: E.g., '{user_prefs.get('hobbies', 'general sightseeing')}'.
+        2.  **Tourist Importance**: Is this a major, must-see landmark or a minor incidental object?
+        3.  **Data Quality**: Penalize completely irrelevant entries (like generic offices or banks).
+        4.  **Weather & Health Constraints**.
 
-        You must categorize the attractions into two lists:
-        1. "interest_based": Attractions that directly match the user's hobbies and interests. Rank them from MOST to LEAST recommended.
-        2. "popular_fallback": If there are not enough attractions matching the user's specific interests, select the city's most famous and highly rated tourist attractions to include here as additional suggestions.
+        CRITICAL: Completely avoid and remove any "travel agencies", "tour operators", "food courts", "restaurants", "ATMs", "banks", or "booking services".
 
-        Return a JSON dictionary containing these two lists of attraction IDs.
-        Output MUST be a valid JSON object. Example:
-        {{
-            "interest_based": ["id1", "id2"],
-            "popular_fallback": ["id3", "id4"]
-        }}
+        Return a JSON array of objects. Each object MUST have:
+        - "id": The exact ID of the attraction.
+        - "relevance_score": An integer from 0 to 100 based on overall relevance.
+        - "interest_match": An array of matched interest strings (e.g., ["heritage", "sightseeing"]).
+        - "tourist_value": A string: "high", "medium", or "low".
 
-        Only return the JSON object. No other text.
+        Output MUST be a valid JSON array. Example:
+        [
+            {{
+                "id": "osm_12345",
+                "relevance_score": 95,
+                "interest_match": ["heritage", "sightseeing"],
+                "tourist_value": "high"
+            }}
+        ]
+
+        Only return the JSON array. No other text.
         """
         return prompt
 
     def _heuristic_interest_match(self, attr, user_prefs):
+        """Returns a list of matched keyword groups."""
         raw_hobbies = user_prefs.get('hobbies', '')
         hobbies = str(raw_hobbies).lower().strip()
         
-        print(f"\\n[INTEREST DEBUG] raw interests = {raw_hobbies}", flush=True)
-        
         if not hobbies or hobbies == 'none':
-            return False
+            return []
             
-        # Normalize keywords
+        # Normalize keywords - expanded to cover OSM tag values, Indian tourism terms, and Geoapify categories
         keyword_map = {
-            'waterfalls': ['water falls', 'waterfalls', 'waterfall', 'falls', 'cascade'],
-            'beaches': ['beaches', 'beach', 'sea beach', 'coast', 'coastal', 'shore'],
-            'temples': ['temples', 'temple', 'hindu temple', 'place of worship', 'religious', 'spiritual places', 'mandir', 'shrine'],
-            'sightseeing': ['general sightseeing', 'sight seeing', 'sightseeing', 'tourist attraction', 'tourism', 'landmark', 'monument', 'viewpoint', 'museum', 'history', 'fort', 'palace', 'heritage', 'places to visit', 'tourist attractions'],
-            'nature': ['nature', 'forest', 'wildlife', 'national park', 'mountain', 'hill', 'trek', 'hike'],
+            'waterfalls': ['water falls', 'waterfalls', 'waterfall', 'falls', 'cascade', 'abhisheka', 'jharna'],
+            'beaches': ['beaches', 'beach', 'sea beach', 'coast', 'coastal', 'shore', 'bay', 'cove', 'lagoon', 'promenade'],
+            'temples': ['temples', 'temple', 'hindu temple', 'place of worship', 'religious', 'spiritual places',
+                        'mandir', 'shrine', 'mosque', 'church', 'gurudwara', 'masjid', 'dargah', 'jain temple',
+                        'buddhist temple', 'pagoda', 'monastery', 'ashram', 'kund', 'ghat', 'gurdwara',
+                        'devalaya', 'devasthan', 'sansthan'],
+            'heritage': ['historic', 'monument', 'fort', 'palace', 'tomb', 'archaeological', 'unesco', 'museum',
+                         'architecture', 'cultural', 'heritage', 'castle', 'memorial', 'ruins', 'citadel',
+                         'fortress', 'bastion', 'rampart', 'haveli', 'mahal', 'qila', 'burj', 'minaret',
+                         'gateway', 'darwaza', 'arch', 'pillar', 'stupa', 'baoli', 'stepwell', 'mausoleum',
+                         'cenotaph', 'cenotaphs', 'chhatri', 'sculpture', 'ancient', 'medieval', 'mughal',
+                         'maratha', 'rajput', 'colonial', 'heritage site', 'world heritage', 'protected site',
+                         'archaeological survey', 'asi site', 'historical', 'antiquity', 'antiquities',
+                         'amphitheater', 'amphitheatre'],
+            'sightseeing': ['sight seeing', 'sightseeing', 'tourist attraction', 'tourism', 'landmark',
+                            'viewpoint', 'famous place', 'iconic site', 'places to visit', 'tourist attractions',
+                            'observation', 'observation deck', 'view point', 'lookout', 'panorama',
+                            'notable building', 'notable_building', 'notable', 'wonders', 'visitor center',
+                            'market', 'bazaar', 'chowk', 'garden', 'park', 'botanical garden', 'zoological',
+                            'zoo', 'aquarium', 'planetarium', 'science center', 'art gallery', 'gallery',
+                            'exhibition', 'cultural center', 'community center', 'stadium', 'arena',
+                            'popular', 'must visit', 'must-visit', 'attraction'],
+            'nature': ['nature', 'forest', 'wildlife', 'national park', 'mountain', 'hill', 'trek', 'hike',
+                       'valley', 'meadow', 'peak', 'ridge', 'plateau', 'sanctuary', 'reserve', 'jungle',
+                       'river', 'lake', 'dam', 'reservoir', 'wetland', 'mangrove', 'grassland', 'dune',
+                       'desert', 'cave', 'gorge', 'cliff', 'rock formation', 'hot spring', 'geyser',
+                       'ecological', 'eco park', 'bird watching', 'adventure'],
         }
+
+        
+        # Tokenize hobbies robustly
+        hobbies_cleaned = hobbies.replace(',', ' ').replace('&', ' ').replace('/', ' ').replace('with', ' ').replace('plus', ' ')
+        hobbies_parts = [p.strip() for p in hobbies_cleaned.split()]
+        hobbies_rejoined = " ".join(hobbies_parts)
         
         # Determine which keyword groups the user is interested in
-        matched_groups = []
+        user_groups = []
         for group_name, keywords in keyword_map.items():
-            if any(k in hobbies for k in keywords):
-                matched_groups.append(group_name)
+            if any(k in hobbies_rejoined for k in keywords):
+                user_groups.append(group_name)
                 
-        print(f"[INTEREST DEBUG] normalized interests = {matched_groups}", flush=True)
-                
-        # Extract and normalize attraction fields
+        # Combine all relevant text fields into one searchable string for robustness
         a_name = str(attr.get('name', '')).lower()
         a_category = str(attr.get('category', '')).lower()
         a_desc = str(attr.get('description', '')).lower()
         a_type = str(attr.get('type', '')).lower()
         a_source = str(attr.get('source', '')).lower()
-        
-        # Tags could be a list or dict depending on source
         a_tags_raw = attr.get('tags', [])
         a_osm_tags = attr.get('osm_tags', {})
         a_types = attr.get('types', [])
         
-        # Combine all relevant text fields into one searchable string for robustness
         attr_text_pool = f"{a_name} {a_category} {a_desc} {a_type} {a_source} {str(a_tags_raw).lower()} {str(a_osm_tags).lower()} {str(a_types).lower()}"
         
-        print(f"[ATTRACTION DEBUG] name='{a_name}' category='{a_category}' tags='{a_tags_raw}' types='{a_types}'", flush=True)
-
-        if not matched_groups:
-            # Fallback to simple substring match for unrecognized hobbies
-            parts = [p.strip() for p in hobbies.replace(',', ' ').split() if len(p.strip()) > 3]
-            for p in parts:
-                if p in attr_text_pool:
-                    print(f"  -> Matched fallback '{p}'", flush=True)
-                    return True
-            return False
-            
-        # Check if the attraction matches any of the user's matched groups
-        for group_name in matched_groups:
+        matched_groups = []
+        for group_name in user_groups:
             keywords = keyword_map[group_name]
             if any(k in attr_text_pool for k in keywords):
-                print(f"  -> Matched group '{group_name}'", flush=True)
-                return True
+                matched_groups.append(group_name)
                 
-        return False
+        return matched_groups
+
+    def _evaluate_attraction_quality(self, attr):
+        """Evaluate base data quality to filter out incidental OSM nodes."""
+        a_name = str(attr.get('name', '')).lower()
+        a_category = str(attr.get('category', '')).lower()
+        
+        # Extremely low quality or irrelevant entities
+        low_value_keywords = ['bank', 'atm', 'hospital', 'clinic', 'pharmacy', 'dentist', 'office', 'company', 'factory', 'industrial', 'road junction', 'traffic', 'parking', 'supermarket', 'grocery', 'travel agency']
+        
+        if any(k in a_category or k in str(attr.get('types', [])).lower() for k in low_value_keywords):
+            return "low"
+            
+        if any(f"amenity': '{k}'" in str(attr.get('osm_tags', {})) for k in low_value_keywords):
+            return "low"
+            
+        return "medium"
+
+    def _calculate_score(self, attr, user_prefs, llm_score=0):
+        """Deterministic scoring for an attraction."""
+        score = 0
+        
+        # 1. Base Quality
+        quality = self._evaluate_attraction_quality(attr)
+        if quality == "low":
+            score -= 1000  # Heavily penalize
+            
+        # 2. Interest Relevance
+        matched_groups = self._heuristic_interest_match(attr, user_prefs)
+        score += (len(matched_groups) * 30)
+        
+        # 3. Source and Popularity
+        if attr.get("source") == "rag":
+            score += 40  # RAG typically holds the best hand-curated places
+            
+        rating = attr.get("rating")
+        if rating and isinstance(rating, (int, float)):
+            score += (rating * 5)
+            
+        # 4. LLM Score (0-100)
+        score += (llm_score * 0.5)
+        
+        return score, matched_groups
 
     def _rerank_attractions_with_llm(self, attractions_list: list, user_prefs: dict, weather_summary: str = None):
         """Re-rank attractions using an LLM based on user preferences and weather."""
-        if not self.llm:
-            print("LLM not available for re-ranking. Returning original list.")
-            return attractions_list
         if not attractions_list:
             return []
-        if not user_prefs:
-             print("User preferences not provided for LLM re-ranking. Returning original list.")
-             return attractions_list
 
-        attractions_for_llm = []
-        for attr in attractions_list:
-            attractions_for_llm.append({
-                "id": attr.get("id"), "name": attr.get("name"), "category": attr.get("category"),
-                "description": attr.get("description", attr.get("name","No description available.")),
-                "estimated_duration": attr.get("estimated_duration"),
-                "price_level": attr.get("price_level"), "rating": attr.get("rating"),
-            })
-        
-        attraction_ids_tuple = tuple(sorted([str(attr.get('id') or '') for attr in attractions_for_llm]))
-        cache_key = self._get_rerank_cache_key(user_prefs, attraction_ids_tuple, weather_summary)
+        # 1. Ask LLM for scores
+        llm_results_map = {}
+        if self.llm and user_prefs:
+            attractions_for_llm = []
+            for attr in attractions_list:
+                attractions_for_llm.append({
+                    "id": attr.get("id"), "name": attr.get("name"), "category": attr.get("category"),
+                    "description": attr.get("description", attr.get("name","No description available.")),
+                })
+            
+            attraction_ids_tuple = tuple(sorted([str(attr.get('id') or '') for attr in attractions_for_llm]))
+            cache_key = self._get_rerank_cache_key(user_prefs, attraction_ids_tuple, weather_summary)
 
-        if cache_key in self.llm_rerank_cache:
-            print(f"Returning cached LLM re-ranking for key: {cache_key}")
-            ranked_ids = self.llm_rerank_cache[cache_key]
-        else:
-            prompt_str = self._create_llm_rerank_prompt(user_prefs, attractions_for_llm, weather_summary)
-            messages = [
-                SystemMessage(content="You are an expert travel recommender. Your goal is to rank attractions based on user preferences, attraction details, and weather conditions. Ensure a good balance of attraction categories if appropriate."),
-                HumanMessage(content=prompt_str)
-            ]
-            try:
-                print(f"[INFO_AGENT_LLM] Requesting LLM re-ranking for {len(attractions_for_llm)} items. Cache key: {cache_key}")
-                response = self.llm.invoke(messages)
-                llm_output_content = response.content
-                
-                ranked_ids_data = {}
+            if cache_key in self.llm_rerank_cache:
+                print(f"Returning cached LLM re-ranking for key: {cache_key}")
+                llm_parsed = self.llm_rerank_cache[cache_key]
+            else:
+                prompt_str = self._create_llm_rerank_prompt(user_prefs, attractions_for_llm, weather_summary)
+                messages = [
+                    SystemMessage(content="You are an expert travel recommender. Follow formatting strictly."),
+                    HumanMessage(content=prompt_str)
+                ]
                 try:
-                    if isinstance(llm_output_content, list):
-                        llm_output_content = "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in llm_output_content)
-                    if llm_output_content.strip().startswith("```json"):
-                        llm_output_content = llm_output_content.strip()[7:]
-                        if llm_output_content.strip().endswith("```"):
-                            llm_output_content = llm_output_content.strip()[:-3]
+                    response = self.llm.invoke(messages)
+                    llm_output_content = response.content.strip()
+                    if llm_output_content.startswith("```json"):
+                        llm_output_content = llm_output_content[7:]
+                        if llm_output_content.endswith("```"):
+                            llm_output_content = llm_output_content[:-3]
+                            
+                    llm_parsed = json.loads(llm_output_content.strip())
+                    self.llm_rerank_cache[cache_key] = llm_parsed
+                except Exception as e:
+                    print(f"[INFO_AGENT_LLM_ERROR] LLM parsing failed: {e}")
+                    llm_parsed = []
                     
-                    parsed_data = json.loads(llm_output_content.strip())
-                    if isinstance(parsed_data, dict):
-                        ranked_ids_data = parsed_data
-                    elif isinstance(parsed_data, list):
-                        # Fallback if LLM ignores instructions and returns a list
-                        ranked_ids_data = {"interest_based": parsed_data, "popular_fallback": []}
-                    else:
-                        print(f"[INFO_AGENT_LLM_ERROR] LLM output was not a dict: {parsed_data}")
-                        raise ValueError("LLM output not in expected dictionary format.")
+            if isinstance(llm_parsed, list):
+                for item in llm_parsed:
+                    if isinstance(item, dict) and "id" in item:
+                        llm_results_map[item["id"]] = item
 
-                except (json.JSONDecodeError, ValueError) as e:
-                    print(f"[INFO_AGENT_LLM_ERROR] Parsing LLM re-ranking response: {e}. LLM Raw Output: '{llm_output_content}'")
-                    return attractions_list 
-                
-                self.llm_rerank_cache[cache_key] = ranked_ids_data
-                print(f"[INFO_AGENT_LLM] Cached LLM re-ranking for key: {cache_key}")
-
-            except Exception as e:
-                print(f"[INFO_AGENT_LLM_ERROR] Calling LLM for re-ranking: {e}")
-                return attractions_list
-
-        id_to_attraction_map = {attr['id']: attr for attr in attractions_list}
-        ordered_attractions = []
-        seen_ids = set()
-        
-        # Process interest-based first
+        # 2. Compute final deterministic scores
+        scored_attractions = []
         for attr in attractions_list:
-            if self._heuristic_interest_match(attr, user_prefs) and attr['id'] not in seen_ids:
-                attr["recommendation_type"] = "interest_based"
-                ordered_attractions.append(attr)
-                seen_ids.add(attr['id'])
+            llm_info = llm_results_map.get(attr.get("id"), {})
+            llm_score = llm_info.get("relevance_score", 0)
+            if isinstance(llm_score, str) and llm_score.isdigit(): llm_score = int(llm_score)
+            if not isinstance(llm_score, (int, float)): llm_score = 0
+            
+            final_score, matched_groups = self._calculate_score(attr, user_prefs, llm_score)
+            attr["_internal_score"] = final_score
+            attr["matched_interests"] = matched_groups
+            
+            # Use LLM tourist_value if high
+            if llm_info.get("tourist_value", "").lower() == "high":
+                attr["_internal_score"] += 20
                 
-        for id_ in ranked_ids_data.get("interest_based", []):
-            if id_ in id_to_attraction_map and id_ not in seen_ids:
-                attr = id_to_attraction_map[id_]
-                attr["recommendation_type"] = "interest_based"
-                ordered_attractions.append(attr)
-                seen_ids.add(id_)
-                
-        # Then process popular fallback
-        for id_ in ranked_ids_data.get("popular_fallback", []):
-            if id_ in id_to_attraction_map and id_ not in seen_ids:
-                attr = id_to_attraction_map[id_]
-                attr["recommendation_type"] = "popular"
-                ordered_attractions.append(attr)
-                seen_ids.add(id_)
+            attr["recommendation_type"] = "interest_based" if matched_groups else "popular"
+            scored_attractions.append(attr)
+
+        # 3. Sort by score
+        scored_attractions.sort(key=lambda x: x["_internal_score"], reverse=True)
         
-        # Add any remaining unranked attractions as popular
-        for attr in attractions_list:
-            if attr.get('id') not in seen_ids: 
-                attr["recommendation_type"] = "popular"
-                ordered_attractions.append(attr)
+        # 4. Filter out negative scores (low quality)
+        final_list = [a for a in scored_attractions if a["_internal_score"] >= 0]
         
-        print(f"[INFO_AGENT_LLM] Re-ranked list size: {len(ordered_attractions)}")
-        return ordered_attractions
+        # If we filtered everything, fallback to original but limit damage
+        if not final_list:
+            final_list = scored_attractions
+            
+        print(f"[INFO_AGENT_LLM] Re-ranked list size: {len(final_list)}")
+        
+        # 5. Print a quick debug summary
+        print(f"\\n[RECOMMENDATION SCORE DEBUG] Top 5 recommendations:")
+        for attr in final_list[:5]:
+            print(f"  Name: {attr.get('name')}")
+            print(f"  Matched Interests: {attr.get('matched_interests')}")
+            print(f"  Score: {attr.get('_internal_score')}\\n")
+            
+        return final_list
 
     def validate_indian_location(self, location_name: str):
         """
@@ -372,6 +411,74 @@ class InformationAgent:
         hobbies = user_prefs.get('hobbies') if user_prefs else None
         
         initial_pois = self.poi_manager.get_attractions(lat, lng, radius, hobbies, poi_type)
+        
+        # RAG / Static Fallback if all primary providers fail
+        if not initial_pois and user_prefs and user_prefs.get('city'):
+            city = user_prefs.get('city')
+            print(f"[INFO_AGENT] Primary POI providers failed for '{city}'. Triggering RAG Fallback.")
+            try:
+                from agents.retrieval_agent import RetrievalAgent
+                if not hasattr(self, 'retrieval_agent') or self.retrieval_agent is None:
+                    self.retrieval_agent = RetrievalAgent()
+                
+                # Retrieve from RAG
+                rag_context = self.retrieval_agent._retrieve_from_rag(city, user_prefs)
+                
+                if rag_context and "No relevant travel information found" not in rag_context:
+                    print(f"[INFO_AGENT] RAG Context found for {city}. Asking LLM to extract POIs.")
+                    if self.llm:
+                        prompt = f"""
+                        Extract tourist attractions from the following text about {city}.
+                        Return a valid JSON array of objects.
+                        Each object must have exactly these keys:
+                        - "name": string
+                        - "category": string (e.g. "heritage", "nature", "museum", "temple", "sightseeing")
+                        - "description": string (short description)
+                        - "rating": float (approximate rating out of 5.0, e.g. 4.5)
+                        - "price_level": int (1 to 4)
+                        
+                        Text:
+                        {rag_context}
+                        
+                        Respond ONLY with the JSON array. Do not include any other text.
+                        """
+                        response = self.llm.invoke([HumanMessage(content=prompt)])
+                        content = response.content.strip()
+                        if content.startswith("```json"):
+                            content = content[7:-3].strip()
+                        elif content.startswith("```"):
+                            content = content[3:-3].strip()
+                        
+                        try:
+                            parsed_pois = json.loads(content)
+                            if isinstance(parsed_pois, list) and len(parsed_pois) > 0:
+                                print(f"[INFO_AGENT] Successfully extracted {len(parsed_pois)} POIs from RAG.")
+                                # map back to initial_pois format
+                                for p in parsed_pois:
+                                    p['source'] = 'rag_fallback'
+                                    p['id'] = p.get('name')
+                                    # We don't have exact lat/lng from text easily, so we just use the city center roughly
+                                    p['location'] = {'lat': lat, 'lng': lng} 
+                                initial_pois = parsed_pois
+                        except json.JSONDecodeError as e:
+                            print(f"[INFO_AGENT] LLM RAG extraction failed JSON parse: {e}")
+            except Exception as e:
+                print(f"[INFO_AGENT] RAG Fallback failed: {e}")
+                
+            if not initial_pois:
+                print(f"[INFO_AGENT] RAG Fallback failed or returned empty for '{city}'. Triggering Static Fallback.")
+                initial_pois = [
+                    {
+                        "id": f"{city}_center", "name": f"{city.title()} City Center", "category": "sightseeing", 
+                        "description": f"The vibrant main center of {city.title()}.", "rating": 4.0, "price_level": 2,
+                        "location": {'lat': lat, 'lng': lng}, "source": "static_fallback"
+                    },
+                    {
+                        "id": f"{city}_heritage", "name": f"{city.title()} Historical District", "category": "heritage", 
+                        "description": f"Explore the rich heritage and culture of {city.title()}.", "rating": 4.5, "price_level": 2,
+                        "location": {'lat': lat, 'lng': lng}, "source": "static_fallback"
+                    }
+                ]
         
         # Add estimated_duration if missing and validate image_url
         for poi in initial_pois:

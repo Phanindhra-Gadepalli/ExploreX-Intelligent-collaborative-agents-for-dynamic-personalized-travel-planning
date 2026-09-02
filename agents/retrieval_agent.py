@@ -14,8 +14,9 @@ import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import time
 import hashlib
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from chromadb.config import Settings
 
 # ---------------------------------------------------------------------------
 # Known Indian cities / states for instant O(1) lookup — derived from
@@ -99,7 +100,8 @@ class RetrievalAgent:
         self.vector_db = Chroma(
             collection_name="travel_knowledge",
             embedding_function=self.embeddings,
-            persist_directory=self.persist_directory
+            persist_directory=self.persist_directory,
+            client_settings=Settings(anonymized_telemetry=False)
         )
 
         # In-memory cache for international destination web results

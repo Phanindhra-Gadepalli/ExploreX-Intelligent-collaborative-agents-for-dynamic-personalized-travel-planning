@@ -7,6 +7,24 @@ class RecommendAgent:
     def __init__(self, model_name="gemini-flash-lite-latest"):
         """Initialize RecommendAgent with AI model for personalized recommendations"""
         self.model = ChatGoogleGenerativeAI(model=model_name, temperature=0.7)
+        try:
+            from sentence_transformers import SentenceTransformer
+            import torch
+            # Use CPU by default to avoid CUDA issues in some envs unless specified
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.embedder = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+        except ImportError:
+            print("Warning: sentence_transformers not installed. Semantic scoring will fallback to keyword matching.")
+            self.embedder = None
+            
+        self.taxonomy = {
+            'heritage': 'history, monuments, architecture, forts, palaces, ancient ruins, tombs, heritage site, historical landmark',
+            'nature': 'parks, gardens, wildlife, waterfalls, mountains, lakes, beaches, outdoors, scenic, viewpoint, flora, fauna',
+            'spirituality': 'temples, churches, mosques, shrines, religious, meditation, ashram, ghat, pilgrimage, holy',
+            'sightseeing': 'general sightseeing, landmarks, iconic places, tourist attraction, popular spot',
+            'adventure': 'trekking, hiking, water sports, camping, thrill, adventurous activities',
+            'culture': 'museums, art galleries, local markets, cultural centers, traditional, performing arts'
+        }
         
     def recommend_core_attractions(self, user_prefs, attractions, retrieved_knowledge=None):
         """Recommend core attractions based on user preferences"""
@@ -17,8 +35,20 @@ class RecommendAgent:
         health = user_prefs.get('health', 'good').lower()
         hobbies = user_prefs.get('hobbies', '').lower()
         
-        # Filter attractions based on preferences
-        filtered_attractions = []
+        # Expand user hobbies using taxonomy
+        expanded_hobbies = hobbies
+        for key, value in self.taxonomy.items():
+            if key in hobbies:
+                expanded_hobbies += f" {value}"
+                
+        user_embedding = None
+        if self.embedder and expanded_hobbies.strip():
+            user_embedding = self.embedder.encode(expanded_hobbies, convert_to_tensor=True)
+        elif self.embedder:
+            # If no hobbies provided, use a generic embedding to avoid errors
+            user_embedding = self.embedder.encode("general tourist attraction", convert_to_tensor=True)
+
+        scored_attractions = []
         for attraction in attractions:
             # Skip if category is completely missing as we need it for hobby matching
             if attraction.get('category') is None:
@@ -26,35 +56,93 @@ class RecommendAgent:
                 
             price_level = attraction.get('price_level') or 2
             
+            # Hard constraints (budget & health)
             # Budget filter
             if budget == 'low' and price_level > 2:
                 continue
             elif budget == 'medium' and price_level > 3:
                 continue
-            elif budget == 'high' and price_level > 4:
-                continue
             
-            # Family-friendly filter
-            if has_kids and not attraction.get('family_friendly', False):
-                continue
-            
-            # Health considerations
+            # Health considerations (hard filter)
             if health == 'limited' and attraction.get('accessibility') == 'limited':
                 continue
+                
+            # Family-friendly constraint
+            # Only exclude if explicitly marked as not family friendly or if category is inappropriate
+            if has_kids:
+                inappropriate_for_kids = ['nightclub', 'bar', 'pub', 'casino', 'liquor_store', 'adult_entertainment']
+                is_explicitly_not_family = attraction.get('family_friendly') is False
+                is_inappropriate_category = any(bad in str(attraction.get('category', '')).lower() for bad in inappropriate_for_kids)
+                if is_explicitly_not_family or is_inappropriate_category:
+                    continue
+                    
+            # SCORING
+            score = 0.0
             
-            filtered_attractions.append(attraction)
+            # 1. Semantic Score (40% weight)
+            semantic_score = 0.0
+            if user_embedding is not None:
+                from sentence_transformers import util
+                attr_text = f"{attraction.get('name', '')} {attraction.get('category', '')} {attraction.get('description', '')} {attraction.get('tags', '')}"
+                attr_emb = self.embedder.encode(attr_text, convert_to_tensor=True)
+                cos_sim = util.cos_sim(user_embedding, attr_emb).item()
+                semantic_score = max(0, cos_sim) * 40.0
+            else:
+                # Fallback heuristic
+                if any(h in str(attraction.get('category')).lower() for h in hobbies.split(',')):
+                    semantic_score = 40.0
+                elif any(h in str(attraction.get('description', '')).lower() for h in hobbies.split(',')):
+                    semantic_score = 20.0
+            
+            score += semantic_score
+            
+            # 2. Popularity Score (30% weight)
+            rating = float(attraction.get('rating', 0) or 0)
+            user_ratings_total = float(attraction.get('user_ratings_total', 0) or 0)
+            
+            # Normalize rating (0 to 5) -> (0 to 1) -> (0 to 30)
+            rating_norm = (rating / 5.0) * 15.0 
+            # Normalize review count (log scale, assuming 10,000 is a very popular spot)
+            import math
+            review_norm = min(15.0, (math.log10(user_ratings_total + 1) / 4.0) * 15.0)
+            
+            popularity_score = rating_norm + review_norm
+            score += popularity_score
+            
+            # 3. Category/Direct Match Bonus (20% weight)
+            if attraction.get('category') and attraction.get('category').lower() in hobbies:
+                score += 20.0
+                
+            # 4. Location Context (10% weight)
+            if attraction.get('location'):
+                score += 10.0
+                
+            scored_attractions.append((score, popularity_score, attraction))
+            
+        # Sort by total score descending
+        scored_attractions.sort(key=lambda x: x[0], reverse=True)
         
-        # Sort by rating and duration
-        filtered_attractions.sort(
-            key=lambda x: (
-                x.get('rating', 0) or 0,  # Handle None values for rating
-                -(x.get('estimated_duration', 0) or 0)  # Handle None values for duration, sort descending
-            ),
-            reverse=True
-        )
+        # Categorize into interest_based vs popular
+        final_attractions = []
+        seen_ids = set()
         
-        # Return top recommendations
-        return filtered_attractions[:10]
+        # Take top matches that are highly semantically aligned as interest_based
+        # and generally high scoring as popular
+        for score, popularity_score, attr in scored_attractions:
+            if attr['id'] in seen_ids:
+                continue
+            
+            # If the score is high and it has decent semantic alignment (more than just popularity), it's interest_based
+            if score >= 50.0 and (self.embedder is None or score > popularity_score + 10.0):
+                attr['recommendation_type'] = 'interest_based'
+            else:
+                attr['recommendation_type'] = 'popular'
+                
+            final_attractions.append(attr)
+            seen_ids.add(attr['id'])
+            
+        # Return top 15 recommendations to give a mix
+        return final_attractions[:15]
     
     def _create_recommendation_prompt(self, user_prefs, attractions, retrieved_knowledge=None):
         """Create prompt for the LLM to rank attractions"""

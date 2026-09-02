@@ -2,9 +2,10 @@ import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import json
 import sys
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.schema import Document
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.documents import Document
+from chromadb.config import Settings
 
 # ─────────────────────────────────────────────────────────────────────────────
 # COMPREHENSIVE INDIA KNOWLEDGE BASE
@@ -1038,7 +1039,8 @@ class DocumentIngestor:
         self.vector_db = Chroma(
             collection_name="travel_knowledge",
             embedding_function=self.embeddings,
-            persist_directory=self.persist_directory
+            persist_directory=self.persist_directory,
+            client_settings=Settings(anonymized_telemetry=False)
         )
 
     def load_india_knowledge_base(self):
@@ -1119,4 +1121,4 @@ if __name__ == "__main__":
         for r in results:
             dest = r.metadata.get("destination", "Unknown")
             cat = r.metadata.get("category", "Unknown")
-            print(f"  → [{dest} | {cat}] {r.page_content[:120]}...")
+            print(f"  -> [{dest} | {cat}] {r.page_content[:120]}...")

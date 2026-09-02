@@ -1042,42 +1042,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Error resetting conversation:', error);
             });
     }
-    // Handle attraction selection
-    function selectAttraction(attractionId) {
-        if (!map) return;
-        const attraction = currentAttractions.find(a => a.id === attractionId);
-        if (!attraction) return;
-
-        if (!selectedAttractions.some(a => a.id === attractionId)) {
-            selectedAttractions.push(attraction);
-            updateSelectedAttractionsList();
-
-            const marker = L.marker([attraction.location.lat, attraction.location.lng], {
-                icon: L.divIcon({
-                    className: 'selected-marker',
-                    html: '<div class="selected-marker-inner"></div>',
-                    iconSize: [20, 20]
-                })
-            });
-            selectedMarkersLayer.addLayer(marker);
-        }
-    }
+    // NOTE: selectAttraction is defined above (~line 683). Duplicate removed.
+    function _removedDuplicateSelectAttraction_doNotCall(attractionId) {}
 
     // Update selected attractions list
-    function updateSelectedAttractionsList(attractions) {
+    // NOTE: always reads from module-level selectedAttractions — no parameter needed
+    function updateSelectedAttractionsList() {
         const selectedAttractionsList = document.getElementById('selected-attractions');
         if (!selectedAttractionsList) return;
         
         selectedAttractionsList.innerHTML = '';
         
-        if (!attractions || attractions.length === 0) {
+        if (!selectedAttractions || selectedAttractions.length === 0) {
             selectedAttractionsList.innerHTML = '<p class="text-center text-muted">No attractions selected yet.</p>';
             return;
         }
         
-        attractions.forEach(attraction => {
+        selectedAttractions.forEach(attraction => {
             const card = document.createElement('div');
-            card.className = 'card mb-2';
+            card.className = 'card mb-2 border-0 shadow-sm';
             
             let priceLevel = '';
             for (let i = 0; i < (attraction.price_level || 0); i++) {
@@ -1087,14 +1070,14 @@ document.addEventListener('DOMContentLoaded', function() {
             let rating = attraction.rating ? `⭐ ${attraction.rating}` : '';
             
             card.innerHTML = `
-                <div class="card-body">
-                    <h6 class="card-title mb-1">${attraction.name}</h6>
-                    <p class="card-text mb-1">
-                        <small class="text-muted">${attraction.category || 'attraction'}</small>
-                        <small class="ms-2">${priceLevel}</small>
-                        <small class="ms-2">${rating}</small>
-                    </p>
-                    <small class="text-muted">${attraction.estimated_duration || 2} hours</small>
+                <div class="card-body py-2 px-3">
+                    <h6 class="card-title mb-1 fw-semibold text-truncate">${attraction.name}</h6>
+                    <div class="d-flex gap-2 align-items-center">
+                        <small class="badge bg-light text-dark border">${attraction.category || 'attraction'}</small>
+                        ${priceLevel ? `<small>${priceLevel}</small>` : ''}
+                        ${rating ? `<small>${rating}</small>` : ''}
+                    </div>
+                    <small class="text-muted">${attraction.estimated_duration || 2} hrs</small>
                 </div>
             `;
             
@@ -1104,108 +1087,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Remove attraction from selection
     function removeAttraction(attractionId) {
-        if (!map) return;
         const attraction = selectedAttractions.find(a => a.id === attractionId);
         if (!attraction) return;
 
         selectedAttractions = selectedAttractions.filter(a => a.id !== attractionId);
+        state.selectedAttractions = selectedAttractions;
+        removeMarkerFromMap(attractionId);
         updateSelectedAttractionsList();
-
-        selectedMarkersLayer.eachLayer(layer => {
-            if (layer.getLatLng().equals([attraction.location.lat, attraction.location.lng])) {
-                selectedMarkersLayer.removeLayer(layer);
-            }
-        });
     }
 
-    // Add new function to draw route on map
-    function drawRoute(route) {
-        if (!map || !route || route.length < 2) return;
 
-        // Clear any existing route
-        if (window.routeLayer) {
-            map.removeLayer(window.routeLayer);
-        }
+    // fetchNearbyPlaces function
 
-        // Create a new layer for the route
-        window.routeLayer = L.layerGroup().addTo(map);
-
-        // const dayColors = ['#FF5733', '#33FF57', '#3357FF', '#FF33A1', '#A133FF', '#33FFA1', '#FFC300', '#C70039']; // Keep for marker colors if needed or define marker colors separately
-        // const spotsByDay = {}; // No longer needed for polylines
-
-        // // Group spots by day -- No longer needed for polylines
-        // route.forEach(spot => {
-        //     if (!spot.day) {
-        //         console.warn("Spot missing day information:", spot);
-        //         return; 
-        //     }
-        //     if (!spotsByDay[spot.day]) {
-        //         spotsByDay[spot.day] = [];
-        //     }
-        //     spotsByDay[spot.day].push(spot);
-        // });
-
-        const allPolylinesGroup = L.featureGroup().addTo(window.routeLayer);
-
-        // Draw a single polyline for the entire route with a default color
-        const allPoints = route.map(spot => {
-            if (spot.location && typeof spot.location.lat === 'number' && typeof spot.location.lng === 'number') {
-                return [spot.location.lat, spot.location.lng];
-            }
-            return null; // Handle potential missing/invalid locations
-        }).filter(p => p !== null); // Filter out null points
-
-        if (allPoints.length > 1) {
-            const polyline = L.polyline(allPoints, {
-                color: '#7B8DAB', // New Primary Color (Soft Slate Blue)
-                weight: 4,
-                opacity: 0.75,
-                smoothFactor: 1
-            }).addTo(window.routeLayer);
-            allPolylinesGroup.addLayer(polyline);
-        }
-
-        // // Draw polylines for each day -- REMOVED
-        // for (const dayKey in spotsByDay) { ... }
-
-        // Add markers for each point with numbers (iterating the original flat route for sequential numbering)
-        route.forEach((spot, index) => {
-            if (!spot.location || typeof spot.location.lat !== 'number' || typeof spot.location.lng !== 'number') {
-                console.warn("Skipping marker for spot with invalid location:", spot);
-                return;
-            }
-            // Determine day-specific class for the marker background
-            const dayNumber = spot.day || 1; // Fallback to day 1 if not specified
-            const markerBgClass = `day-${dayNumber}-marker-bg`;
-
-            const marker = L.marker([spot.location.lat, spot.location.lng], {
-                icon: L.divIcon({
-                    className: `route-marker ${markerBgClass}`, // Add day-specific background class
-                    html: `<div class="route-marker-number">${index + 1}</div>`,
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12] // Center the number icon
-                })
-            }).addTo(window.routeLayer);
-            
-            marker.bindPopup(`
-                <h3>${spot.name || 'Unknown'}</h3>
-                <p>Stop ${index + 1}</p>
-            `);
-        });
-        
-        // Fit bounds to show the entire route if any polylines were drawn
-        if (Object.keys(allPolylinesGroup.getLayers()).length > 0) {
-            map.fitBounds(allPolylinesGroup.getBounds().pad(0.1));
-        } else if (route.length > 0) {
-            // Fallback if no polylines (e.g., all days have 1 spot) but markers exist
-            const singleMarkersGroup = L.featureGroup(route.map(spot => L.marker([spot.location.lat, spot.location.lng])));
-            if (Object.keys(singleMarkersGroup.getLayers()).length > 0) {
-                 map.fitBounds(singleMarkersGroup.getBounds().pad(0.2));
-            }
-        }
-    }
-
-    // Modify fetchNearbyPlaces function
     function fetchNearbyPlaces(attraction, containerId) {
         const nearbyContainer = document.getElementById(containerId);
         if (!nearbyContainer) {

@@ -7,31 +7,44 @@ from typing import Generator, Optional
 from pydantic import BaseModel, Field
 
 class TravelState(BaseModel):
-    name: Optional[str] = Field(description="User's name")
-    origin_city: Optional[str] = Field(description="The city the user is starting their journey from")
-    city: Optional[str] = Field(description="Destination city, state, or country anywhere in the world (e.g., 'Goa', 'Kerala', 'Paris', 'Tokyo', 'Dubai', 'Singapore', 'Rajasthan')")
-    days: Optional[str] = Field(description="Number of days for the trip (e.g. '4', '5')")
+    name: Optional[str] = Field(default=None, description="User's name")
+    origin_city: Optional[str] = Field(default=None, description="The city the user is starting their journey from")
+    city: Optional[str] = Field(default=None, description="Destination city, state, or country anywhere in the world (e.g., 'Goa', 'Kerala', 'Paris', 'Tokyo', 'Dubai', 'Singapore', 'Rajasthan')")
+    days: Optional[str] = Field(default=None, description="Number of days for the trip (e.g. '4', '5')")
     budget: Optional[str] = Field(
+        default=None,
         description="Budget category: 'low', 'medium', or 'high'. Set this ONLY when the user says low/medium/high/budget/luxury. "
                     "If the user states an INR amount (e.g. ₹50,000 or Rs 80000), leave this None and fill budget_amount instead."
     )
     budget_amount: Optional[int] = Field(
+        default=None,
         description="Explicit numerical budget in Indian Rupees (INR). Extract this when the user states a specific amount "
                     "such as '₹50,000', 'Rs 80000', '1 lakh', '50 thousand', 'budget is 60000', etc. "
                     "Convert lakhs: 1 lakh = 100000. Store the plain integer with no symbols."
     )
     budget_strictness: Optional[str] = Field(
+        default=None,
         description="Budget flexibility intent. Set to 'strict' when the user uses words like: "
                     "'must not exceed', 'strictly', 'do not exceed', 'keep below', 'maximum', "
                     "'must be within', 'should not exceed', 'less than', 'no more than'. "
                     "Set to 'flexible' when the user says: 'around', 'approximately', 'about', "
                     "'roughly', 'up to', 'nearly'. Leave None if not mentioned."
     )
-    people: Optional[str] = Field(description="Number of people traveling (e.g. '2', '5')")
-    kids: Optional[str] = Field(description="Are kids traveling? (yes or no)")
-    health: Optional[str] = Field(description="Health status (e.g., 'good', 'limited')")
-    hobbies: Optional[str] = Field(description="Hobbies and interests (e.g., 'history, nature')")
-    start_date: Optional[str] = Field(description="Start date of the trip (YYYY-MM-DD or 'flexible'). If the user says 'not decided', 'flexible', 'no fixed date', 'haven't decided', or 'any date', you MUST output 'flexible'.")
+    people: Optional[str] = Field(default=None, description="Number of people traveling (e.g. '2', '5')")
+    kids: Optional[str] = Field(default=None, description="Are kids traveling? (yes or no)")
+    health: Optional[str] = Field(default=None, description="Health status (e.g., 'good', 'limited')")
+    hobbies: Optional[str] = Field(default=None, description="Hobbies and interests (e.g., 'history, nature')")
+    start_date: Optional[str] = Field(default=None, description="Start date of the trip (YYYY-MM-DD or 'flexible'). If the user says 'not decided', 'flexible', 'no fixed date', 'haven't decided', or 'any date', you MUST output 'flexible'.")
+
+    @staticmethod
+    def _json_schema_extra(schema: dict):
+        schema.pop("title", None)
+        for prop in schema.get("properties", {}).values():
+            prop.pop("title", None)
+
+    model_config = {
+        "json_schema_extra": _json_schema_extra
+    }
 
 class ChatAgent:
     def __init__(self, model_name="gemini-flash-lite-latest"):
@@ -171,6 +184,20 @@ class ChatAgent:
                             if value and (field in missing_current or field in extra_extract):
                                 state[field] = value
                                 print(f"Updated state: {field} = {value}")
+                                
+                        # Normalize budget if budget_amount is present but budget is not
+                        if state.get("budget_amount") and not state.get("budget"):
+                            try:
+                                amt = int(state["budget_amount"])
+                                if amt <= 30000:
+                                    state["budget"] = "low"
+                                elif amt <= 100000:
+                                    state["budget"] = "medium"
+                                else:
+                                    state["budget"] = "high"
+                                print(f"Normalized budget category to '{state['budget']}' based on amount {amt}")
+                            except (ValueError, TypeError):
+                                pass
                 except Exception as e:
                     import traceback
                     print(f"[ERROR] Structured extraction failed: {e}")
@@ -188,7 +215,7 @@ class ChatAgent:
         if self._has_budget(state) and "budget" in missing:
             missing = [f for f in missing if f != "budget"]
         complete = len(missing) == 0
-        messages.append(SystemMessage(content=f'''
+        messages.append(HumanMessage(content=f'''
         Current state: {json.dumps(state, ensure_ascii=False)}
         Required fields: {json.dumps(self.required_fields, ensure_ascii=False)}
         Missing fields: {json.dumps(missing, ensure_ascii=False)}

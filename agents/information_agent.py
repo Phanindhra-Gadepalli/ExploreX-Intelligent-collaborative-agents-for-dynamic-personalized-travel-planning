@@ -412,61 +412,116 @@ class InformationAgent:
         
         initial_pois = self.poi_manager.get_attractions(lat, lng, radius, hobbies, poi_type)
         
-        # RAG / Static Fallback if all primary providers fail
-        if not initial_pois and user_prefs and user_prefs.get('city'):
-            city = user_prefs.get('city')
-            print(f"[INFO_AGENT] Primary POI providers failed for '{city}'. Triggering RAG Fallback.")
-            try:
-                from agents.retrieval_agent import RetrievalAgent
-                if not hasattr(self, 'retrieval_agent') or self.retrieval_agent is None:
-                    self.retrieval_agent = RetrievalAgent()
-                
-                # Retrieve from RAG
-                rag_context = self.retrieval_agent._retrieve_from_rag(city, user_prefs)
-                
-                if rag_context and "No relevant travel information found" not in rag_context:
-                    print(f"[INFO_AGENT] RAG Context found for {city}. Asking LLM to extract POIs.")
-                    if self.llm:
-                        prompt = f"""
-                        Extract tourist attractions from the following text about {city}.
-                        Return a valid JSON array of objects.
-                        Each object must have exactly these keys:
-                        - "name": string
-                        - "category": string (e.g. "heritage", "nature", "museum", "temple", "sightseeing")
-                        - "description": string (short description)
-                        - "rating": float (approximate rating out of 5.0, e.g. 4.5)
-                        - "price_level": int (1 to 4)
-                        
-                        Text:
-                        {rag_context}
-                        
-                        Respond ONLY with the JSON array. Do not include any other text.
-                        """
-                        response = self.llm.invoke([HumanMessage(content=prompt)])
-                        content = response.content.strip()
-                        if content.startswith("```json"):
-                            content = content[7:-3].strip()
-                        elif content.startswith("```"):
-                            content = content[3:-3].strip()
-                        
-                        try:
-                            parsed_pois = json.loads(content)
-                            if isinstance(parsed_pois, list) and len(parsed_pois) > 0:
-                                print(f"[INFO_AGENT] Successfully extracted {len(parsed_pois)} POIs from RAG.")
-                                # map back to initial_pois format
-                                for p in parsed_pois:
-                                    p['source'] = 'rag_fallback'
-                                    p['id'] = p.get('name')
-                                    # We don't have exact lat/lng from text easily, so we just use the city center roughly
-                                    p['location'] = {'lat': lat, 'lng': lng} 
-                                initial_pois = parsed_pois
-                        except json.JSONDecodeError as e:
-                            print(f"[INFO_AGENT] LLM RAG extraction failed JSON parse: {e}")
-            except Exception as e:
-                print(f"[INFO_AGENT] RAG Fallback failed: {e}")
-                
+        duration_days = int(user_prefs.get('duration_days', 3)) if user_prefs else 3
+        required_pois = max(10, duration_days * 3)
+        city = user_prefs.get('city') if user_prefs else None
+        
+        # RAG / Intelligent LLM Fallback if primary providers fail or return too few
+        if len(initial_pois) < required_pois and city:
+            deficit = required_pois - len(initial_pois)
+            print(f"[INFO_AGENT] POI providers returned {len(initial_pois)} for '{city}'. Need {required_pois} (deficit: {deficit}).")
+            
+            # 1. Try RAG first (only if initial_pois is empty to avoid double-fetching if we just need generic top-ups)
             if not initial_pois:
-                print(f"[INFO_AGENT] RAG Fallback failed or returned empty for '{city}'. Triggering Static Fallback.")
+                print(f"[INFO_AGENT] Triggering RAG Fallback for '{city}'.")
+                try:
+                    from agents.retrieval_agent import RetrievalAgent
+                    if not hasattr(self, 'retrieval_agent') or self.retrieval_agent is None:
+                        self.retrieval_agent = RetrievalAgent()
+                    
+                    rag_context = self.retrieval_agent._retrieve_from_rag(city, user_prefs)
+                    
+                    if rag_context and "No relevant travel information found" not in rag_context:
+                        print(f"[INFO_AGENT] RAG Context found for {city}. Asking LLM to extract POIs.")
+                        if self.llm:
+                            prompt = f"""
+                            Extract tourist attractions from the following text about {city}.
+                            Return a valid JSON array of objects.
+                            Each object must have exactly these keys:
+                            - "name": string
+                            - "category": string (e.g. "heritage", "nature", "museum", "temple", "sightseeing")
+                            - "description": string (short description)
+                            - "rating": float (approximate rating out of 5.0, e.g. 4.5)
+                            - "price_level": int (1 to 4)
+                            
+                            Text:
+                            {rag_context}
+                            
+                            Respond ONLY with the JSON array. Do not include any other text.
+                            """
+                            response = self.llm.invoke([HumanMessage(content=prompt)])
+                            content = response.content.strip()
+                            if content.startswith("```json"):
+                                content = content[7:-3].strip()
+                            elif content.startswith("```"):
+                                content = content[3:-3].strip()
+                            
+                            try:
+                                parsed_pois = json.loads(content)
+                                if isinstance(parsed_pois, list) and len(parsed_pois) > 0:
+                                    print(f"[INFO_AGENT] Successfully extracted {len(parsed_pois)} POIs from RAG.")
+                                    for p in parsed_pois:
+                                        p['source'] = 'rag_fallback'
+                                        p['id'] = p.get('name')
+                                        p['location'] = {'lat': lat, 'lng': lng} 
+                                    initial_pois.extend(parsed_pois)
+                            except json.JSONDecodeError as e:
+                                print(f"[INFO_AGENT] LLM RAG extraction failed JSON parse: {e}")
+                except Exception as e:
+                    print(f"[INFO_AGENT] RAG Fallback failed: {e}")
+            
+            # 2. Intelligent LLM Fallback (to guarantee we meet `required_pois`)
+            deficit = required_pois - len(initial_pois)
+            if deficit > 0 and self.llm:
+                print(f"[INFO_AGENT] Still need {deficit} POIs for '{city}'. Triggering Intelligent LLM Generation.")
+                # We cap generation at 25 to avoid massive token usage/timeouts
+                gen_count = min(25, deficit + 5) 
+                llm_prompt = f"""
+                You are a travel expert. Generate a list of exactly {gen_count} famous, real tourist attractions, landmarks, and highly-rated places to visit in {city}.
+                Do not include places that are just "City Center" or fake names. Ensure they are geographically located in or very near {city}.
+                
+                Return a valid JSON array of objects.
+                Each object must have exactly these keys:
+                - "name": string (Real name of the place)
+                - "category": string (e.g. "heritage", "nature", "museum", "temple", "sightseeing", "entertainment")
+                - "description": string (A very short, engaging 1-sentence description)
+                - "rating": float (approximate real-world rating out of 5.0, e.g. 4.7)
+                - "price_level": int (1 to 4)
+                
+                Respond ONLY with the JSON array. Do not include any other text or markdown wrappers.
+                """
+                try:
+                    response = self.llm.invoke([HumanMessage(content=llm_prompt)])
+                    content = response.content.strip()
+                    if content.startswith("```json"):
+                        content = content[7:-3].strip()
+                    elif content.startswith("```"):
+                        content = content[3:-3].strip()
+                    
+                    parsed_pois = json.loads(content)
+                    if isinstance(parsed_pois, list):
+                        print(f"[INFO_AGENT] LLM generated {len(parsed_pois)} POIs.")
+                        for p in parsed_pois:
+                            p['source'] = 'llm_fallback'
+                            p['id'] = f"llm_{p.get('name', '').replace(' ', '_')}"
+                            p['location'] = {'lat': lat, 'lng': lng} 
+                        initial_pois.extend(parsed_pois)
+                except Exception as e:
+                    print(f"[INFO_AGENT] LLM Generation failed: {e}")
+
+            # De-duplicate by name in case RAG and LLM generated the same
+            seen_names = set()
+            deduped = []
+            for p in initial_pois:
+                n = p.get('name', '').lower().strip()
+                if n not in seen_names:
+                    seen_names.add(n)
+                    deduped.append(p)
+            initial_pois = deduped
+            
+            # Absolute worst-case scenario static fallback (if LLM is down)
+            if not initial_pois:
+                print(f"[INFO_AGENT] All fallbacks failed for '{city}'. Triggering Static Fallback.")
                 initial_pois = [
                     {
                         "id": f"{city}_center", "name": f"{city.title()} City Center", "category": "sightseeing", 

@@ -1,596 +1,1324 @@
-/* static/css/styles.css */
+/* ==========================================================================
+   ExploreX — Premium AI Travel Architect
+   Complete Visual Design System v3.1 — Layout Corrected
+   ========================================================================== */
 
-/* NEW VIBRANT COLOR DEFINITION - EXPLOREX */
+/* ==========================================================================
+   1. DESIGN TOKENS & CSS VARIABLES
+   ========================================================================== */
 :root {
-    --explorex-primary: #4F46E5;
-    /* Deep Indigo */
-    --explorex-primary-darker: #3730A3;
-    --explorex-primary-lighter: #818CF8;
-    --explorex-accent: #14B8A6;
-    /* Teal */
-    --explorex-text-on-primary: #FFFFFF;
-    --explorex-text-on-accent: #FFFFFF;
-    --explorex-text-dark: #1F2937;
-    --explorex-text-medium: #4B5563;
-    --explorex-text-light: #6B7280;
+    /* Brand Colors */
+    --clr-coral:        #E8522A;
+    --clr-coral-light:  #FF7A50;
+    --clr-coral-pale:   #FFF0EB;
+    --clr-teal:         #0D9488;
+    --clr-teal-light:   #14B8A6;
+    --clr-teal-pale:    #E6FAF8;
+    --clr-amber:        #D97706;
+    --clr-amber-pale:   #FFFBEB;
+    --clr-blue:         #2563EB;
+    --clr-blue-pale:    #EFF6FF;
+    --clr-green:        #059669;
+    --clr-green-pale:   #ECFDF5;
+    --clr-red:          #DC2626;
 
-    --explorex-user-chat-bg: #FFFFFF;
-    --explorex-user-chat-text: var(--explorex-text-dark);
-    --explorex-assistant-chat-bg: #EEF2FF;
-    /* Soft Indigo Tint */
-    --explorex-assistant-chat-text: var(--explorex-text-dark);
+    /* Neutrals */
+    --clr-ink:          #111827;
+    --clr-ink-medium:   #374151;
+    --clr-ink-light:    #6B7280;
+    --clr-border:       #E5E7EB;
+    --clr-border-med:   #D1D5DB;
+    --clr-bg:           #F3F4F6;
+    --clr-surface:      #FFFFFF;
+    --clr-surface-off:  #F9FAFB;
+    --clr-white:        #FFFFFF;
 
-    --explorex-border-color: #E5E7EB;
+    /* Navbar */
+    --nav-bg:           #0F172A;
+    --nav-height:       64px;
 
-    /* Card Header Specific Colors - Vibrant Gradients */
-    --explorex-header-chat-bg: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-    --explorex-header-chat-text: #FFFFFF;
-    --explorex-header-itinerary-bg: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-    --explorex-header-itinerary-text: #FFFFFF;
-    --explorex-header-recommend-bg: linear-gradient(135deg, #FF416C 0%, #FF4B2B 100%);
-    --explorex-header-recommend-text: #FFFFFF;
-    --explorex-header-selected-bg: linear-gradient(135deg, #f12711 0%, #f5af19 100%);
-    --explorex-header-selected-text: #FFFFFF;
-    --explorex-header-map-bg: linear-gradient(135deg, #00B4DB 0%, #0083B0 100%);
-    --explorex-header-map-text: #FFFFFF;
-    --explorex-header-budget-bg: linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%);
-    --explorex-header-budget-text: #FFFFFF;
-    --explorex-header-confirmation-bg: linear-gradient(135deg, #cb2d3e 0%, #ef473a 100%);
-    --explorex-header-confirmation-text: #FFFFFF;
+    /* Shadows */
+    --shadow-xs:  0 1px 2px rgba(0,0,0,0.05);
+    --shadow-sm:  0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-md:  0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
+    --shadow-lg:  0 10px 15px -3px rgba(0,0,0,0.09), 0 4px 6px -4px rgba(0,0,0,0.05);
+    --shadow-xl:  0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.04);
+    --shadow-coral: 0 4px 14px rgba(232, 82, 42, 0.3);
+    --shadow-teal:  0 4px 14px rgba(13, 148, 136, 0.3);
+
+    /* Radius */
+    --radius-sm:  6px;
+    --radius-md:  12px;
+    --radius-lg:  16px;
+    --radius-xl:  24px;
+    --radius-full: 9999px;
+
+    /* Font sizes */
+    --text-xs:    0.75rem;
+    --text-sm:    0.875rem;
+    --text-base:  1rem;
+    --text-md:    1.0625rem;
+    --text-lg:    1.125rem;
+    --text-xl:    1.25rem;
+    --text-2xl:   1.5rem;
+    --text-3xl:   1.875rem;
+    --text-4xl:   2.25rem;
+
+    /* Transitions */
+    --transition-fast: 150ms ease;
+    --transition-base: 250ms ease;
+    --transition-slow: 400ms ease;
+
+    /* Legacy variable aliases for JS-generated HTML */
+    --explorex-primary:          var(--clr-coral);
+    --explorex-accent:           var(--clr-teal);
+    --explorex-accent-hover:     var(--clr-teal-light);
+    --explorex-secondary:        var(--clr-blue);
+    --explorex-warm:             #F97316;
+    --explorex-warm-light:       #FFF7ED;
+    --explorex-bg-body:          var(--clr-bg);
+    --explorex-surface:          var(--clr-surface);
+    --explorex-surface-solid:    var(--clr-surface);
+    --explorex-surface-elevated: var(--clr-surface);
+    --explorex-text-primary:     var(--clr-ink);
+    --explorex-text-secondary:   var(--clr-ink-medium);
+    --explorex-text-muted:       var(--clr-ink-light);
+    --explorex-text-inverse:     var(--clr-white);
+    --explorex-chat-user:        var(--clr-coral);
+    --explorex-chat-user-text:   var(--clr-white);
+    --explorex-chat-ai:          var(--clr-surface);
+    --explorex-chat-ai-text:     var(--clr-ink);
+    --explorex-success:          var(--clr-green);
+    --explorex-warning:          var(--clr-amber);
+    --explorex-error:            var(--clr-red);
+    --explorex-border:           var(--clr-border);
+    --explorex-border-light:     var(--clr-border);
+    --explorex-shadow-sm:        var(--shadow-sm);
+    --explorex-shadow-md:        var(--shadow-md);
+    --explorex-shadow-lg:        var(--shadow-lg);
+    --explorex-shadow-accent:    var(--shadow-coral);
 }
 
-/* Background image for the entire page */
+/* ==========================================================================
+   2. RESET & BASE
+   ========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
 body {
-    background-image: url('../images/india_collage_bg.jpg') !important;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: var(--text-base);
+    color: var(--clr-ink);
+    background-color: var(--clr-bg);
+    background-image: url('../images/india_collage_bg.jpg');
     background-size: cover;
-    background-position: center;
+    background-position: center top;
     background-repeat: no-repeat;
     background-attachment: fixed;
     min-height: 100vh;
-    z-index: -1;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-/* Semi-transparent overlay for readability */
+/* Dark overlay on body background — sits behind all content */
 body::before {
     content: '';
     position: fixed;
-    /* Keep overlay fixed */
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.4);
-    /* Darker overlay for vibrant contrast */
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
     z-index: -1;
+    pointer-events: none;
 }
 
-/* Glassmorphism for containers */
-.card,
+/* Scrollbar */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--clr-border-med); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--clr-ink-light); }
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: var(--clr-ink);
+    line-height: 1.2;
+}
+p { line-height: 1.65; }
+
+/* ==========================================================================
+   3. NAVBAR
+   ========================================================================== */
 .navbar {
-    background-color: rgba(255, 255, 255, 0.85);
-    /* Less transparent for readability */
-    backdrop-filter: blur(16px);
-    /* Frosted glass effect */
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.6);
-    /* Subtle border */
+    background-color: var(--nav-bg) !important;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding: 0;
+    height: var(--nav-height);
+    z-index: 1030;
+}
+.navbar .container {
+    height: var(--nav-height);
+    display: flex;
+    align-items: center;
+}
+.navbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-decoration: none;
+    color: var(--clr-white) !important;
+    font-weight: 700;
+    font-size: var(--text-lg);
+    letter-spacing: -0.02em;
+}
+.navbar-brand .brand-text { color: var(--clr-white); }
+.navbar-brand .brand-tagline {
+    color: rgba(255,255,255,0.45);
+    font-weight: 400;
+    font-size: var(--text-sm);
+    letter-spacing: 0;
+}
+.explorex-logo {
+    flex-shrink: 0;
+    transition: transform var(--transition-base);
+}
+.navbar-brand:hover .explorex-logo { transform: scale(1.08); }
+
+#reset-btn {
+    background: var(--clr-coral);
+    color: var(--clr-white) !important;
+    border: none;
+    border-radius: var(--radius-full);
+    padding: 0.45rem 1.25rem;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    transition: all var(--transition-base);
+    white-space: nowrap;
+    box-shadow: var(--shadow-coral);
+}
+#reset-btn:hover, #reset-btn:focus {
+    background: var(--clr-coral-light);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(232, 82, 42, 0.4);
+    color: var(--clr-white) !important;
 }
 
-/* Base Styles */
-body {
-    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    color: #2c3e50;
+/* ==========================================================================
+   4. APP SHELL — THE PAGE FRAME
+   The page header area = navbar (64px fixed) + progress nav (~52px) + gap.
+   Total "chrome" above content ≈ 64 + 52 + 32 = ~148px
+   ========================================================================== */
+#app-container {
+    max-width: 1400px;
+    /* Sit 16px below the fixed navbar */
+    padding-top: calc(var(--nav-height) + 16px);
+    padding-bottom: 3rem;
 }
 
-/* View transitions */
+/* ==========================================================================
+   5. PROGRESS / STEP NAVIGATION
+   ========================================================================== */
+.step-nav-wrapper {
+    text-align: center;
+    margin-bottom: 20px;
+}
+.step-nav-container {
+    display: inline-flex;
+    align-items: center;
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-full);
+    padding: 4px;
+    box-shadow: var(--shadow-sm);
+    gap: 2px;
+}
+.step-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 1.1rem;
+    border-radius: var(--radius-full);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--clr-ink-light);
+    cursor: default;
+    transition: all var(--transition-base);
+    white-space: nowrap;
+    user-select: none;
+}
+.step-nav-item i { font-size: 0.85rem; }
+.step-nav-item.active {
+    background: var(--clr-coral);
+    color: var(--clr-white);
+    box-shadow: var(--shadow-coral);
+    font-weight: 600;
+}
+.step-nav-item.completed {
+    background: var(--clr-teal-pale);
+    color: var(--clr-teal);
+    font-weight: 600;
+}
+.step-nav-item.upcoming {
+    color: var(--clr-ink-light);
+    opacity: 0.65;
+}
+
+/* ==========================================================================
+   6. VIEW SECTIONS — display toggled by JS via .active class
+   ========================================================================== */
 .view-section {
-    display: none;
+    display: none !important;
     opacity: 0;
-    transition: opacity 0.4s ease-in-out;
 }
-
 .view-section.active {
-    display: block;
+    display: block !important;
     opacity: 1;
+    animation: fadeInUp 0.35s ease forwards;
+}
+#view-landing.active {
+    display: flex !important;
+    flex-direction: column;
 }
 
-.view-section.fade-in {
-    opacity: 1;
+/* ==========================================================================
+   7. LANDING PHASE — HERO + CHAT
+   KEY FIX: Remove full-viewport centering that caused layout shift.
+   Use flex-column with padding instead of justify-content:center.
+   ========================================================================== */
+#view-landing {
+    width: 100%;
+    padding: 0;
 }
 
-/* Chat container */
-#chat-container {
-    height: 400px;
-    overflow-y: auto;
-    padding: 10px;
-    background-color: transparent;
-    border-radius: 5px;
+/* The inner content column */
+#view-landing .landing-inner {
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
 }
 
-/* Chat messages */
-.chat-message {
-    margin-bottom: 15px;
-    clear: both;
+/* Hero block — visible before first message */
+#landing-hero-text {
+    text-align: center;
+    padding: 2rem 0 1.5rem;
+}
+
+.hero-title {
+    font-size: clamp(2rem, 5vw, 3.25rem);
+    font-weight: 800;
+    color: var(--clr-white) !important;
+    letter-spacing: -0.035em;
+    line-height: 1.1;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.4);
+    margin-bottom: 1rem;
+}
+.hero-subtitle {
+    font-size: var(--text-lg);
+    color: rgba(255,255,255,0.85) !important;
+    font-weight: 400;
+    max-width: 540px;
+    margin: 0 auto;
+    text-shadow: 0 1px 8px rgba(0,0,0,0.3);
+}
+.hero-step-label {
+    font-size: var(--text-base);
+    color: rgba(255,255,255,0.9);
+    font-weight: 500;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    margin-bottom: 1.25rem;
+}
+
+/* Prompt chips on landing */
+.try-label {
+    font-size: var(--text-sm);
+    color: rgba(255,255,255,0.75);
+    font-weight: 500;
+    margin-bottom: 0.75rem;
+}
+.prompt-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(255,255,255,0.15);
+    color: var(--clr-white) !important;
+    border: 1px solid rgba(255,255,255,0.35) !important;
+    border-radius: var(--radius-full) !important;
+    padding: 0.4rem 0.9rem;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    backdrop-filter: blur(8px);
+}
+.prompt-chip:hover, .prompt-chip:focus {
+    background: rgba(255,255,255,0.28) !important;
+    color: var(--clr-white) !important;
+    border-color: rgba(255,255,255,0.55) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* ==========================================================================
+   8. LANDING PROMPT INPUT WRAPPER
+   ========================================================================== */
+.prompt-input-wrapper {
+    display: flex;
+    align-items: center;
+    background: var(--clr-surface);
+    border: 2px solid var(--clr-border);
+    border-radius: var(--radius-full);
+    padding: 5px 5px 5px 20px;
+    box-shadow: var(--shadow-xl);
+    transition: border-color var(--transition-base), box-shadow var(--transition-base);
+    gap: 0.5rem;
+}
+.prompt-input-wrapper:focus-within {
+    border-color: var(--clr-coral);
+    box-shadow: var(--shadow-xl), 0 0 0 3px rgba(232,82,42,0.15);
+}
+.prompt-input {
+    flex: 1;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: var(--clr-ink) !important;
+    font-size: var(--text-md);
+    font-weight: 400;
+    padding: 0.5rem 0 !important;
+    min-width: 0;
+}
+.prompt-input::placeholder {
+    color: var(--clr-ink-light) !important;
+    opacity: 1 !important;
+    font-style: italic;
+}
+.prompt-submit-btn {
+    flex-shrink: 0;
+    background: var(--clr-coral) !important;
+    color: var(--clr-white) !important;
+    border: none !important;
+    border-radius: var(--radius-full) !important;
+    padding: 0.6rem 1.4rem !important;
+    font-size: var(--text-base);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all var(--transition-base);
+    box-shadow: var(--shadow-coral);
+}
+.prompt-submit-btn:hover, .prompt-submit-btn:focus {
+    background: var(--clr-coral-light) !important;
+    transform: translateY(-1px);
+    color: var(--clr-white) !important;
+    box-shadow: 0 6px 20px rgba(232,82,42,0.4);
+}
+
+/* ==========================================================================
+   9. CHAT CARD MASTER — KEY FIX
+   The chat card must fit within the remaining viewport space.
+   Remaining space = 100vh - navbar(64px) - step-nav+gap(~72px) - card-top-gap(~20px)
+   So max-height ≈ 100vh - 156px
+   Also: card must NOT use a fixed 68vh that overflows on small screens.
+   ========================================================================== */
+#chat-card-master,
+.chat-card-master {
+    display: flex;
+    flex-direction: column;
+    /* Cap to viewport height minus chrome */
+    height: calc(100vh - 180px);
+    min-height: 420px;
+    max-height: 820px;
+    border-radius: var(--radius-lg) !important;
+    border: 1px solid var(--clr-border) !important;
+    box-shadow: var(--shadow-xl) !important;
     overflow: hidden;
-    animation: fadeIn 0.3s ease-in-out;
+    background: var(--clr-surface) !important;
+}
+
+/* When the chat card is inside the landing column, apply a max-width */
+#chat-column-landing #chat-card-master {
+    width: 100%;
+}
+
+/* Chat Header */
+.chat-header,
+#chat-card-master .card-header {
+    flex-shrink: 0;
+    background: var(--clr-surface) !important;
+    border-bottom: 1px solid var(--clr-border) !important;
+    padding: 0.75rem 1.125rem;
+}
+#chat-card-master .card-header .bg-primary {
+    background: var(--clr-coral) !important;
+}
+#chat-card-master .card-header h5 {
+    color: var(--clr-ink) !important;
+    font-size: var(--text-base);
+    font-weight: 700;
+}
+#chat-card-master .card-header small {
+    color: var(--clr-green) !important;
+    font-weight: 600;
+    font-size: 0.7rem;
+}
+
+/* Chat Body — the scrollable area, must flex-grow and scroll internally */
+.chat-body,
+#chat-card-master .card-body {
+    flex: 1;
+    min-height: 0;          /* critical for flex child to not overflow */
+    display: flex;
+    flex-direction: column;
+    background: var(--clr-surface-off) !important;
+    overflow: hidden;
+}
+
+/* Trip Snapshot Strip */
+#trip-snapshot-container {
+    flex-shrink: 0;
+    padding: 0.75rem 1rem;
+}
+#trip-snapshot-container .card {
+    background: var(--clr-teal-pale) !important;
+    border: 1px solid rgba(13,148,136,0.2) !important;
+    box-shadow: none !important;
+    border-radius: var(--radius-md) !important;
+}
+#trip-snapshot-container h6 { color: var(--clr-teal) !important; }
+#trip-snapshot-content { color: var(--clr-ink-medium) !important; }
+
+/* Messages scroll zone */
+.chat-messages,
+#chat-container {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 1rem 1.125rem;
+    scroll-behavior: smooth;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* Individual messages */
+.chat-message {
+    display: flex;
+    animation: msgSlideIn 0.25s ease forwards;
+    max-width: 100%;
+}
+.chat-message.user    { justify-content: flex-end; }
+.chat-message.assistant { justify-content: flex-start; }
+
+@keyframes msgSlideIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
 .message-content {
-    padding: 12px 18px;
-    border-radius: 18px;
-    display: inline-block;
-    max-width: 80%;
-    border: 1px solid var(--explorex-border-color);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    padding: 0.8rem 1rem;
+    border-radius: var(--radius-lg);
+    max-width: 82%;
+    font-size: var(--text-sm);
+    line-height: 1.65;
+    word-break: break-word;
 }
-
-.user {
-    overflow: auto;
-}
-
+/* User bubble */
 .user .message-content {
-    background-color: var(--explorex-user-chat-bg);
-    color: var(--explorex-user-chat-text);
-    float: right;
-    border-color: var(--explorex-primary-lighter);
+    background: var(--clr-coral);
+    color: var(--clr-white) !important;
+    border-bottom-right-radius: 4px;
+    box-shadow: var(--shadow-coral);
 }
-
+.user .message-content * { color: var(--clr-white) !important; }
+/* AI bubble */
 .assistant .message-content {
-    background-color: var(--explorex-assistant-chat-bg);
-    color: var(--explorex-assistant-chat-text);
-    float: left;
-    border-color: #C7D2FE;
+    background: var(--clr-surface);
+    color: var(--clr-ink) !important;
+    border: 1px solid var(--clr-border);
+    border-bottom-left-radius: 4px;
+    box-shadow: var(--shadow-sm);
+}
+.assistant .message-content h6,
+.assistant .message-content strong { color: var(--clr-ink) !important; font-weight: 700; }
+.message-content p:last-child { margin-bottom: 0; }
+.message-content ul { padding-left: 1.25rem; margin-bottom: 0; }
+.message-content li { margin-bottom: 0.25rem; }
+
+/* ==========================================================================
+   10. CHAT COMPOSER — pinned to bottom of chat card
+   ========================================================================== */
+.chat-composer,
+#chat-card-master .card-footer {
+    flex-shrink: 0;         /* must not be squeezed */
+    background: var(--clr-surface) !important;
+    border-top: 1px solid var(--clr-border) !important;
+    padding: 0.75rem 1rem;
+    z-index: 10;
 }
 
-/* Map styles */
-#map {
-    border-radius: 12px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
-}
-
-/* Card customization */
-.card {
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
-    /* Stronger shadow */
-    margin-bottom: 20px;
-    border-radius: 16px;
-    /* Rounded corners */
-    overflow: hidden;
-    /* For rounded corners to affect header */
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-/* General Card Header base (padding, border, font-weight) */
-.card-header {
-    padding: 1.25rem 1.5rem;
-    margin-bottom: 0;
-    border-bottom: none;
+/* Missing fields chips */
+#missing-fields-container { padding: 0 0.25rem; margin-bottom: 0.75rem; }
+#missing-fields-container .badge {
+    background: var(--clr-amber) !important;
+    color: var(--clr-white) !important;
     font-weight: 600;
-    display: flex;
+    font-size: var(--text-xs);
+    padding: 0.3rem 0.7rem;
+}
+#missing-fields-text { color: var(--clr-ink-medium) !important; font-size: var(--text-xs); }
+
+/* Quick-response chips inside chat */
+.chat-quick-chip {
+    display: inline-flex;
     align-items: center;
-    font-size: 1.1rem;
-}
-
-.card-header i.fas {
-    margin-right: 0.5em;
-}
-
-/* Specific Card Header Styles - using gradient backgrounds and white text */
-.header-chat {
-    background: var(--explorex-header-chat-bg);
-    color: var(--explorex-header-chat-text);
-}
-
-.header-itinerary {
-    background: var(--explorex-header-itinerary-bg);
-    color: var(--explorex-header-itinerary-text);
-}
-
-.header-recommend {
-    background: var(--explorex-header-recommend-bg);
-    color: var(--explorex-header-recommend-text);
-}
-
-.header-selected {
-    background: var(--explorex-header-selected-bg);
-    color: var(--explorex-header-selected-text);
-}
-
-.header-map {
-    background: var(--explorex-header-map-bg);
-    color: var(--explorex-header-map-text);
-}
-
-.header-budget {
-    background: var(--explorex-header-budget-bg);
-    color: var(--explorex-header-budget-text);
-}
-
-.header-confirmation {
-    background: var(--explorex-header-confirmation-bg);
-    color: var(--explorex-header-confirmation-text);
-}
-
-/* Navbar customization */
-.navbar-brand {
+    gap: 0.3rem;
+    background: var(--clr-surface);
+    color: var(--clr-coral) !important;
+    border: 1px solid var(--clr-coral) !important;
+    border-radius: var(--radius-full);
+    padding: 0.28rem 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
-    letter-spacing: 0.5px;
-}
-
-/* Navbar: uses .bg-primary which is now our main --explorex-primary */
-.navbar.bg-primary {
-    background-color: var(--explorex-primary) !important;
-}
-
-/* Button styling */
-.btn {
-    border-radius: 12px;
-    /* Softer buttons */
-    font-weight: 500;
-    transition: all 0.3s ease;
-}
-
-.btn-primary {
-    background-color: var(--explorex-primary);
-    border-color: var(--explorex-primary);
-    color: var(--explorex-text-on-primary);
-    box-shadow: 0 4px 6px rgba(79, 70, 229, 0.2);
-}
-
-.btn-primary:hover,
-.btn-primary:focus {
-    background-color: var(--explorex-primary-darker);
-    border-color: var(--explorex-primary-darker);
-    color: var(--explorex-text-on-primary);
-    box-shadow: 0 6px 12px rgba(79, 70, 229, 0.3);
-    transform: translateY(-2px);
-}
-
-/* Accent button style (Example, can be applied to specific buttons if needed) */
-.btn-accent {
-    background-color: var(--explorex-accent);
-    border-color: var(--explorex-accent);
-    color: var(--explorex-text-on-accent);
-}
-
-.btn-accent:hover,
-.btn-accent:focus {
-    background-color: #0F766E;
-    border-color: #0F766E;
-    color: var(--explorex-text-on-accent);
-    box-shadow: 0 6px 12px rgba(20, 184, 166, 0.3);
-    transform: translateY(-2px);
-}
-
-.btn-outline-primary {
-    color: var(--explorex-primary);
-    border-color: var(--explorex-primary);
-}
-
-.btn-outline-primary:hover {
-    background-color: var(--explorex-primary);
-    border-color: var(--explorex-primary);
-    color: var(--explorex-text-on-primary);
-    transform: translateY(-2px);
-}
-
-/* Itinerary styling */
-#itinerary-container {
-    max-height: 300px;
-    overflow-y: auto;
-}
-
-/* Recommendations styling */
-#recommendations-container {
-    max-height: 300px;
-    overflow-y: auto;
-}
-
-/* Loading spinner */
-#loading-spinner {
-    background-color: rgba(255, 255, 255, 0.7);
-    z-index: 1000;
-    border-radius: 12px;
-    padding: 20px;
-}
-
-/* Utility classes */
-.text-small {
-    font-size: 0.875rem;
-}
-
-/* Category markers on map */
-.map-marker {
-    border-radius: 50%;
-    border: 2px solid white;
-    text-align: center;
-    line-height: 30px;
-    font-weight: bold;
-}
-
-.marker-museum {
-    background-color: #3498db;
-    color: white;
-}
-
-.marker-landmark {
-    background-color: #e74c3c;
-    color: white;
-}
-
-.marker-nature {
-    background-color: #2ecc71;
-    color: white;
-}
-
-.marker-entertainment {
-    background-color: #9b59b6;
-    color: white;
-}
-
-.marker-shopping {
-    background-color: #f39c12;
-    color: white;
-}
-
-/* Price level indicators */
-.price-level {
-    color: #28a745;
-    font-weight: bold;
-}
-
-/* Rating stars */
-.rating {
-    color: #ffc107;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    #chat-container {
-        height: 300px;
-    }
-
-    #map {
-        height: 250px !important;
-    }
-
-    .message-content {
-        max-width: 90%;
-    }
-}
-
-/* Animation for chat messages */
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-    width: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
-    border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
-}
-
-/* Attraction item styles */
-.attraction-item {
-    background-color: rgba(255, 255, 255, 0.8);
-    border: 1px solid rgba(255, 255, 255, 1);
-    border-radius: 12px;
-    padding: 15px;
-    margin-bottom: 10px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.attraction-item:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-}
-
-.attraction-item h4 {
-    color: #333;
-    margin-bottom: 5px;
-}
-
-.attraction-item p {
-    color: #666;
-    margin-bottom: 10px;
-}
-
-.attraction-item button {
-    background-color: #dc3545;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 8px;
     cursor: pointer;
-    transition: background-color 0.2s ease;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+.chat-quick-chip:hover {
+    background: var(--clr-coral) !important;
+    color: var(--clr-white) !important;
+    transform: translateY(-1px);
 }
 
-.attraction-item button:hover {
-    background-color: #c82333;
-}
-
-.selected-marker {
-    background-color: #dc3545;
-    border: 2px solid white;
-    border-radius: 50%;
-    width: 20px;
-    height: 20px;
-    box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
-}
-
-.selected-marker-inner {
-    background-color: white;
-    border-radius: 50%;
-    width: 8px;
-    height: 8px;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-}
-
-/* Popular attractions scrolling */
-.scroll-container {
-    max-height: 300px;
-    overflow: hidden;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    background-color: #f9f9f9;
-    position: relative;
-}
-
-.scroll-content {
-    animation: auto-scroll 10s linear infinite;
-}
-
-@keyframes auto-scroll {
-    0% {
-        transform: translateY(0);
-    }
-
-    100% {
-        transform: translateY(-50%);
-    }
-}
-
-.scroll-container:hover .scroll-content {
-    animation-play-state: paused;
-}
-
-.attraction-card {
+/* Chat input group */
+#chat-form .input-group,
+.chat-composer-group {
     display: flex;
     align-items: center;
-    margin-bottom: 10px;
-    padding: 10px;
-    background-color: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    background: var(--clr-surface-off);
+    border: 1.5px solid var(--clr-border-med);
+    border-radius: var(--radius-full);
+    padding: 4px 4px 4px 14px;
+    gap: 0.4rem;
+    transition: border-color var(--transition-base), box-shadow var(--transition-base);
 }
-
-.attraction-card img {
-    width: 80px;
-    height: 80px;
-    object-fit: cover;
-    border-radius: 8px;
-    margin-right: 10px;
+#chat-form .input-group:focus-within,
+.chat-composer-group:focus-within {
+    border-color: var(--clr-teal);
+    box-shadow: 0 0 0 3px rgba(13,148,136,0.12);
 }
-
-.attraction-info {
+#chat-form input,
+#user-input {
     flex: 1;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: var(--clr-ink) !important;
+    font-size: var(--text-sm);
+    padding: 0.4rem 0;
+    min-width: 0;
 }
-
-.attraction-info h4 {
-    margin: 0;
-    font-size: 16px;
+#chat-form input::placeholder,
+#user-input::placeholder {
+    color: var(--clr-ink-light) !important;
+    opacity: 1 !important;
 }
-
-.attraction-info p {
-    margin: 5px 0;
-    font-size: 14px;
-    color: #555;
-}
-
-/* Route marker styles */
-.route-marker {
-    background-color: var(--explorex-primary);
-    border: 2px solid white;
-    border-radius: 50%;
-    width: 24px;
-    height: 24px;
+#chat-form button,
+.chat-composer-group .btn {
+    flex-shrink: 0;
+    background: var(--clr-coral) !important;
+    color: var(--clr-white) !important;
+    border: none !important;
+    border-radius: var(--radius-full) !important;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    padding: 0;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all var(--transition-base);
+}
+#chat-form button:hover,
+.chat-composer-group .btn:hover {
+    background: var(--clr-coral-light) !important;
+    transform: scale(1.07);
 }
 
-.route-marker-number {
-    color: white;
-    font-weight: bold;
-    font-size: 12px;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+/* ==========================================================================
+   11. CARD SYSTEM
+   ========================================================================== */
+.card {
+    background: var(--clr-surface) !important;
+    border: 1px solid var(--clr-border) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-md) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    overflow: hidden;
+    transition: box-shadow var(--transition-base), transform var(--transition-base);
+}
+.card:hover { box-shadow: var(--shadow-lg) !important; }
+.card-header {
+    background: var(--clr-surface) !important;
+    border-bottom: 1px solid var(--clr-border) !important;
+    padding: 0.875rem 1.25rem;
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--clr-ink);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+.card-header i { color: var(--clr-teal); font-size: 1rem; }
+.card-footer {
+    background: var(--clr-surface-off) !important;
+    border-top: 1px solid var(--clr-border) !important;
 }
 
-/* Route polyline styles */
-.leaflet-interactive {
-    stroke-dasharray: 5, 5;
-    animation: dash 30s linear infinite;
+/* ==========================================================================
+   12. BUTTONS
+   ========================================================================== */
+.btn { font-weight: 500; transition: all var(--transition-base); }
+.btn-primary {
+    background: var(--clr-coral) !important;
+    border: none !important;
+    color: var(--clr-white) !important;
+    border-radius: var(--radius-full) !important;
+    padding: 0.55rem 1.4rem;
+    font-weight: 600;
+    box-shadow: var(--shadow-coral);
+}
+.btn-primary:hover, .btn-primary:focus {
+    background: var(--clr-coral-light) !important;
+    color: var(--clr-white) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(232,82,42,0.4);
+}
+.btn-light {
+    background: var(--clr-surface) !important;
+    color: var(--clr-ink) !important;
+    border: 1px solid var(--clr-border) !important;
+    border-radius: var(--radius-full) !important;
+}
+.btn-light:hover { background: var(--clr-surface-off) !important; }
+
+/* ==========================================================================
+   13. RECOMMENDATIONS VIEW
+   ========================================================================== */
+.section-heading {
+    font-size: var(--text-xl);
+    font-weight: 700;
+    color: var(--clr-ink);
+    letter-spacing: -0.02em;
 }
 
-@keyframes dash {
-    to {
-        stroke-dashoffset: 0;
+/* In the Discover view, the chat card should use a smaller height */
+#chat-column-recs #chat-card-master {
+    height: 400px;
+    min-height: 360px;
+    max-height: 480px;
+}
+
+/* Accommodations */
+#accommodations-card .card-header i { color: var(--clr-blue); }
+
+/* Selected-attractions summary */
+.selected-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0.75rem;
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-md);
+    margin-bottom: 0.5rem;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.selected-item:hover { border-color: var(--clr-teal); box-shadow: var(--shadow-sm); }
+.selected-img {
+    width: 44px; height: 44px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    flex-shrink: 0;
+}
+.selected-info { flex: 1; overflow: hidden; }
+.selected-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--clr-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0;
+}
+.selected-cat { font-size: var(--text-xs); color: var(--clr-ink-light); margin: 0; }
+.btn-remove {
+    color: var(--clr-ink-light);
+    background: none;
+    border: none;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+.btn-remove:hover { color: var(--clr-red); background: var(--clr-coral-pale); }
+
+/* ==========================================================================
+   14. ATTRACTION CARDS
+   ========================================================================== */
+/* .attractions-grid — pure CSS grid for JS-injected attraction cards.
+   The HTML uses class="attractions-grid" (not Bootstrap row) so JS-created 
+   <div class="card ..."> children naturally become grid items. */
+.attractions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 1rem;
+    margin-bottom: 0;
+}
+
+/* Neutralize the outer Bootstrap .card wrapper JS creates around each .attraction-card */
+.attractions-grid > div.card {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin-bottom: 0 !important;
+    padding: 0 !important;
+    overflow: visible;
+    transition: none !important;
+    /* Fill full grid cell */
+    display: flex;
+    flex-direction: column;
+}
+.attractions-grid > div.card:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Inner .attraction-card fills 100% of its grid cell */
+.attractions-grid > div.card > .attraction-card {
+    flex: 1;
+    height: 100%;
+}
+
+/* Empty state inside attractions-grid: span full width */
+.attractions-grid > .empty-state {
+    grid-column: 1 / -1;
+}
+
+.attraction-card {
+    background: var(--clr-surface);
+    border: 1.5px solid var(--clr-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    transition: all var(--transition-base);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+}
+.attraction-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--clr-teal);
+}
+.attraction-card.selected {
+    border: 2px solid var(--clr-teal) !important;
+    box-shadow: 0 0 0 3px rgba(13,148,136,0.12), var(--shadow-md) !important;
+}
+.attraction-img-container {
+    position: relative;
+    height: 175px;
+    width: 100%;
+    overflow: hidden;
+    background: var(--clr-border);
+    flex-shrink: 0;
+}
+.attraction-img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transition: transform 0.5s ease;
+    min-height: 175px;
+    background-color: var(--clr-bg);
+}
+.attraction-card:hover .attraction-img { transform: scale(1.06); }
+.attraction-badges {
+    position: absolute;
+    bottom: 0.65rem; left: 0.65rem;
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    z-index: 2;
+}
+.badge-glass {
+    background: rgba(15,23,42,0.78);
+    color: var(--clr-white);
+    padding: 0.28rem 0.55rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    backdrop-filter: blur(4px);
+}
+.attraction-body {
+    padding: 0.875rem 1rem 1rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+.attraction-title {
+    font-size: var(--text-base);
+    font-weight: 700;
+    color: var(--clr-ink);
+    line-height: 1.3;
+    margin-bottom: 0.35rem;
+}
+.attraction-desc {
+    font-size: var(--text-xs);
+    color: var(--clr-ink-medium);
+    line-height: 1.55;
+    margin-bottom: 0.75rem;
+    flex: 1;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.attraction-actions { margin-top: auto; }
+.btn-select {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    background: var(--clr-surface-off);
+    color: var(--clr-ink-medium);
+    border: 1.5px solid var(--clr-border-med);
+    cursor: pointer;
+    transition: all var(--transition-base);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+.btn-select:hover { background: var(--clr-teal-pale); color: var(--clr-teal); border-color: var(--clr-teal); }
+.btn-select.selected {
+    background: var(--clr-teal) !important;
+    color: var(--clr-white) !important;
+    border-color: var(--clr-teal) !important;
+    box-shadow: var(--shadow-teal);
+}
+.btn-select.selected:hover { background: var(--clr-teal-light) !important; }
+
+/* ==========================================================================
+   15. CONFIRM FOOTER IN DISCOVER
+   ========================================================================== */
+#confirm-all-selections-footer {
+    background: var(--clr-surface) !important;
+    border-top: 1px solid var(--clr-border) !important;
+    padding: 0.875rem 1.25rem;
+}
+#confirm-selected-attractions-btn {
+    width: 100%;
+    padding: 0.65rem 1.5rem;
+    font-size: var(--text-base);
+    font-weight: 700;
+    border-radius: var(--radius-full) !important;
+    background: var(--clr-coral) !important;
+    color: var(--clr-white) !important;
+    border: none !important;
+    box-shadow: var(--shadow-coral);
+    transition: all var(--transition-base);
+}
+#confirm-selected-attractions-btn:hover {
+    background: var(--clr-coral-light) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(232,82,42,0.4);
+}
+
+/* ==========================================================================
+   16. MAP — CRITICAL: no rotation allowed on any container
+   ========================================================================== */
+#map-card-master {
+    border-radius: var(--radius-lg) !important;
+    overflow: hidden;
+    border: 1px solid var(--clr-border) !important;
+    box-shadow: var(--shadow-lg) !important;
+    transform: none !important;
+    -webkit-transform: none !important;
+}
+#map {
+    height: 100%;
+    min-height: 320px;
+    border-radius: 0 !important;
+    z-index: 1;
+    transform: none !important;
+    -webkit-transform: none !important;
+}
+/* Leaflet */
+.leaflet-control-zoom a { color: var(--clr-ink) !important; font-weight: 700; }
+.leaflet-popup-content-wrapper {
+    border-radius: var(--radius-md) !important;
+    box-shadow: var(--shadow-lg) !important;
+}
+/* Map slot containers */
+#map-container-recs,
+#map-container-plan {
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transform: none !important;
+}
+/* In discover, map should fill its container naturally */
+#map-container-recs #map-card-master {
+    min-height: 360px;
+}
+#map-container-recs #map-card-master .card-body,
+#map-container-plan #map-card-master .card-body {
+    height: 100%;
+    min-height: 304px;
+    padding: 0 !important;
+}
+
+/* In plan view, map is in sidebar — give it a sensible fixed height */
+#map-container-plan #map-card-master {
+    min-height: 380px;
+    height: 380px;
+}
+#map-container-plan #map {
+    height: 324px;
+    min-height: 324px;
+}
+
+/* ==========================================================================
+   17. FINAL ITINERARY VIEW — LAYOUT STRUCTURE
+   KEY FIX:
+   - Budget + Transit move to ABOVE the grid (as a summary strip)
+   - Grid is: itinerary (left) | map (right)
+   - NO giant space between progress and content
+   ========================================================================== */
+#view-plan {
+    background: transparent;
+    padding-top: 0;
+}
+
+/* The plan hero header */
+.plan-hero {
+    text-align: center;
+    padding: 1.5rem 0 1.75rem;
+}
+.plan-hero h1 {
+    color: var(--clr-white) !important;
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    font-weight: 800;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    margin-bottom: 0.5rem;
+}
+.plan-hero p {
+    color: rgba(255,255,255,0.8) !important;
+    font-size: var(--text-base);
+    max-width: 560px;
+    margin: 0 auto;
+}
+
+/* Budget + Transit summary strip — horizontal row ABOVE the grid */
+.plan-summary-strip {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+/* Plan content grid — itinerary left, map right */
+.plan-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+}
+
+/* Day header in itinerary */
+.day-header {
+    background: linear-gradient(135deg, var(--clr-coral) 0%, #C0392B 100%);
+    color: var(--clr-white);
+    padding: 0.75rem 1.125rem;
+    border-radius: var(--radius-md);
+    font-size: var(--text-base);
+    font-weight: 700;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    box-shadow: var(--shadow-coral);
+}
+.day-header * { color: var(--clr-white) !important; }
+
+/* Timeline */
+.timeline {
+    position: relative;
+    padding-left: 2.25rem;
+}
+.timeline::before {
+    content: '';
+    position: absolute;
+    left: 0.65rem;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--clr-coral) 0%, var(--clr-teal) 100%);
+    opacity: 0.3;
+}
+.timeline-event { position: relative; margin-bottom: 1rem; }
+.timeline-dot {
+    position: absolute;
+    left: -2.25rem;
+    top: 0.375rem;
+    width: 1.1rem; height: 1.1rem;
+    background: var(--clr-surface);
+    border: 3px solid var(--clr-teal);
+    border-radius: 50%;
+    z-index: 1;
+    box-shadow: var(--shadow-xs);
+}
+.timeline-dot.accommodation { border-color: var(--clr-blue); background: var(--clr-blue-pale); }
+.timeline-content {
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-md);
+    padding: 0.875rem 1rem;
+    box-shadow: var(--shadow-sm);
+    transition: all var(--transition-base);
+}
+.timeline-content:hover {
+    transform: translateX(3px);
+    border-color: var(--clr-teal);
+    box-shadow: var(--shadow-md);
+}
+.event-time {
+    font-size: var(--text-xs);
+    font-weight: 700;
+    color: var(--clr-teal);
+    margin-bottom: 0.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.event-title {
+    font-size: var(--text-sm);
+    font-weight: 700;
+    color: var(--clr-ink);
+    margin-bottom: 0.2rem;
+}
+.event-meta {
+    font-size: var(--text-xs);
+    color: var(--clr-ink-medium);
+    display: flex;
+    gap: 1rem;
+    font-weight: 500;
+}
+.itinerary-day { margin-bottom: 1.75rem; }
+
+/* ==========================================================================
+   18. BUDGET & TRANSIT CARDS
+   ========================================================================== */
+.budget-summary {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+#transitTabs {
+    background: var(--clr-surface-off) !important;
+    border-bottom: 1px solid var(--clr-border) !important;
+}
+#transitTabs .nav-link {
+    color: var(--clr-ink-medium) !important;
+    font-weight: 500;
+    border-radius: 0 !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    padding: 0.65rem 1rem;
+    font-size: var(--text-sm);
+    transition: all var(--transition-fast);
+}
+#transitTabs .nav-link.active {
+    color: var(--clr-coral) !important;
+    border-bottom-color: var(--clr-coral) !important;
+    background: transparent !important;
+    font-weight: 700;
+}
+#transitTabs .nav-link:hover { color: var(--clr-coral) !important; }
+
+/* ==========================================================================
+   19. EMPTY & LOADING STATES
+   ========================================================================== */
+.empty-state {
+    text-align: center;
+    padding: 2rem 1.5rem;
+    color: var(--clr-ink-light);
+}
+.empty-state i {
+    font-size: 2.25rem;
+    margin-bottom: 0.875rem;
+    color: var(--clr-border-med);
+    display: block;
+}
+.empty-state p { color: var(--clr-ink-light); margin: 0; font-size: var(--text-sm); }
+.empty-state h5 { color: var(--clr-ink-medium); margin-bottom: 0.5rem; font-size: var(--text-base); }
+
+/* Full-screen loading overlay */
+#loading-spinner {
+    position: fixed;
+    inset: 0;
+    background: rgba(15,23,42,0.82);
+    backdrop-filter: blur(6px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    color: var(--clr-white);
+}
+#loading-spinner .spinner-border {
+    color: var(--clr-coral) !important;
+    width: 3rem; height: 3rem;
+    border-width: 3px;
+}
+.loading-text {
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--clr-white);
+    margin-top: 1.25rem;
+    animation: loadingPulse 2s ease-in-out infinite;
+}
+#loading-spinner p { color: rgba(255,255,255,0.6); margin-top: 0.5rem; font-size: var(--text-sm); }
+
+@keyframes loadingPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+
+/* ==========================================================================
+   20. MODAL
+   ========================================================================== */
+.modal-content {
+    border: none !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-xl) !important;
+    background: var(--clr-surface) !important;
+}
+.modal-title { color: var(--clr-ink); font-weight: 700; }
+.modal-body p { color: var(--clr-ink-medium); }
+
+/* ==========================================================================
+   21. ANIMATIONS
+   ========================================================================== */
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeInUp 0.4s ease forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
     }
 }
 
-/* Day-specific marker background colors */
-.route-marker.day-1-marker-bg .route-marker-number { background-color: #FF5733; }
-.route-marker.day-2-marker-bg .route-marker-number { background-color: #33FF57; }
-.route-marker.day-3-marker-bg .route-marker-number { background-color: #3357FF; }
-.route-marker.day-4-marker-bg .route-marker-number { background-color: #FF33A1; }
-.route-marker.day-5-marker-bg .route-marker-number { background-color: #A133FF; }
-.route-marker.day-6-marker-bg .route-marker-number { background-color: #33FFA1; }
-.route-marker.day-7-marker-bg .route-marker-number { background-color: #FFC300; }
-.route-marker.day-8-marker-bg .route-marker-number { background-color: #C70039; }
-
-/* Navbar text adjustments */
-.navbar-dark .navbar-brand,
-.navbar-dark .navbar-nav .nav-link {
-    color: var(--explorex-text-on-primary);
+/* ==========================================================================
+   22. RESPONSIVE
+   ========================================================================== */
+@media (max-width: 1199px) {
+    .plan-grid {
+        grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+    }
 }
 
-.navbar-dark .navbar-toggler-icon {
-    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='%23ffffff' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+@media (max-width: 991px) {
+    /* Plan view: stack on tablet */
+    .plan-grid { grid-template-columns: 1fr; }
+    .plan-summary-strip { grid-template-columns: 1fr; }
+    #map-container-plan #map-card-master { height: 300px; }
+    #map-container-plan #map { height: 244px; min-height: 244px; }
+
+    /* Discover: chat takes full column on tablet */
+    #chat-column-recs #chat-card-master { height: 340px; }
 }
 
-/* Missing fields badge */
-#missing-fields.alert-warning {
-    background-color: var(--explorex-primary-lighter);
-    border-color: var(--explorex-border-color);
-    color: var(--explorex-text-on-primary);
+@media (max-width: 767px) {
+    #app-container { padding-top: calc(var(--nav-height) + 12px); }
+
+    /* Chat card: use viewport dynamic height on mobile */
+    #chat-card-master,
+    .chat-card-master { height: calc(100dvh - 170px); min-height: 380px; max-height: 640px; }
+    #chat-column-recs #chat-card-master { height: 320px; }
+
+    .hero-title { font-size: 1.875rem; }
+    .hero-subtitle { font-size: var(--text-base); }
+    .message-content { max-width: 90%; }
+    .prompt-submit-btn { padding: 0.55rem 1rem !important; font-size: var(--text-sm); }
+    .step-nav-item { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
 }
 
-#missing-fields .badge.bg-warning {
-    background-color: var(--explorex-primary) !important;
-    color: var(--explorex-text-on-primary) !important;
+@media (max-width: 575px) {
+    .step-nav-item span { display: none; }
+    .step-nav-item { padding: 0.45rem 0.65rem; }
+    #transitTabs { flex-wrap: nowrap; overflow-x: auto; }
+    .attraction-img-container { height: 145px; }
+    .timeline { padding-left: 1.875rem; }
+    .timeline-dot { left: -1.875rem; }
+    .hero-title { font-size: 1.625rem; }
 }
 
-/* Badge styling */
-.badge.bg-primary {
-    background-color: var(--explorex-primary) !important;
-    color: var(--explorex-text-on-primary) !important;
+/* ==========================================================================
+   23. UTILITY OVERRIDES
+   ========================================================================== */
+.text-primary   { color: var(--clr-coral) !important; }
+.text-secondary { color: var(--clr-ink-medium) !important; }
+.text-muted     { color: var(--clr-ink-light) !important; }
+.text-success   { color: var(--clr-green) !important; }
+.text-warning   { color: var(--clr-amber) !important; }
+.text-danger    { color: var(--clr-red) !important; }
+.text-info      { color: var(--clr-blue) !important; }
+.text-accent    { color: var(--clr-teal) !important; }
+.text-teal      { color: var(--clr-teal) !important; }
+.text-amber     { color: var(--clr-amber) !important; }
+
+.bg-primary     { background-color: var(--clr-coral) !important; }
+.bg-light       { background-color: var(--clr-surface-off) !important; }
+
+.badge.bg-primary { background: var(--clr-coral) !important; color: var(--clr-white) !important; }
+.badge.rounded-pill { font-size: var(--text-xs); }
+
+.card { background-color: var(--clr-surface) !important; }
+.border-accent  { border-color: var(--clr-teal) !important; }
+.border-top-0   { border-top: none !important; }
+
+.nav-tabs .nav-link { color: var(--clr-ink-medium); }
+.nav-tabs .nav-link.active {
+    color: var(--clr-coral) !important;
+    border-color: var(--clr-coral) !important;
 }
 
-/* Specifically for New Trip button */
-.btn-outline-light#reset-btn {
-    color: var(--explorex-text-on-primary);
-    border-color: var(--explorex-text-on-primary);
-}
+.spinner-border.text-primary { color: var(--clr-coral) !important; }
 
-.btn-outline-light#reset-btn:hover {
-    background-color: var(--explorex-text-on-primary);
-    color: var(--explorex-primary);
-    border-color: var(--explorex-text-on-primary);
+.alert-warning {
+    background: var(--clr-amber-pale) !important;
+    border-color: var(--clr-amber) !important;
+    color: #92400E !important;
+}
+.alert-danger {
+    background: #FEF2F2 !important;
+    border-color: var(--clr-red) !important;
+    color: #991B1B !important;
 }

@@ -38,7 +38,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const loadingSpinner = document.getElementById('loading-spinner');
     const resetBtn = document.getElementById('reset-btn');
     const stepNav = document.getElementById('step-nav');
-    const missingFieldsContainer = document.getElementById('missing-fields');
+    const missingFieldsContainer = document.getElementById('missing-fields-container');
+    const missingFieldsText = document.getElementById('missing-fields-text');
+    const quickResponseChipsContainer = document.getElementById('quick-response-chips');
+    const tripSnapshotContainer = document.getElementById('trip-snapshot-container');
+    const tripSnapshotContent = document.getElementById('trip-snapshot-content');
     const selectedAttractionsList = document.getElementById('selected-attractions');
 
     // === INITIALIZATION ENTRY POINT ===
@@ -143,31 +147,99 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('Step navigation not found, skipping update');
             return;
         }
-        const links = stepNav.querySelectorAll('.nav-link');
-        links.forEach(link => {
-            if (link.dataset.step === step) {
+        
+        // Define logical order
+        let stepOrder = ['chat', 'recommend', 'route'];
+        // Map backend state names to our nav steps
+        let normalizedStep = step;
+        if (['retrieval', 'information'].includes(step)) normalizedStep = 'chat';
+        if (['strategy', 'communication'].includes(step)) normalizedStep = 'recommend';
+        if (step === 'complete') normalizedStep = 'route';
+        
+        let currentIndex = stepOrder.indexOf(normalizedStep);
+        if (currentIndex === -1) currentIndex = 0; // fallback
+        
+        const links = stepNav.querySelectorAll('.step-nav-item');
+        links.forEach((link, index) => {
+            const icon = link.querySelector('i');
+            
+            link.classList.remove('active', 'completed', 'upcoming');
+            
+            if (index < currentIndex) {
+                link.classList.add('completed');
+                icon.className = 'fas fa-check-circle text-success';
+            } else if (index === currentIndex) {
                 link.classList.add('active');
+                icon.className = index === 0 ? 'fas fa-comment-dots' : (index === 1 ? 'fas fa-map-marked-alt' : 'fas fa-route');
             } else {
-                link.classList.remove('active');
+                link.classList.add('upcoming');
+                icon.className = 'far fa-circle text-muted';
             }
         });
     }
-    // Show missing fields list
+    // Show missing fields list & Quick Response Chips
     function showMissingFields(fields) {
-        if (!missingFieldsContainer) {
-            console.log('Missing fields container not found, skipping update');
-            return;
-        }
-        missingFieldsContainer.innerHTML = '<strong>Additional information needed: </strong>' +
-            fields.map(f => `<span class="badge bg-warning text-dark me-1">${f}</span>`).join('');
+        if (!missingFieldsContainer || !quickResponseChipsContainer) return;
+        console.log(`[UI DEBUG] Showing missing fields: ${fields.join(', ')}`);
+        
+        let chipHtml = '';
+        fields.forEach(f => {
+            let options = [];
+            if (f === 'destination') options = ['Goa', 'Kerala', 'Rajasthan'];
+            else if (f === 'budget') options = ['₹20,000', '₹50,000', '₹1,00,000'];
+            else if (f === 'duration') options = ['3 days', '5 days', '1 week'];
+            else if (f === 'group_type') options = ['Solo', 'Couple', 'Family', 'Friends'];
+            else if (f === 'health_status') options = ['Good health', 'Accessible'];
+            else if (f === 'start_date') options = ['Not decided', 'Flexible'];
+            else options = ['Flexible', 'Surprise me!'];
+            
+            options.forEach(opt => {
+                chipHtml += `<button type="button" class="chat-quick-chip me-2 mb-2" onclick="document.getElementById('user-input').value='${opt}'; document.getElementById('user-input').focus();">${opt}</button>`;
+            });
+        });
+        
+        missingFieldsText.innerHTML = `Please provide: <strong>${fields.map(f => f.replace('_', ' ')).join(', ')}</strong>`;
+        quickResponseChipsContainer.innerHTML = chipHtml;
         missingFieldsContainer.classList.remove('d-none');
     }
     
     // Hide missing fields alert
     function hideMissingFields() {
-        missingFieldsContainer.classList.add('d-none');
+        if (missingFieldsContainer) missingFieldsContainer.classList.add('d-none');
     }
     
+    function renderTripSnapshot() {
+        if (!tripSnapshotContainer || !tripSnapshotContent) return;
+        
+        if (!state.userInfo || Object.keys(state.userInfo).length === 0) {
+            tripSnapshotContainer.classList.add('d-none');
+            return;
+        }
+        
+        let html = '';
+        const uiMap = {
+            'destination': { icon: 'fa-map-marker-alt', label: 'To' },
+            'budget': { icon: 'fa-wallet', label: 'Budget' },
+            'duration': { icon: 'fa-clock', label: 'Duration' },
+            'group_type': { icon: 'fa-user-friends', label: 'Group' }
+        };
+        
+        let hasData = false;
+        for (const [key, config] of Object.entries(uiMap)) {
+            if (state.userInfo[key]) {
+                hasData = true;
+                html += `<div class="bg-light px-2 py-1 rounded"><i class="fas ${config.icon} text-muted me-1"></i> <span class="fw-medium">${state.userInfo[key]}</span></div>`;
+            }
+        }
+        
+        if (hasData) {
+            tripSnapshotContent.innerHTML = html;
+            tripSnapshotContainer.classList.remove('d-none');
+        } else {
+            tripSnapshotContainer.classList.add('d-none');
+        }
+    }
+
 
     function updateViewState(step) {
         // Remove active class from all views
@@ -212,6 +284,8 @@ document.addEventListener('DOMContentLoaded', function() {
         e.preventDefault();
         const message = userInput.value.trim();
         
+        console.log(`[UI DEBUG] Submitting message. Length: ${message.length}`);
+        
         if (message) {
             // Add user message to chat
             addChatMessage(message, 'user');
@@ -220,6 +294,7 @@ document.addEventListener('DOMContentLoaded', function() {
             userInput.value = '';
             
             // Send to backend
+            console.log(`[UI DEBUG] Sending message to backend. Existing chat flow preserved.`);
             processUserInput(message);
         }
     });
@@ -231,20 +306,38 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Add a message to the chat container
     function addChatMessage(message, role) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `chat-message ${role}`;
-        
-        const messageContent = document.createElement('div');
-        messageContent.className = 'message-content';
-        
-        // Use marked to render Markdown content
-        messageContent.innerHTML = marked.parse(message);
-        
-        messageDiv.appendChild(messageContent);
-        chatContainer.appendChild(messageDiv);
-        
-        // Scroll to bottom
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+        try {
+            console.log(`[UI DEBUG] Message rendered for ${role}`);
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${role}`;
+            
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            
+            // Use marked to render Markdown content
+            messageContent.innerHTML = marked.parse(message);
+            
+            messageDiv.appendChild(messageContent);
+            chatContainer.appendChild(messageDiv);
+            
+            // Scroll to bottom robustly
+            setTimeout(() => {
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+                console.log(`[UI DEBUG] Scrolling to latest message. Container height: ${chatContainer.clientHeight}px, Scroll Height: ${chatContainer.scrollHeight}px`);
+                
+                const composer = document.querySelector('.chat-composer');
+                if (composer) {
+                    const rect = composer.getBoundingClientRect();
+                    const style = window.getComputedStyle(composer);
+                    console.log(`[UI DEBUG] Composer element found: true`);
+                    console.log(`[UI DEBUG] Composer computed display: ${style.display}`);
+                    console.log(`[UI DEBUG] Composer computed visibility: ${style.visibility}`);
+                    console.log(`[UI DEBUG] Composer bounding rect:`, rect);
+                }
+            }, 50);
+        } catch (error) {
+            console.error(`[UI DEBUG] Error rendering message:`, error);
+        }
     }
     
     // Process user input by sending to backend
@@ -397,6 +490,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         console.log('[DEBUG] Updated user_input_processed:', state.user_input_processed);
                     }
                 }
+                
+                // Update Trip Snapshot
+                renderTripSnapshot();
+                
                 // Update UI components
                 if (data.attractions) updateAttractions(data.attractions, data.accommodations || []);
                 if (data.map_data) updateMap(data.map_data);
@@ -614,21 +711,24 @@ document.addEventListener('DOMContentLoaded', function() {
         const isSelected = selectedAttractions.some(sa => sa.id === attraction.id);
 
         div.innerHTML = `
-            <div class="card-body p-2">
-                <div class="row g-2">
-                    <div class="col-4">
-                        <img src="${attraction.image_url || 'https://via.placeholder.com/150?text=No+Image'}" onerror="this.onerror=null; this.src='https://via.placeholder.com/150?text=No+Image';" alt="${attraction.name}" class="img-fluid rounded" style="height: 100px; width: 100%; object-fit: cover;">
+            <div class="attraction-card ${isSelected ? 'selected' : ''}">
+                <div class="attraction-img-container">
+                    <img src="${attraction.image_url || 'https://via.placeholder.com/400x200?text=No+Image'}" onerror="this.onerror=null; this.src='https://via.placeholder.com/400x200?text=No+Image';" alt="${attraction.name}" class="attraction-img">
+                    <div class="attraction-badges">
+                        <span class="badge-glass"><i class="fas fa-tag"></i> ${attraction.category || 'N/A'}</span>
+                        <span class="badge-glass"><i class="fas fa-clock"></i> ${duration}</span>
                     </div>
-                    <div class="col-8">
-                        <h6 class="mb-1 fw-bold text-truncate" title="${attraction.name}">${attraction.name}</h6>
-                        <div class="d-flex flex-wrap gap-1 mb-1">
-                            <span class="badge bg-light text-dark border"><i class="fas fa-tag text-muted"></i> ${attraction.category || 'N/A'}</span>
-                            <span class="badge bg-light text-dark border"><i class="fas fa-clock text-muted"></i> ${duration}</span>
-                            <span class="badge bg-light text-dark border">${priceLevel}</span>
-                        </div>
-                        <div class="mb-2 small text-muted text-truncate" style="max-height: 40px; overflow: hidden;" title="${attraction.description || ''}">${attraction.description || ''}</div>
-                        <button class="btn btn-sm w-100 ${isSelected ? 'btn-success' : 'btn-outline-primary'} select-attraction-btn">
-                            <i class="fas ${isSelected ? 'fa-check-circle' : 'fa-plus-circle'}"></i> ${isSelected ? 'Selected' : 'Select'}
+                </div>
+                <div class="attraction-body">
+                    <h5 class="attraction-title" title="${attraction.name}">${attraction.name}</h5>
+                    <div class="mb-2 d-flex justify-content-between align-items-center">
+                        <span class="text-success fw-bold small">${priceLevel}</span>
+                        <span class="text-warning small">${rating}</span>
+                    </div>
+                    <div class="attraction-desc" title="${attraction.description || ''}">${attraction.description || 'No description available.'}</div>
+                    <div class="attraction-actions">
+                        <button class="btn btn-select ${isSelected ? 'selected' : ''} select-attraction-btn">
+                            <i class="fas ${isSelected ? 'fa-check' : 'fa-plus'}"></i> ${isSelected ? 'Selected' : 'Select'}
                         </button>
                     </div>
                 </div>
@@ -652,13 +752,16 @@ document.addEventListener('DOMContentLoaded', function() {
         if (index > -1) {
             selectedAttractions.splice(index, 1);
             removeMarkerFromMap(attraction.id);
-            button.classList.replace('btn-success', 'btn-outline-primary');
-            button.innerHTML = `<i class="fas fa-plus-circle"></i> Select`;
+            button.classList.replace('selected', 'not-selected');
+            button.innerHTML = `<i class="fas fa-plus"></i> Select`;
+            button.closest('.attraction-card').classList.remove('selected');
         } else {
             selectedAttractions.push(attraction);
             addMarkerToMap(attraction);
-            button.classList.replace('btn-outline-primary', 'btn-success');
-            button.innerHTML = `<i class="fas fa-check-circle"></i> Selected`;
+            button.classList.replace('not-selected', 'selected');
+            button.classList.add('selected'); // ensure it's added if missing
+            button.innerHTML = `<i class="fas fa-check"></i> Selected`;
+            button.closest('.attraction-card').classList.add('selected');
         }
         state.selectedAttractions = selectedAttractions;
         updateSelectedAttractionsList();
@@ -805,42 +908,41 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         itinerary.forEach(day => {
-            const dayCard = document.createElement('div');
-            dayCard.className = 'card mb-3';
+            const dayDiv = document.createElement('div');
+            dayDiv.className = 'itinerary-day';
             
-            let spotsHTML = '';
+            const header = document.createElement('div');
+            header.className = 'day-header';
+            header.innerHTML = `<i class="fas fa-sun"></i> <div>Day ${day.day || ''} <span class="fw-normal ms-2 opacity-75">${day.date || ''}</span></div>`;
+            dayDiv.appendChild(header);
+
+            const timeline = document.createElement('div');
+            timeline.className = 'timeline';
+
             if (day.spots && Array.isArray(day.spots)) {
                 day.spots.forEach(spot => {
-                    let priceLevel = '';
-                    for (let i = 0; i < (spot.price_level || 0); i++) {
-                        priceLevel += '💰';
-                    }
+                    let priceLevel = '💰'.repeat(spot.price_level || 0);
+                    const isAcc = spot.is_accommodation || (spot.category && spot.category.toLowerCase().includes('accommodation'));
                     
-                    spotsHTML += `
-                        <div class="card mb-2">
-                            <div class="card-body py-2">
-                                <h6 class="mb-1">${spot.name}</h6>
-                                <p class="mb-0 small">
-                                    <span class="badge bg-primary">${spot.start_time || ''} - ${spot.end_time || ''}</span>
-                                    <span class="badge bg-secondary ms-1">${spot.category || 'attraction'}</span>
-                                    <span class="ms-2">${priceLevel}</span>
-                                </p>
+                    const eventDiv = document.createElement('div');
+                    eventDiv.className = 'timeline-event';
+                    eventDiv.innerHTML = `
+                        <div class="timeline-dot ${isAcc ? 'accommodation' : ''}"></div>
+                        <div class="timeline-content">
+                            <div class="event-time"><i class="far fa-clock me-1"></i> ${spot.start_time || ''} - ${spot.end_time || ''}</div>
+                            <div class="event-title">${spot.name}</div>
+                            <div class="event-meta">
+                                <span><i class="fas ${isAcc ? 'fa-bed' : 'fa-map-marker-alt'} text-muted me-1"></i> ${spot.category || 'Location'}</span>
+                                ${priceLevel ? `<span>${priceLevel}</span>` : ''}
                             </div>
                         </div>
                     `;
+                    timeline.appendChild(eventDiv);
                 });
             }
             
-            dayCard.innerHTML = `
-                <div class="card-header bg-light">
-                    <strong>Day ${day.day || ''}</strong> - ${day.date || ''}
-                </div>
-                <div class="card-body">
-                    ${spotsHTML}
-                </div>
-            `;
-            
-            itineraryContainer.appendChild(dayCard);
+            dayDiv.appendChild(timeline);
+            itineraryContainer.appendChild(dayDiv);
         });
     }
     
@@ -992,10 +1094,17 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(response => response.json())
             .then(() => {
                 // Clear UI
-                chatContainer.innerHTML = '';
-                itineraryContainer.innerHTML = '<p class="text-center text-muted">Your travel plan will appear here once generated.</p>';
-                recommendationsContainer.innerHTML = '<p class="text-center text-muted">Recommendations will appear here based on your preferences.</p>';
-                document.getElementById('budget-container').innerHTML = '<p class="text-center text-muted">Budget details will appear here once generated.</p>';
+                if (chatContainer) chatContainer.innerHTML = '';
+                if (itineraryContainer) itineraryContainer.innerHTML = '<div class="empty-state"><h5>Your travel plan will appear here once generated.</h5></div>';
+                
+                const intArea = document.getElementById('interest-attractions-area');
+                if (intArea) intArea.innerHTML = '<div class="col-12 empty-state"><i class="fas fa-search"></i><p>No interest-based attractions found.</p></div>';
+                
+                const popArea = document.getElementById('popular-attractions-area');
+                if (popArea) popArea.innerHTML = '<div class="col-12 empty-state"><p>No popular attractions found.</p></div>';
+                
+                const budgetCont = document.getElementById('budget-container');
+                if (budgetCont) budgetCont.innerHTML = '<div class="empty-state py-3"><p class="mb-0">Budget details will appear here once generated.</p></div>';
                 
                 // Clear map markers
                 if (typeof clearMarkers !== 'undefined') {
@@ -1058,30 +1167,26 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
+        // Update count in header
+        const countBadge = document.getElementById('selected-count');
+        if (countBadge) countBadge.textContent = `${selectedAttractions.length} items`;
+
         selectedAttractions.forEach(attraction => {
-            const card = document.createElement('div');
-            card.className = 'card mb-2 border-0 shadow-sm';
+            const item = document.createElement('div');
+            item.className = 'selected-item';
             
-            let priceLevel = '';
-            for (let i = 0; i < (attraction.price_level || 0); i++) {
-                priceLevel += '💰';
-            }
-            
-            let rating = attraction.rating ? `⭐ ${attraction.rating}` : '';
-            
-            card.innerHTML = `
-                <div class="card-body py-2 px-3">
-                    <h6 class="card-title mb-1 fw-semibold text-truncate">${attraction.name}</h6>
-                    <div class="d-flex gap-2 align-items-center">
-                        <small class="badge bg-light text-dark border">${attraction.category || 'attraction'}</small>
-                        ${priceLevel ? `<small>${priceLevel}</small>` : ''}
-                        ${rating ? `<small>${rating}</small>` : ''}
-                    </div>
-                    <small class="text-muted">${attraction.estimated_duration || 2} hrs</small>
+            item.innerHTML = `
+                <img src="${attraction.image_url || 'https://via.placeholder.com/100?text=NA'}" onerror="this.onerror=null; this.src='https://via.placeholder.com/100?text=NA';" class="selected-img" alt="${attraction.name}">
+                <div class="selected-info">
+                    <p class="selected-title" title="${attraction.name}">${attraction.name}</p>
+                    <p class="selected-cat"><i class="fas fa-tag"></i> ${attraction.category || 'Location'} · ${attraction.estimated_duration || 2}h</p>
                 </div>
+                <button class="btn-remove" onclick="removeAttraction('${attraction.id}')" title="Remove">
+                    <i class="fas fa-times"></i>
+                </button>
             `;
             
-            selectedAttractionsList.appendChild(card);
+            selectedAttractionsList.appendChild(item);
         });
     }
 
@@ -1178,4 +1283,53 @@ document.addEventListener('DOMContentLoaded', function() {
     window.updateMap = updateMap;
     window.selectAttraction = selectAttraction;
     window.removeAttraction = removeAttraction;
+
+    // === INITIAL PROMPT UI LOGIC ===
+    const initialPromptForm = document.getElementById('initial-prompt-form');
+    const initialUserInput = document.getElementById('initial-user-input');
+    const promptChips = document.querySelectorAll('.prompt-chip');
+
+    if (initialPromptForm) {
+        initialPromptForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const val = initialUserInput.value;
+            if (val.trim() === '') return;
+            
+            // Hide initial prompt UI
+            document.getElementById('initial-prompt-ui').classList.add('d-none');
+            document.getElementById('landing-hero-text').classList.add('d-none');
+            
+            // Show real chat column
+            const chatColumn = document.getElementById('chat-column-landing');
+            if(chatColumn) chatColumn.classList.remove('d-none');
+            
+            // Move chat-master to the screen immediately before backend responds
+            updateViewState('chat');
+            
+            // Transfer value and submit real chat
+            if (userInput && chatForm) {
+                userInput.value = val;
+                // Dispatch a submit event on the real chat form
+                chatForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            }
+        });
+    }
+
+    if (promptChips) {
+        promptChips.forEach(chip => {
+            chip.addEventListener('click', function() {
+                if (initialUserInput) {
+                    // Strip icon elements, get only text content
+                    const chipText = Array.from(this.childNodes)
+                        .filter(n => n.nodeType === Node.TEXT_NODE)
+                        .map(n => n.textContent.trim())
+                        .join(' ')
+                        .trim() || this.innerText.trim();
+                    const currentVal = initialUserInput.value.trim();
+                    initialUserInput.value = currentVal ? currentVal + ' ' + chipText : chipText;
+                    initialUserInput.focus();
+                }
+            });
+        });
+    }
 });

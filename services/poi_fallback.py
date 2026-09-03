@@ -148,12 +148,12 @@ class POIManager:
     # -------------------------------------------------------------------------
 
     def _fetch_geoapify_attractions(self, lat, lng, radius, hobbies):
-        categories = "tourism.attraction,natural,historic,entertainment"
+        categories = "tourism.sights,entertainment,heritage,natural"
         url = "https://api.geoapify.com/v2/places"
         params = {
             "categories": categories,
             "filter": f"circle:{lng},{lat},{radius}",
-            "limit": 30,
+            "limit": 50,
             "apiKey": self.geoapify_key
         }
         try:
@@ -272,13 +272,13 @@ class POIManager:
 
     def _fetch_osm_attractions(self, lat, lng, radius, hobbies):
         query = f"""
-        [out:json][timeout:25];
+        [out:json][timeout:15];
         (
-          nwr["tourism"~"attraction|museum|viewpoint|gallery|theme_park"](around:{radius},{lat},{lng});
-          nwr["historic"](around:{radius},{lat},{lng});
-          nwr["leisure"~"park|nature_reserve"](around:{radius},{lat},{lng});
-          nwr["natural"~"waterfall|beach|peak"](around:{radius},{lat},{lng});
-          nwr["amenity"~"place_of_worship"](around:{radius},{lat},{lng});
+          node["tourism"~"attraction|museum|viewpoint|gallery|theme_park"](around:{radius},{lat},{lng});
+          node["historic"](around:{radius},{lat},{lng});
+          node["leisure"~"park|nature_reserve"](around:{radius},{lat},{lng});
+          node["natural"~"waterfall|beach|peak"](around:{radius},{lat},{lng});
+          node["amenity"~"place_of_worship"](around:{radius},{lat},{lng});
         );
         out 200 tags center;
         """

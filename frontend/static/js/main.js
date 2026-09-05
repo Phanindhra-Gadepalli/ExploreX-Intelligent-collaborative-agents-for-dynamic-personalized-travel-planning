@@ -40,9 +40,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const stepNav = document.getElementById('step-nav');
     const missingFieldsContainer = document.getElementById('missing-fields-container');
     const missingFieldsText = document.getElementById('missing-fields-text');
-    const quickResponseChipsContainer = document.getElementById('quick-response-chips');
-    const tripSnapshotContainer = document.getElementById('trip-snapshot-container');
-    const tripSnapshotContent = document.getElementById('trip-snapshot-content');
     const selectedAttractionsList = document.getElementById('selected-attractions');
 
     // === INITIALIZATION ENTRY POINT ===
@@ -179,7 +176,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     // Show missing fields list & Quick Response Chips
     function showMissingFields(fields) {
-        if (!missingFieldsContainer || !quickResponseChipsContainer) return;
+        if (!missingFieldsContainer) return;
         console.log(`[UI DEBUG] Showing missing fields: ${fields.join(', ')}`);
         
         let chipHtml = '';
@@ -199,7 +196,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         
         missingFieldsText.innerHTML = `Please provide: <strong>${fields.map(f => f.replace('_', ' ')).join(', ')}</strong>`;
-        quickResponseChipsContainer.innerHTML = chipHtml;
         missingFieldsContainer.classList.remove('d-none');
     }
     
@@ -208,37 +204,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (missingFieldsContainer) missingFieldsContainer.classList.add('d-none');
     }
     
-    function renderTripSnapshot() {
-        if (!tripSnapshotContainer || !tripSnapshotContent) return;
-        
-        if (!state.userInfo || Object.keys(state.userInfo).length === 0) {
-            tripSnapshotContainer.classList.add('d-none');
-            return;
-        }
-        
-        let html = '';
-        const uiMap = {
-            'destination': { icon: 'fa-map-marker-alt', label: 'To' },
-            'budget': { icon: 'fa-wallet', label: 'Budget' },
-            'duration': { icon: 'fa-clock', label: 'Duration' },
-            'group_type': { icon: 'fa-user-friends', label: 'Group' }
-        };
-        
-        let hasData = false;
-        for (const [key, config] of Object.entries(uiMap)) {
-            if (state.userInfo[key]) {
-                hasData = true;
-                html += `<div class="bg-light px-2 py-1 rounded"><i class="fas ${config.icon} text-muted me-1"></i> <span class="fw-medium">${state.userInfo[key]}</span></div>`;
-            }
-        }
-        
-        if (hasData) {
-            tripSnapshotContent.innerHTML = html;
-            tripSnapshotContainer.classList.remove('d-none');
-        } else {
-            tripSnapshotContainer.classList.add('d-none');
-        }
-    }
+
 
 
     function updateViewState(step) {
@@ -304,6 +270,24 @@ document.addEventListener('DOMContentLoaded', function() {
         resetConversation();
     });
     
+    function scrollToBottom() {
+        if (!chatContainer) return;
+        requestAnimationFrame(() => {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        });
+        setTimeout(() => {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }, 100);
+        
+        const images = chatContainer.querySelectorAll('img:not(.scroll-handled)');
+        images.forEach(img => {
+            img.classList.add('scroll-handled');
+            img.addEventListener('load', () => {
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            });
+        });
+    }
+
     // Add a message to the chat container
     function addChatMessage(message, role) {
         try {
@@ -321,20 +305,17 @@ document.addEventListener('DOMContentLoaded', function() {
             chatContainer.appendChild(messageDiv);
             
             // Scroll to bottom robustly
-            setTimeout(() => {
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-                console.log(`[UI DEBUG] Scrolling to latest message. Container height: ${chatContainer.clientHeight}px, Scroll Height: ${chatContainer.scrollHeight}px`);
-                
-                const composer = document.querySelector('.chat-composer');
-                if (composer) {
-                    const rect = composer.getBoundingClientRect();
-                    const style = window.getComputedStyle(composer);
-                    console.log(`[UI DEBUG] Composer element found: true`);
-                    console.log(`[UI DEBUG] Composer computed display: ${style.display}`);
-                    console.log(`[UI DEBUG] Composer computed visibility: ${style.visibility}`);
-                    console.log(`[UI DEBUG] Composer bounding rect:`, rect);
-                }
-            }, 50);
+            scrollToBottom();
+            
+            const composer = document.querySelector('.chat-composer');
+            if (composer) {
+                const rect = composer.getBoundingClientRect();
+                const style = window.getComputedStyle(composer);
+                console.log(`[UI DEBUG] Composer element found: true`);
+                console.log(`[UI DEBUG] Composer computed display: ${style.display}`);
+                console.log(`[UI DEBUG] Composer computed visibility: ${style.visibility}`);
+                console.log(`[UI DEBUG] Composer bounding rect:`, rect);
+            }
         } catch (error) {
             console.error(`[UI DEBUG] Error rendering message:`, error);
         }
@@ -409,7 +390,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data.type === 'chunk') {
                 fullResponse += data.content;
                 messageContent.innerHTML = marked.parse(fullResponse);
-                chatContainer.scrollTop = chatContainer.scrollHeight;
+                scrollToBottom();
             } else if (data.type === 'complete') {
                 console.error(`[DIAGNOSTIC] EventSource received complete message. Closing connection.`);
                 eventSource.close();
@@ -491,9 +472,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
                 
-                // Update Trip Snapshot
-                renderTripSnapshot();
-                
                 // Update UI components
                 if (data.attractions) updateAttractions(data.attractions, data.accommodations || []);
                 if (data.map_data) updateMap(data.map_data);
@@ -522,7 +500,40 @@ document.addEventListener('DOMContentLoaded', function() {
                     const userInput = document.getElementById('user-input');
                     if (userInput) {
                         userInput.value = 'I am satisfied with your recommendation, let us go to next step';
+                        scrollToBottom();
                         userInput.focus();
+                        
+                        // Small timeout ensures the DOM has painted the response before alerting
+                        setTimeout(() => {
+                            const confModalEl = document.getElementById('confirmationModal');
+                            if (confModalEl) {
+                                const confModal = new bootstrap.Modal(confModalEl);
+                                
+                                const applyHighlight = () => {
+                                    userInput.classList.add('highlight-input-dark');
+                                    const submitBtn = userInput.closest('form').querySelector('button[type="submit"]');
+                                    if (submitBtn) submitBtn.classList.add('highlight-input-dark');
+                                    
+                                    // Make sure input is focused after modal closes
+                                    userInput.focus();
+                                    
+                                    const removeHighlight = () => {
+                                        userInput.classList.remove('highlight-input-dark');
+                                        if (submitBtn) submitBtn.classList.remove('highlight-input-dark');
+                                        userInput.removeEventListener('input', removeHighlight);
+                                        if (submitBtn) submitBtn.removeEventListener('click', removeHighlight);
+                                    };
+                                    userInput.addEventListener('input', removeHighlight);
+                                    if (submitBtn) submitBtn.addEventListener('click', removeHighlight);
+                                    
+                                    // Clean up listener
+                                    confModalEl.removeEventListener('hidden.bs.modal', applyHighlight);
+                                };
+                                
+                                confModalEl.addEventListener('hidden.bs.modal', applyHighlight);
+                                confModal.show();
+                            }
+                        }, 200);
                     }
                 }
             } else if (data.type === 'error') {
@@ -774,6 +785,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedAttractions.length > 0) {
                 state.selectedAttractions = selectedAttractions; // Ensure state is up-to-date
                 updateSelectedAttractionsList(); // Update UI list
+                addChatMessage('Here are my selected attractions', 'user');
                 processUserInput('Here are my selected attractions');
             } else {
                 addChatMessage('Please select at least one attraction from the recommendations.', 'assistant');

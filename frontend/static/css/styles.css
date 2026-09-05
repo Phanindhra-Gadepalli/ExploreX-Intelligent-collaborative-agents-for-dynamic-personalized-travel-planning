@@ -217,20 +217,18 @@ p { line-height: 1.65; }
 }
 
 /* ==========================================================================
-   5. PROGRESS / STEP NAVIGATION
+   5. PROGRESS / STEP NAVIGATION (Now in Navbar)
    ========================================================================== */
 .step-nav-wrapper {
-    text-align: center;
-    margin-bottom: 20px;
+    margin: 0;
 }
 .step-nav-container {
     display: inline-flex;
     align-items: center;
-    background: var(--clr-surface);
-    border: 1px solid var(--clr-border);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: var(--radius-full);
     padding: 4px;
-    box-shadow: var(--shadow-sm);
     gap: 2px;
 }
 .step-nav-item {
@@ -241,7 +239,7 @@ p { line-height: 1.65; }
     border-radius: var(--radius-full);
     font-size: var(--text-sm);
     font-weight: 500;
-    color: var(--clr-ink-light);
+    color: rgba(255, 255, 255, 0.7);
     cursor: default;
     transition: all var(--transition-base);
     white-space: nowrap;
@@ -255,13 +253,12 @@ p { line-height: 1.65; }
     font-weight: 600;
 }
 .step-nav-item.completed {
-    background: var(--clr-teal-pale);
-    color: var(--clr-teal);
+    background: rgba(20, 184, 166, 0.2);
+    color: var(--clr-teal-light);
     font-weight: 600;
 }
 .step-nav-item.upcoming {
-    color: var(--clr-ink-light);
-    opacity: 0.65;
+    color: rgba(255, 255, 255, 0.5);
 }
 
 /* ==========================================================================
@@ -719,15 +716,23 @@ p { line-height: 1.65; }
     letter-spacing: -0.02em;
 }
 
-/* In the Discover view, the chat card should use a smaller height */
+/* In the Discover view, the chat card should be tall and prominent */
 #chat-column-recs #chat-card-master {
-    height: 400px;
-    min-height: 360px;
-    max-height: 480px;
+    height: 55vh;
+    min-height: 500px;
+    max-height: 700px;
 }
 
 /* Accommodations */
 #accommodations-card .card-header i { color: var(--clr-blue); }
+
+/* Selected-attractions badge */
+#selected-count {
+    background-color: var(--clr-coral) !important;
+    color: var(--clr-white) !important;
+    font-weight: 600;
+    padding: 0.4em 0.8em;
+}
 
 /* Selected-attractions summary */
 .selected-item {
@@ -989,14 +994,33 @@ p { line-height: 1.65; }
     padding: 0 !important;
 }
 
-/* In plan view, map is in sidebar — give it a sensible fixed height */
+/* In plan view, map is in the flexible right column */
+#map-container-plan {
+    flex: 1;
+    min-height: 400px;
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
 #map-container-plan #map-card-master {
-    min-height: 380px;
-    height: 380px;
+    flex: 1;
+    height: 100%;
 }
 #map-container-plan #map {
-    height: 324px;
-    min-height: 324px;
+    height: 100%;
+    min-height: 350px;
+}
+
+/* Summary Card */
+#final-summary-card {
+    flex-shrink: 0;
+    max-height: 45vh;
+    display: flex;
+    flex-direction: column;
+}
+#final-summary-card .card-body {
+    overflow-y: auto;
 }
 
 /* ==========================================================================
@@ -1030,20 +1054,24 @@ p { line-height: 1.65; }
     margin: 0 auto;
 }
 
-/* Budget + Transit summary strip — horizontal row ABOVE the grid */
-.plan-summary-strip {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    margin-bottom: 1.25rem;
-}
+/* Removed plan-summary-strip */
 
 /* Plan content grid — itinerary left, map right */
 .plan-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr);
+    grid-template-columns: 1.1fr 1fr;
     gap: 1.25rem;
     align-items: start;
+}
+
+/* Right column acts as a sticky workspace for Map + Summary */
+.plan-right-column {
+    position: sticky;
+    top: 84px;
+    height: calc(100vh - 104px);
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
 }
 
 /* Day header in itinerary */

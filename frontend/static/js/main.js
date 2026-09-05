@@ -994,20 +994,41 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
         }
 
+        const numPlaces = state.selectedAttractions ? state.selectedAttractions.length : (state.itinerary ? state.itinerary.reduce((acc, day) => acc + (day.spots ? day.spots.length : 0), 0) : 0);
+        
         budgetContainer.innerHTML = `
         ${warningHtml}
-        <div class="budget-summary mb-3 p-3 rounded" style="background:linear-gradient(135deg,#1a472a 0%,#2d6a4f 100%);color:#fff;">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <div class="fs-5 fw-bold">💰 Est. Total</div>
-                    <div class="small opacity-75">${budget.budget_level ? budget.budget_level.charAt(0).toUpperCase()+budget.budget_level.slice(1)+' Base' : ''} · ${budget.rooms || 1} room(s)</div>
-                </div>
-                <div class="text-end">
-                    <div class="fs-3 fw-bold">${inr(grandTotal)}</div>
-                    <div class="small opacity-75">${inr(perPerson)} / person · ${inr(dailyPP)} / day</div>
+        
+        <!-- Top Stats Row -->
+        <div class="row g-2 mb-3 text-center">
+            <div class="col-4">
+                <div class="p-2 border rounded h-100" style="background: var(--clr-surface-off);">
+                    <div class="fs-5 mb-1">🗓️</div>
+                    <div class="fw-bold" style="color: var(--clr-ink);">${numDays} Days</div>
+                    <div class="small text-muted">Duration</div>
                 </div>
             </div>
-            ${targetHtml}
+            <div class="col-4">
+                <div class="p-2 border rounded h-100" style="background: var(--clr-surface-off);">
+                    <div class="fs-5 mb-1">📍</div>
+                    <div class="fw-bold" style="color: var(--clr-ink);">${numPlaces} Places</div>
+                    <div class="small text-muted">Selected</div>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="p-2 border h-100 rounded" style="background-color: rgba(232, 82, 42, 0.08); border-color: var(--clr-coral) !important;">
+                    <div class="fs-5 mb-1">💰</div>
+                    <div class="fw-bold" style="color: var(--clr-coral);">${inr(grandTotal)}</div>
+                    <div class="small text-muted">Est. Total</div>
+                </div>
+            </div>
+        </div>
+        
+        ${targetHtml}
+        
+        <div class="d-flex justify-content-between align-items-center mb-2 px-1">
+            <span class="fw-bold text-muted small text-uppercase" style="letter-spacing: 0.5px;">Budget Breakdown</span>
+            <span class="small text-muted">${inr(perPerson)} / person</span>
         </div>
         <div class="row g-2">
             <div class="col-6">

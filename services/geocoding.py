@@ -719,3 +719,18 @@ class GeocodingManager:
 
     def _to_cache(self, key: str, result: GeocodingResult):
         self._cache[key] = (copy.copy(result), time.monotonic())
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton — import this instead of constructing a new instance
+# ---------------------------------------------------------------------------
+# Every module that needs geocoding should do:
+#   from services.geocoding import shared_geocoder
+# rather than:
+#   self.geocoder = GeocodingManager()
+#
+# This ensures that the provider cascade is built (and its startup log lines
+# printed) exactly once per Python process, not once per agent instantiation.
+print("[STARTUP] Initializing geocoder…")
+shared_geocoder = GeocodingManager()
+print("[STARTUP] Geocoder ready.")

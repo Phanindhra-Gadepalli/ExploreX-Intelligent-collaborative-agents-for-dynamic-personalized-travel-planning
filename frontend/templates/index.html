@@ -1,114 +1,102 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ExploreX: AI Travel Architect | India Travel Planning</title>
-    <meta name="description" content="ExploreX — AI-powered personalized travel planning for India. Get a custom itinerary, optimized routes, attraction recommendations and budget estimates.">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>" type="image/svg+xml">
+    <meta name="description"
+        content="ExploreX — Multi-agent AI travel architect for India. Personalized itineraries, optimized routes, curated attractions & budget intelligence.">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>"
+        type="image/svg+xml">
 
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Leaflet for maps -->
+    <!-- Leaflet -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <!-- Google Fonts -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Sora:wght@600;700;800&display=swap"
+        rel="stylesheet">
 
-    <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-
-    <!-- Marked for Markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <base target="_blank">
 </head>
+
 <body>
 
-    <!-- ====================================================
-         NAVBAR — fixed at top, z-index:1030
-         ==================================================== -->
+    <!-- ================= NAVBAR ================= -->
     <nav class="navbar navbar-expand-lg fixed-top">
         <div class="container-fluid px-4 d-flex justify-content-between align-items-center">
-            <!-- Left: Logo -->
-            <a class="navbar-brand d-flex align-items-center" href="#" aria-label="ExploreX Home" style="flex: 1;">
-                <svg width="36" height="36" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" class="me-2 explorex-logo">
+            <a class="navbar-brand d-flex align-items-center" href="#" aria-label="ExploreX Home" style="flex:1;">
+                <svg width="38" height="38" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"
+                    class="me-2 explorex-logo">
                     <defs>
                         <linearGradient id="explorexBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-                            <stop stop-color="#ffffff"/>
-                            <stop offset="1" stop-color="#f8fafc"/>
+                            <stop stop-color="#1B2350" />
+                            <stop offset="1" stop-color="#0B1026" />
                         </linearGradient>
                     </defs>
-                    <rect width="40" height="40" rx="12" fill="url(#explorexBg)" />
-                    <path d="M12 12L28 28" stroke="#0F172A" stroke-width="4.5" stroke-linecap="round"/>
-                    <path d="M28 12L12 28" stroke="#0F172A" stroke-width="4.5" stroke-linecap="round"/>
-                    <path d="M20 10L22 18L30 20L22 22L20 30L18 22L10 20L18 18L20 10Z" fill="#E8522A"/>
-                    <circle cx="20" cy="20" r="2.5" fill="white"/>
+                    <rect width="40" height="40" rx="12" fill="url(#explorexBg)" stroke="rgba(255,255,255,0.18)" />
+                    <path d="M12 12L28 28" stroke="#7CF7D4" stroke-width="4" stroke-linecap="round" opacity="0.9" />
+                    <path d="M28 12L12 28" stroke="#FF6A3D" stroke-width="4" stroke-linecap="round" opacity="0.9" />
+                    <path d="M20 9L22.2 17.8L31 20L22.2 22.2L20 31L17.8 22.2L9 20L17.8 17.8L20 9Z" fill="#FBBF24" />
+                    <circle cx="20" cy="20" r="2.4" fill="#0B1026" />
                 </svg>
                 <span class="brand-text">ExploreX</span>
-                <span class="brand-tagline ms-2 d-none d-sm-inline">| AI Travel Architect</span>
+                <span class="brand-tagline ms-2 d-none d-sm-inline">AI Travel Architect</span>
             </a>
 
-            <!-- Center: Step Navigation -->
-            <div class="step-nav-wrapper d-none d-md-flex justify-content-center" style="flex: 1;">
+            <div class="step-nav-wrapper d-none d-md-flex justify-content-center" style="flex:1;">
                 <div class="step-nav-container" id="step-nav">
-                    <div class="step-nav-item active" data-step="chat">
-                        <i class="fas fa-comment-dots"></i>
-                        <span>1. Tell AI</span>
-                    </div>
-                    <div class="step-nav-item" data-step="recommend">
-                        <i class="fas fa-suitcase"></i>
-                        <span>2. Discover</span>
-                    </div>
-                    <div class="step-nav-item" data-step="route">
-                        <i class="far fa-calendar-alt"></i>
-                        <span>3. Itinerary</span>
-                    </div>
+                    <div class="step-nav-item active" data-step="chat"><i class="fas fa-comment-dots"></i><span>1. Tell
+                            AI</span></div>
+                    <div class="step-nav-item" data-step="recommend"><i class="fas fa-suitcase"></i><span>2.
+                            Discover</span></div>
+                    <div class="step-nav-item" data-step="route"><i class="far fa-calendar-alt"></i><span>3.
+                            Itinerary</span></div>
                 </div>
             </div>
 
-            <!-- Right: Actions -->
-            <div class="d-flex align-items-center justify-content-end gap-3" style="flex: 1;">
-                <button class="btn" id="reset-btn" onclick="location.reload()" aria-label="Start a new trip">
+            <div class="d-flex align-items-center justify-content-end gap-3" style="flex:1;">
+                <div class="user-chip d-none d-sm-flex" id="user-chip" title="Signed-in traveller">
+                    <i class="fas fa-user-astronaut"></i><span id="user-chip-name">Traveller</span>
+                </div>
+                <button class="btn" id="reset-btn" aria-label="Start a new trip">
                     <i class="fas fa-plus me-2"></i>New Trip
                 </button>
             </div>
         </div>
     </nav>
 
-    <!-- ====================================================
-         APP SHELL — sits below fixed navbar via padding-top in CSS
-         ==================================================== -->
+    <!-- ================= APP SHELL ================= -->
     <div class="container-fluid px-4 pb-5" id="app-container">
 
-        <!-- ================================================
-             PHASE 1 — TELL AI (Landing + Chat)
-             ================================================ -->
+        <!-- ============ PHASE 1 — TELL AI ============ -->
         <div id="view-landing" class="view-section active">
-            <!-- Single centred column, max 680px wide -->
             <div class="landing-inner">
 
-                <!-- Hero block — hidden after first message by JS -->
                 <div class="text-center" id="landing-hero-text">
-                    <h1 class="hero-title mb-3">Where will your next adventure be?</h1>
-                    <p class="hero-subtitle mb-0">Let our AI build a deeply personalized, optimized travel plan — just for you.</p>
+                    <div class="hero-eyebrow"><i class="fas fa-bolt me-1"></i>Powered by Multi-Agent GenAI + RAG</div>
+                    <h1 class="hero-title mb-3">Where will your next<br><span class="grad-text">adventure</span> be?
+                    </h1>
+                    <p class="hero-subtitle mb-0">A swarm of AI agents — Scout, Curator, Planner &amp; Budgeter —
+                        architects your perfect Indian journey in real time.</p>
                 </div>
 
-                <!-- Initial Prompt UI — hidden after first message by JS -->
                 <div id="initial-prompt-ui" class="mt-4">
                     <p class="text-center hero-step-label mb-3">✈️ Tell us about your trip</p>
-
                     <form id="initial-prompt-form">
                         <div class="prompt-input-wrapper">
-                            <input
-                                type="text"
-                                id="initial-user-input"
-                                class="prompt-input form-control"
+                            <input type="text" id="initial-user-input" class="prompt-input form-control"
                                 placeholder="e.g. 5 days in Jaipur for a family trip focusing on heritage..."
-                                autocomplete="off"
-                                aria-label="Describe your trip"
-                            >
+                                autocomplete="off" aria-label="Describe your trip">
                             <button type="submit" class="prompt-submit-btn" aria-label="Send trip request">
                                 Send <i class="fas fa-arrow-right"></i>
                             </button>
@@ -118,265 +106,330 @@
                     <div class="mt-3 text-center">
                         <p class="try-label mb-2">Try asking about:</p>
                         <div class="d-flex flex-wrap justify-content-center gap-2">
-                            <button type="button" class="prompt-chip">
-                                <i class="fas fa-map-pin"></i> 5 days in Jaipur
-                            </button>
-                            <button type="button" class="prompt-chip">
-                                <i class="fas fa-users"></i> Family trip to Kerala
-                            </button>
-                            <button type="button" class="prompt-chip">
-                                <i class="fas fa-rupee-sign"></i> ₹50,000 budget
-                            </button>
-                            <button type="button" class="prompt-chip">
-                                <i class="fas fa-landmark"></i> Heritage &amp; culture
-                            </button>
+                            <button type="button" class="prompt-chip"><i class="fas fa-map-pin"></i> 5 days in
+                                Jaipur</button>
+                            <button type="button" class="prompt-chip"><i class="fas fa-users"></i> Family trip to
+                                Kerala</button>
+                            <button type="button" class="prompt-chip"><i class="fas fa-rupee-sign"></i> ₹50,000
+                                budget</button>
+                            <button type="button" class="prompt-chip"><i class="fas fa-landmark"></i> Heritage &amp;
+                                culture</button>
                         </div>
                     </div>
                 </div>
 
-                <!-- Chat card slots here after first message (JS moves #chat-card-master here) -->
-                <div id="chat-column-landing" class="d-none mt-3">
-                    <!-- #chat-card-master appended dynamically by JS -->
-                </div>
+                <div id="chat-column-landing" class="d-none mt-3"><!-- chat master moves here --></div>
+            </div>
+        </div>
 
-            </div><!-- /.landing-inner -->
-        </div><!-- /#view-landing -->
-
-        <!-- ================================================
-             PHASE 2 — DISCOVER (Recommendations)
-             ================================================ -->
+        <!-- ============ PHASE 2 — DISCOVER ============ -->
         <div id="view-recommendations" class="view-section">
-            <div class="row g-3">
 
-                <!-- Left: Chat + Accommodations + Map -->
-                <div class="col-lg-7">
-                    <div id="chat-column-recs" class="mb-3">
-                        <!-- #chat-card-master moves here via JS -->
-                    </div>
+            <div class="phase-header">
+                <h2 class="phase-title">Discover <span class="grad-text">Your Trip</span></h2>
+                <p class="phase-sub">One workspace, every tool. Click a panel's name to expand it full-screen.</p>
+            </div>
 
-                    <div class="card mb-3 d-none" id="accommodations-card">
-                        <div class="card-header">
-                            <i class="fas fa-bed" style="color: var(--clr-blue);"></i> Choose Accommodation
-                        </div>
-                        <div class="card-body p-2" id="accommodations-container" style="max-height: 380px; overflow-y: auto;">
-                            <div class="empty-state">
-                                <div class="spinner-border text-primary spinner-border-sm mb-2" role="status"></div>
-                                <p>Finding best stays...</p>
+            <div class="row g-4">
+                <!-- LEFT : FOCUS WINDOW -->
+                <div class="col-lg-5">
+                    <div class="focus-window" id="focus-window-recs">
+
+                        <div class="focus-item open" data-focus="chat">
+                            <button class="focus-header" type="button">
+                                <span class="focus-icon" style="--fi:#FF6A3D;"><i
+                                        class="fas fa-comment-dots"></i></span>
+                                <span class="focus-meta"><span class="focus-name">Chat with ExploreX</span>
+                                    <span class="focus-desc">Negotiate the plan with your AI architect</span></span>
+                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                            </button>
+                            <div class="focus-body">
+                                <div id="chat-column-recs"></div>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Map slot (JS moves #map-card-master here) -->
-                    <div id="map-container-recs" class="mb-3"></div>
+                        <div class="focus-item" data-focus="weather-recs">
+                            <button class="focus-header" type="button">
+                                <span class="focus-icon" style="--fi:#0EA5E9;"><i class="fas fa-cloud-sun"></i></span>
+                                <span class="focus-meta"><span class="focus-name">Weather Forecast</span>
+                                    <span class="focus-desc">Conditions for your trip</span></span>
+                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                            </button>
+                            <div class="focus-body">
+                                <div class="card glass-card border-0">
+                                    <div class="card-body p-3 weather-container">
+                                        <div class="empty-state py-2">
+                                            <p class="mb-0">Weather information will appear here once your trip dates are set.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="focus-item" data-focus="map">
+                            <button class="focus-header" type="button">
+                                <span class="focus-icon" style="--fi:#2DD4BF;"><i
+                                        class="fas fa-map-marked-alt"></i></span>
+                                <span class="focus-meta"><span class="focus-name">Live Map</span>
+                                    <span class="focus-desc">Every selected place pinned in real time</span></span>
+                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                            </button>
+                            <div class="focus-body">
+                                <div id="map-container-recs"></div>
+                            </div>
+                        </div>
+
+                        <div class="focus-item" data-focus="stays">
+                            <button class="focus-header" type="button">
+                                <span class="focus-icon" style="--fi:#8B5CF6;"><i class="fas fa-bed"></i></span>
+                                <span class="focus-meta"><span class="focus-name">Where to Stay</span>
+                                    <span class="focus-desc">Curated stays matched to your budget</span></span>
+                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                            </button>
+                            <div class="focus-body">
+                                <div class="card glass-card d-none" id="accommodations-card">
+                                    <div class="card-header"><i class="fas fa-bed" style="color:#8B5CF6;"></i> Choose
+                                        Accommodation</div>
+                                    <div class="card-body p-2" id="accommodations-container"
+                                        style="max-height:60vh; overflow-y:auto;">
+                                        <div class="empty-state">
+                                            <div class="spinner-border text-primary spinner-border-sm mb-2"></div>
+                                            <p>Finding best stays...</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="empty-state py-4" id="stays-empty"><i class="fas fa-bed"></i>
+                                    <p>Stays will appear here once recommendations arrive.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="focus-item" data-focus="backpack">
+                            <button class="focus-header" type="button">
+                                <span class="focus-icon" style="--fi:#FBBF24;"><i class="fas fa-suitcase"></i></span>
+                                <span class="focus-meta"><span class="focus-name">Travel Backpack <span
+                                            class="badge bg-primary rounded-pill ms-1"
+                                            id="selected-count">0</span></span>
+                                    <span class="focus-desc">Your hand-picked attractions</span></span>
+                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                            </button>
+                            <div class="focus-body">
+                                <div class="p-2 pb-3 d-none" id="confirm-all-selections-footer">
+                                    <button class="btn btn-primary w-100" id="confirm-selected-attractions-btn">
+                                        <i class="fas fa-magic me-2"></i>Build My Itinerary
+                                    </button>
+                                </div>
+                                <div id="selected-attractions">
+                                    <div class="empty-state py-3">
+                                        <p class="mb-0">Select places to add them to your trip.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
                 </div>
 
-                <!-- Right: Selections + Attractions -->
-                <div class="col-lg-5">                    
-
-                    <!-- Recommendations -->
-                    <div class="card shadow-sm">
-                        <div class="card-header">
-                            <i class="fas fa-star" style="color: var(--clr-amber);"></i> AI Recommendations
+                <!-- RIGHT : RECOMMENDATIONS -->
+                <div class="col-lg-7">
+                    <div class="card glass-card" id="recommendations-card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <div><i class="fas fa-sparkles" style="color:#FBBF24;"></i> AI Recommendations</div>
+                            <small class="text-muted d-none d-md-inline">Click any name for full-screen details</small>
                         </div>
-                        <div class="card-body p-3" id="attractions-list-container"
-                             style="max-height: 680px; overflow-y: auto; background: var(--clr-surface-off);">
-
-                            <h5 class="section-heading mb-3">
-                                <i class="fas fa-bullseye me-2" style="color: var(--clr-coral);"></i>Top Matches For You
-                            </h5>
-                            <div id="interest-attractions-area" class="attractions-grid mb-4">
-                                <div class="empty-state">
-                                    <i class="fas fa-search"></i>
+                        <div class="card-body p-3" id="attractions-list-container">
+                            <h5 class="section-heading mb-3"><i class="fas fa-bullseye me-2"
+                                    style="color:#FF6A3D;"></i>Top Matches For You</h5>
+                            <div id="interest-attractions-area" class="attraction-list mb-4">
+                                <div class="empty-state"><i class="fas fa-search"></i>
                                     <p>No interest-based attractions found.</p>
                                 </div>
                             </div>
-
-                            <h5 class="section-heading mb-3">
-                                <i class="fas fa-fire me-2" style="color: var(--clr-amber);"></i>Popular in the City
-                            </h5>
-                            <div id="popular-attractions-area" class="attractions-grid">
+                            <h5 class="section-heading mb-3"><i class="fas fa-fire me-2"
+                                    style="color:#FBBF24;"></i>Popular in the City</h5>
+                            <div id="popular-attractions-area" class="attraction-list">
                                 <div class="empty-state">
                                     <p>No popular attractions found.</p>
                                 </div>
                             </div>
                         </div>
-                    </div>
-
-                    <br />
-
-                    <!-- Travel backpack -->
-                    <div class="card mb-3 border-accent">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <div class="d-flex align-items-center gap-2">
-                                <i class="fas fa-suitcase text-teal"></i>
-                                <span>Your Travel Backpack</span>
-                            </div>
-                            <span class="badge bg-primary rounded-pill" id="selected-count">0 items</span>
-                        </div>
-                        <div class="p-3 border-bottom d-none bg-light" id="confirm-all-selections-footer">
-                            <button class="btn btn-primary w-100 shadow-sm" id="confirm-selected-attractions-btn">
+                        <div class="card-footer d-none" id="recs-card-footer">
+                            <button class="btn btn-primary w-100" id="confirm-selected-attractions-btn-2">
                                 <i class="fas fa-magic me-2"></i>Build My Itinerary
                             </button>
                         </div>
-                        <div class="card-body p-3" id="selected-attractions">
-                            <div class="empty-state py-3">
-                                <p class="mb-0">Select places below to add them to your trip.</p>
-                            </div>
-                        </div>
                     </div>
+                </div>
+            </div>
+        </div>
 
-                </div><!-- /.col-lg-7 -->
-            </div><!-- /.row -->
-        </div><!-- /#view-recommendations -->
-
-        <!-- ================================================
-             PHASE 3 — ITINERARY (Final Plan)
-             ================================================ -->
+        <!-- ============ PHASE 3 — ITINERARY ============ -->
         <div id="view-plan" class="view-section">
 
-            <!-- Hero title -->
             <div class="plan-hero">
-                <h1>Your Journey Awaits</h1>
-                <p>We've optimized your route to minimize travel and maximize exploration.</p>
+                <div class="hero-eyebrow"><i class="fas fa-route me-1"></i>Route Optimized · Budget Balanced</div>
+                <h1>Your Journey <span class="grad-text">Awaits</span></h1>
+                <p>Minimized travel time. Maximized exploration. Click a panel name to view it full-screen.</p>
             </div>
 
-            <!-- Itinerary + Map Grid -->
-            <div class="plan-grid">
+            <div class="focus-window plan-focus" id="focus-window-plan">
 
-                <!-- LEFT: Day-by-day itinerary -->
-                <div>
-                    <div class="card border-0 shadow-lg">
-                        <div class="card-header">
-                            <i class="fas fa-calendar-alt"></i>
-                            <span style="font-size: 1rem; font-weight: 700;">Chronological Itinerary</span>
-                        </div>
-                        <div class="card-body px-4 pb-4 pt-3" id="itinerary-container">
-                            <div class="empty-state">
-                                <div class="spinner-border text-primary mb-3"></div>
-                                <h5>Optimizing Routes...</h5>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Final Trip Summary -->
-                    <div class="card border-0 shadow-sm mt-3" id="final-summary-card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <div><i class="fas fa-sparkles text-coral me-1"></i> <span style="font-size: 1.05rem; font-weight: 700;">Final Trip Summary</span></div>
-                        </div>
-                        <div class="card-body p-3">
-                            <div id="confirmation-container">
-                                <p class="text-center text-muted">Summary details will appear here once generated.</p>
+                <div class="focus-item open" data-focus="itinerary">
+                    <button class="focus-header" type="button">
+                        <span class="focus-icon" style="--fi:#FF6A3D;"><i class="fas fa-calendar-alt"></i></span>
+                        <span class="focus-meta"><span class="focus-name">Day-by-Day Itinerary</span>
+                            <span class="focus-desc">Chronological plan with timings</span></span>
+                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                    </button>
+                    <div class="focus-body">
+                        <div class="card glass-card border-0">
+                            <div class="card-body px-3 pb-4 pt-2" id="itinerary-container">
+                                <div class="empty-state">
+                                    <div class="spinner-border text-primary mb-3"></div>
+                                    <h5>Optimizing Routes...</h5>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- RIGHT: Map + Transit + Budget -->
-                <div class="plan-right-column">
-                    <!-- Map slot (JS moves #map-card-master here) -->
-                    <div id="map-container-plan" class="mb-3"></div>
-
-                    <!-- Transit Data -->
-                    <div class="card border-0 shadow-sm mb-3" id="transit-card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <div><i class="fas fa-route text-blue me-1"></i> <span style="font-size: 1.05rem; font-weight: 700;">Transit Options</span></div>
-                        </div>
-                        <ul class="nav nav-tabs nav-fill border-bottom-0 custom-tabs mt-2" id="transitTabs" role="tablist">
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link active border-0 fw-bold"
-                                        id="flights-tab" data-bs-toggle="tab"
-                                        data-bs-target="#flights" type="button" role="tab"><i class="fas fa-plane"></i></button>
-                            </li>
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link border-0 fw-bold"
-                                        id="trains-tab" data-bs-toggle="tab"
-                                        data-bs-target="#trains" type="button" role="tab"><i class="fas fa-train"></i></button>
-                            </li>
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link border-0 fw-bold"
-                                        id="buses-tab" data-bs-toggle="tab"
-                                        data-bs-target="#buses" type="button" role="tab"><i class="fas fa-bus"></i></button>
-                            </li>
-                        </ul>
-                        <div class="card-body p-0 border-top">
-                            <div class="tab-content p-3" id="transitTabsContent">
-                                <div class="tab-pane fade show active" id="flights" role="tabpanel">
-                                    <p class="text-center text-muted mb-0 small">No flight data available.</p>
+                <div class="focus-item" data-focus="weather-plan">
+                    <button class="focus-header" type="button">
+                        <span class="focus-icon" style="--fi:#0EA5E9;"><i class="fas fa-cloud-sun"></i></span>
+                        <span class="focus-meta"><span class="focus-name">Weather Forecast</span>
+                            <span class="focus-desc">Conditions for your trip</span></span>
+                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                    </button>
+                    <div class="focus-body">
+                        <div class="card glass-card border-0">
+                            <div class="card-body p-3 weather-container">
+                                <div class="empty-state py-2">
+                                    <p class="mb-0">Weather information will appear here once your trip dates are set.</p>
                                 </div>
-                                <div class="tab-pane fade" id="trains" role="tabpanel">
-                                    <p class="text-center text-muted mb-0 small">No train data available.</p>
-                                </div>
-                                <div class="tab-pane fade" id="buses" role="tabpanel">
-                                    <p class="text-center text-muted mb-0 small">No bus data available.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Budget Data -->
-                    <div class="card border-0 shadow-sm" id="budget-card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <div><i class="fas fa-wallet text-green me-1"></i> <span style="font-size: 1.05rem; font-weight: 700;">Trip Budget</span></div>
-                        </div>
-                        <div class="card-body p-0">
-                            <div id="budget-container" class="p-3">
-                                <div class="empty-state py-2"><p class="mb-0">Calculating...</p></div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-            </div><!-- /.plan-grid -->
+                <div class="focus-item" data-focus="map">
+                    <button class="focus-header" type="button">
+                        <span class="focus-icon" style="--fi:#2DD4BF;"><i class="fas fa-map"></i></span>
+                        <span class="focus-meta"><span class="focus-name">Journey Map</span>
+                            <span class="focus-desc">Optimized route drawn step-by-step</span></span>
+                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                    </button>
+                    <div class="focus-body">
+                        <div id="map-container-plan"></div>
+                    </div>
+                </div>
 
-        </div><!-- /#view-plan -->
+                <div class="focus-item" data-focus="transit">
+                    <button class="focus-header" type="button">
+                        <span class="focus-icon" style="--fi:#38BDF8;"><i class="fas fa-plane"></i></span>
+                        <span class="focus-meta"><span class="focus-name">Transit Options</span>
+                            <span class="focus-desc">Flights, trains &amp; buses compared</span></span>
+                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                    </button>
+                    <div class="focus-body">
+                        <div class="card glass-card border-0" id="transit-card">
+                            <ul class="nav nav-tabs nav-fill custom-tabs" id="transitTabs" role="tablist">
+                                <li class="nav-item"><button class="nav-link active" id="flights-tab"
+                                        data-bs-toggle="tab" data-bs-target="#flights" type="button" role="tab"><i
+                                            class="fas fa-plane me-1"></i> Flights</button></li>
+                                <li class="nav-item"><button class="nav-link" id="trains-tab" data-bs-toggle="tab"
+                                        data-bs-target="#trains" type="button" role="tab"><i
+                                            class="fas fa-train me-1"></i> Trains</button></li>
+                                <li class="nav-item"><button class="nav-link" id="buses-tab" data-bs-toggle="tab"
+                                        data-bs-target="#buses" type="button" role="tab"><i class="fas fa-bus me-1"></i>
+                                        Buses</button></li>
+                            </ul>
+                            <div class="card-body p-0 border-top">
+                                <div class="tab-content p-3" id="transitTabsContent">
+                                    <div class="tab-pane fade show active" id="flights" role="tabpanel">
+                                        <p class="text-center muted mb-0 small">No flight data available.</p>
+                                    </div>
+                                    <div class="tab-pane fade" id="trains" role="tabpanel">
+                                        <p class="text-center muted mb-0 small">No train data available.</p>
+                                    </div>
+                                    <div class="tab-pane fade" id="buses" role="tabpanel">
+                                        <p class="text-center muted mb-0 small">No bus data available.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
-        <!-- ================================================
-             HIDDEN DOM STORAGE — Chat & Map masters
-             Moved by JS into target slots above
-             ================================================ -->
+                <div class="focus-item" data-focus="budget">
+                    <button class="focus-header" type="button">
+                        <span class="focus-icon" style="--fi:#34D399;"><i class="fas fa-wallet"></i></span>
+                        <span class="focus-meta"><span class="focus-name">Trip Budget</span>
+                            <span class="focus-desc">Full breakdown against your target</span></span>
+                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                    </button>
+                    <div class="focus-body">
+                        <div class="card glass-card border-0" id="budget-card">
+                            <div class="card-body p-0">
+                                <div id="budget-container" class="p-3">
+                                    <div class="empty-state py-2">
+                                        <p class="mb-0">Calculating...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="focus-item" data-focus="summary">
+                    <button class="focus-header" type="button">
+                        <span class="focus-icon" style="--fi:#F472B6;"><i class="fas fa-flag-checkered"></i></span>
+                        <span class="focus-meta"><span class="focus-name">Final Trip Summary</span>
+                            <span class="focus-desc">Your AI-generated trip brief</span></span>
+                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
+                    </button>
+                    <div class="focus-body">
+                        <div class="card glass-card border-0" id="final-summary-card">
+                            <div class="card-body p-3">
+                                <div id="confirmation-container">
+                                    <p class="text-center muted">Summary details will appear here once generated.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ============ HIDDEN DOM STORAGE ============ -->
         <div id="dom-storage" class="d-none">
 
             <!-- MASTER CHAT CARD -->
-            <div class="card border-0 chat-card-master" id="chat-card-master">
+            <div class="card chat-card-master" id="chat-card-master">
                 <div class="card-header chat-header">
                     <div class="d-flex justify-content-between align-items-center w-100">
                         <div class="d-flex align-items-center gap-3">
-                            <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
-                                 style="width: 36px; height: 36px;">
-                                <i class="fas fa-plane" style="font-size: 0.8rem;"></i>
-                            </div>
+                            <div class="ai-avatar"><i class="fas fa-wand-magic-sparkles"></i></div>
                             <div>
-                                <h5 class="mb-0" style="font-size: 1.05rem; font-weight: 700; color: var(--clr-ink);">ExploreX Assistant</h5>
-                                <small style="color: var(--clr-green); font-weight: 600; font-size: 0.75rem;">
-                                    <i class="fas fa-circle me-1" style="font-size: 6px;"></i>Online
-                                </small>
+                                <h5 class="mb-0 ai-name">ExploreX Assistant</h5>
+                                <small class="ai-status"><i class="fas fa-circle me-1"></i>Online · Multi-Agent
+                                    Active</small>
                             </div>
-                        </div>                        
+                        </div>
+                        <div class="agent-dots" title="Agent swarm online">
+                            <span style="--c:#FF6A3D"></span><span style="--c:#2DD4BF"></span>
+                            <span style="--c:#8B5CF6"></span><span style="--c:#FBBF24"></span>
+                        </div>
                     </div>
                 </div>
 
                 <div class="card-body p-0 chat-body">
-                    <!-- Trip snapshot -->
-                    <div id="trip-snapshot-container" class="d-none">
-                        <div class="card border-0 m-3 mb-0"
-                             style="border-radius: 10px !important; box-shadow: none !important; background: var(--clr-teal-pale) !important; border: 1px solid rgba(13,148,136,0.2) !important;">
-                            <div class="card-body" style="padding: 0.65rem 0.875rem !important;">
-                                <h6 class="mb-2 fw-bold" style="font-size: 0.78rem; color: var(--clr-teal);">
-                                    <i class="fas fa-map-marked-alt me-1"></i>Trip Snapshot
-                                </h6>
-                                <div id="trip-snapshot-content" class="d-flex flex-wrap gap-2"
-                                     style="font-size: 0.75rem; color: var(--clr-ink-medium);">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Messages -->
                     <div id="chat-container" class="chat-messages">
                         <div class="chat-message assistant">
                             <div class="message-content">
-                                <strong style="display: block; margin-bottom: 0.3rem; color: var(--clr-ink);">👋 Welcome to ExploreX!</strong>
-                                I'm your AI travel architect. Tell me where in India you'd like to visit, your budget, and what kind of vibe you're looking for!
+                                <strong style="display:block; margin-bottom:.3rem;">👋 Welcome to ExploreX!</strong>
+                                I'm your AI travel architect. Tell me where in India you'd like to visit, your budget,
+                                and what vibe you're after!
                             </div>
                         </div>
                     </div>
@@ -384,99 +437,159 @@
 
                 <div class="card-footer chat-composer">
                     <div id="missing-fields-container" class="d-none mb-2">
-                        <div class="d-flex align-items-center mb-2 gap-2">
-                            <span class="badge rounded-pill"
-                                  style="background: var(--clr-amber); color: white; font-weight: 600; font-size: 0.68rem; padding: 0.28rem 0.6rem;">
-                                ✨ Almost there
-                            </span>
-                            <small id="missing-fields-text"
-                                   style="color: var(--clr-ink-medium); font-size: 0.75rem;">Just a few more details to personalize your trip.</small>
+                        <div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
+                            <span class="badge rounded-pill miss-badge">✨ Almost there</span>
+                            <small id="missing-fields-text" class="miss-text">Just a few more details to personalize
+                                your trip.</small>
                         </div>
                     </div>
-
                     <form id="chat-form">
                         <div class="input-group chat-composer-group">
-                            <input
-                                type="text"
-                                class="form-control"
-                                id="user-input"
-                                placeholder="Reply to ExploreX..."
-                                required
-                                autocomplete="off"
-                                aria-label="Your message"
-                            >
-                            <button class="btn btn-primary" type="submit" aria-label="Send message">
-                                <i class="fas fa-paper-plane"></i>
-                            </button>
+                            <input type="text" class="form-control" id="user-input" placeholder="Reply to ExploreX..."
+                                required autocomplete="off" aria-label="Your message">
+                            <button class="btn btn-primary" type="submit" aria-label="Send message"><i
+                                    class="fas fa-paper-plane"></i></button>
                         </div>
                     </form>
                 </div>
-            </div><!-- /#chat-card-master -->
+            </div>
 
             <!-- MASTER MAP CARD -->
-            <div class="card border-0" id="map-card-master" style="min-height: 500px; height: 500px; display: flex; flex-direction: column;">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <div>
-                        <i class="fas fa-map text-teal"></i>
-                        <span style="font-size: 1.05rem; font-weight: 700;" class="ms-1">Interactive Map</span>
-                    </div>
-                    <div class="input-group" style="width: 250px;">
-                        <span class="input-group-text bg-light border-0"><i class="fas fa-search text-muted"></i></span>
-                        <input type="text" class="form-control bg-light border-0 ps-0" placeholder="Search for places, cities..." style="font-size: 0.85rem;">
+            <div class="card" id="map-card-master">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div><i class="fas fa-map text-teal"></i><span class="ms-1 map-title">Interactive Map</span></div>
+                    <div class="map-legend d-none d-md-flex">
+                        <span><i class="dot" style="background:#2DD4BF"></i>Selected</span>
+                        <span><i class="dot" style="background:#38BDF8"></i>Route</span>
                     </div>
                 </div>
-                <div class="card-body p-0" style="flex: 1; min-height: 0;">
-                    <div id="map" style="height: 100%; width: 100%;"></div>
+                <div class="card-body p-0 map-body">
+                    <div id="map"></div>
                 </div>
-            </div><!-- /#map-card-master -->
+            </div>
 
-        </div><!-- /#dom-storage -->
-
-    </div><!-- /#app-container -->
-
-    <!-- Full-screen loading overlay -->
-    <div id="loading-spinner" class="d-none">
-        <div class="spinner-border" role="status" aria-label="Loading"></div>
-        <h4 class="loading-text mt-4">AI is architecting your journey...</h4>
-        <p>This may take a few moments</p>
+        </div>
     </div>
 
-    <!-- Validation Warning Modal -->
+    <!-- ============ LOADING OVERLAY : MAP + TRAVELING LIGHT ============ -->
+    <div id="loading-spinner" class="d-none">
+        <div class="loader-stars"></div>
+        <div class="loader-map-wrap">
+            <svg class="loader-map" viewBox="0 0 800 440" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <defs>
+                    <filter id="lglow" x="-200%" y="-200%" width="500%" height="500%">
+                        <feGaussianBlur stdDeviation="5" result="b" />
+                        <feMerge>
+                            <feMergeNode in="b" />
+                            <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                    </filter>
+                    <linearGradient id="routeGrad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0" stop-color="#2DD4BF" />
+                        <stop offset=".5" stop-color="#FBBF24" />
+                        <stop offset="1" stop-color="#FF6A3D" />
+                    </linearGradient>
+                    <radialGradient id="landGrad" cx=".5" cy=".4" r=".8">
+                        <stop offset="0" stop-color="#1B2350" />
+                        <stop offset="1" stop-color="#111736" />
+                    </radialGradient>
+                </defs>
+
+                <!-- grid -->
+                <g stroke="rgba(124,247,212,0.07)" stroke-width="1">
+                    <path d="M0 110H800M0 220H800M0 330H800M133 0V440M266 0V440M400 0V440M533 0V440M666 0V440" />
+                </g>
+
+                <!-- stylized India landmass -->
+                <path fill="url(#landGrad)" stroke="rgba(124,247,212,0.25)" stroke-width="1.5" d="M330 60 L385 52 L428 66 L455 58 L492 78 L520 96 L540 128 L560 150 L585 158 L610 180
+                       L636 196 L648 222 L640 250 L655 268 L662 296 L648 322 L655 350 L640 372 L618 366
+                       L598 380 L572 372 L548 388 L520 378 L492 392 L462 380 L432 392 L404 378 L376 388
+                       L352 372 L330 378 L312 358 L296 340 L286 312 L268 292 L262 264 L246 244 L240 216
+                       L252 192 L244 168 L262 148 L258 122 L282 104 L288 82 L310 74 Z" />
+                <!-- glowing city nodes -->
+                <g filter="url(#lglow)">
+                    <circle cx="340" cy="120" r="4" fill="#2DD4BF" />
+                    <circle cx="430" cy="150" r="4" fill="#FBBF24" />
+                    <circle cx="500" cy="230" r="4" fill="#8B5CF6" />
+                    <circle cx="420" cy="300" r="4" fill="#38BDF8" />
+                    <circle cx="540" cy="320" r="4" fill="#F472B6" />
+                </g>
+
+                <!-- lightning route -->
+                <path id="loaderRoute" d="M340 120 L430 150 L500 230 L420 300 L540 320" fill="none"
+                    stroke="url(#routeGrad)" stroke-width="2" stroke-dasharray="6 8" opacity="0.85" />
+                <path id="loaderRoute2" d="M430 150 L340 120 L500 230 L540 320 L420 300" fill="none" stroke="none" />
+
+                <!-- traveling light point + trail -->
+                <circle r="14" fill="rgba(251,191,36,0.18)" filter="url(#lglow)">
+                    <animateMotion dur="4.5s" repeatCount="indefinite" rotate="auto">
+                        <mpath href="#loaderRoute" />
+                    </animateMotion>
+                </circle>
+                <circle r="6" fill="#FFE9A8" filter="url(#lglow)">
+                    <animateMotion dur="4.5s" repeatCount="indefinite" rotate="auto">
+                        <mpath href="#loaderRoute" />
+                    </animateMotion>
+                </circle>
+                <circle r="3.2" fill="#fff" filter="url(#lglow)">
+                    <animateMotion dur="4.5s" repeatCount="indefinite" rotate="auto">
+                        <mpath href="#loaderRoute" />
+                    </animateMotion>
+                </circle>
+                <!-- second counter-traveling spark -->
+                <circle r="4" fill="#7CF7D4" filter="url(#lglow)">
+                    <animateMotion dur="6s" repeatCount="indefinite" rotate="auto" keyPoints="1;0" keyTimes="0;1"
+                        calcMode="linear">
+                        <mpath href="#loaderRoute2" />
+                    </animateMotion>
+                </circle>
+            </svg>
+
+            <h4 class="loading-text">AI is architecting your journey…</h4>
+            <p class="loading-sub">Scout · Curator · Planner · Budgeter — agents collaborating in real time</p>
+            <div class="loading-agents">
+                <span style="--c:#FF6A3D"><i class="fas fa-satellite-dish"></i>Scout</span>
+                <span style="--c:#2DD4BF"><i class="fas fa-compass"></i>Curator</span>
+                <span style="--c:#8B5CF6"><i class="fas fa-route"></i>Planner</span>
+                <span style="--c:#FBBF24"><i class="fas fa-calculator"></i>Budgeter</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ MODALS ============ -->
     <div class="modal fade" id="validationModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
+            <div class="modal-content glass-modal">
                 <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold">
-                        <i class="fas fa-exclamation-circle text-warning me-2"></i>Recommend More Items
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h5 class="modal-title fw-bold"><i class="fas fa-exclamation-circle text-warning me-2"></i>Recommend
+                        More Items</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
                 </div>
                 <div class="modal-body py-4">
-                    <p id="validation-message" style="color: var(--clr-ink-medium);">You have selected a limited number of attractions.</p>
-                    <p class="mb-0 fw-medium" style="color: var(--clr-ink);">Would you like to go back and add more attractions, or proceed anyway?</p>
+                    <p id="validation-message">You have selected a limited number of attractions.</p>
+                    <p class="mb-0 fw-medium">Would you like to add more attractions, or proceed anyway?</p>
                 </div>
                 <div class="modal-footer border-0 pt-0">
-                    <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Add More</button>
+                    <button type="button" class="btn btn-ghost px-4" data-bs-dismiss="modal">Add More</button>
                     <button type="button" class="btn btn-primary px-4" id="force-proceed-btn">Proceed Anyway</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Neat Confirmation Modal -->
     <div class="modal fade" id="confirmationModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 shadow-lg" style="border-radius: var(--radius-lg);">
+            <div class="modal-content glass-modal">
                 <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold">
-                        <i class="fas fa-check-circle text-teal me-2"></i>Great Choices!
+                    <h5 class="modal-title fw-bold"><i class="fas fa-check-circle text-teal me-2"></i>Great Choices!
                     </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
                 </div>
                 <div class="modal-body py-3">
-                    <p class="mb-0" style="color: var(--clr-ink-medium);">
-                        Your selected attractions are ready. Please hit <strong>Send</strong> in the chat to build your personalized itinerary!
-                    </p>
+                    <p class="mb-0">Your selected attractions are ready. Hit <strong>Send</strong> in the chat to build
+                        your personalized itinerary!</p>
                 </div>
                 <div class="modal-footer border-0 pt-0">
                     <button type="button" class="btn btn-primary px-4" data-bs-dismiss="modal">Got it!</button>
@@ -485,9 +598,34 @@
         </div>
     </div>
 
+    <!-- Attraction full-screen detail -->
+    <div class="modal fade" id="attractionModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-fullscreen-lg-down modal-xl modal-dialog-centered">
+            <div class="modal-content attr-modal-content">
+                <div class="modal-body p-0" id="attraction-modal-body"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Login gate — set explorex_user in sessionStorage from login.html
+        (function () {
+            try {
+                if (!sessionStorage.getItem('explorex_user')) {
+                    // Change '/login' to your Flask login route if different
+                    window.location.replace('/login');
+                    return;
+                }
+                var n = sessionStorage.getItem('explorex_user');
+                var chip = document.getElementById('user-chip-name');
+                if (chip) chip.textContent = n;
+            } catch (e) { /* file:// mode — ignore */ }
+        })();
+    </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
+
 </html>

@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.weather_api import WeatherService
 from services.car_rental_api import CarRentalService
 from services.fuel_price_api import get_gas_price
-from services.geocoding import GeocodingManager
+from services.geocoding import shared_geocoder as _shared_geocoder
 
 def format_duration(seconds):
     """Format duration in seconds to a human-readable string (hours and minutes)."""
@@ -59,7 +59,8 @@ class InformationAgent:
         
         self.poi_manager = POIManager()
         # Multi-provider geocoding cascade: Geoapify → Nominatim → Photon → Static
-        self.geocoder = GeocodingManager()
+        # Reuse the module-level geocoder singleton (created once per process)
+        self.geocoder = _shared_geocoder
         self.weather_service = WeatherService()
         self.car_rental_service = None
         self.rapidapi_key = car_api_key or os.getenv("RAPIDAPI_KEY")
@@ -324,6 +325,9 @@ class InformationAgent:
         # If we filtered everything, fallback to original but limit damage
         if not final_list:
             final_list = scored_attractions
+            
+        # Limit to top 50 attractions as requested
+        final_list = final_list[:50]
             
         print(f"[INFO_AGENT_LLM] Re-ranked list size: {len(final_list)}")
         
@@ -1062,37 +1066,101 @@ class InformationAgent:
         return mock_cars[:top_n]
 
     def search_nearby_places(self, lat: float, lng: float, radius: int = 500):
-        """Search for nearby restaurants and provide their details.
-        
+        """Search for nearby restaurants and food stalls using OSM Overpass API.
+
         Args:
-            lat (float): Latitude
-            lng (float): Longitude
-            radius (int): Search radius (meters)
-        
+            lat (float): Latitude of the attraction
+            lng (float): Longitude of the attraction
+            radius (int): Search radius in metres (default 500 m)
+
         Returns:
-            dict: Dictionary containing information about nearby restaurants (top 3 by rating).
-                  Returns mock data if API calls fail.
+            dict: {'restaurants': [...]} — real food POIs from OSM.
+                  Falls back to an empty list on failure (never raises).
         """
-        # Return mock data as Google Places API has been removed.
-        return {
-            'restaurants': [
-                {
-                        'name': 'Sample Restaurant',
-                        'type': 'restaurant',
-                        'rating': 4.5,
-                        'price_level': 2,
-                        'address': 'Sample Address',
-                        'photos': [
-                            {
-                                'url': 'https://example.com/photo1.jpg',
-                                'width': 800,
-                                'height': 600
-                            }
-                        ],
-                        'features': 'Cuisine: Chinese, Western'
-                    }
-                ]
+        import requests, time
+
+        overpass_endpoints = [
+            "https://overpass-api.de/api/interpreter",
+            "https://lz4.overpass-api.de/api/interpreter",
+            "https://z.overpass-api.de/api/interpreter",
+        ]
+
+        query = f"""
+[out:json][timeout:15];
+(
+  node["amenity"~"restaurant|cafe|fast_food|food_court|bar|pub|biergarten|ice_cream"](around:{radius},{lat},{lng});
+  way["amenity"~"restaurant|cafe|fast_food|food_court"](around:{radius},{lat},{lng});
+);
+out 15 tags center;
+"""
+        headers = {
+            "User-Agent": "ExploreX-Travel-App/1.0",
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        elements = []
+        for endpoint in overpass_endpoints:
+            try:
+                resp = requests.post(endpoint, data={"data": query}, headers=headers, timeout=15)
+                if resp.status_code == 429:
+                    time.sleep(2)
+                    continue
+                resp.raise_for_status()
+                elements = resp.json().get("elements", [])
+                break
+            except Exception as e:
+                print(f"[INFO_AGENT][NearbyFood] Overpass endpoint {endpoint} failed: {e}")
+
+        restaurants = []
+        for el in elements:
+            tags = el.get("tags", {})
+            name = tags.get("name") or tags.get("name:en")
+            if not name:
+                continue
+
+            amenity_type = tags.get("amenity", "restaurant")
+            cuisine = tags.get("cuisine", "")
+            address_parts = [
+                tags.get("addr:housenumber", ""),
+                tags.get("addr:street", ""),
+                tags.get("addr:city", ""),
+            ]
+            address = " ".join(p for p in address_parts if p).strip() or None
+
+            # OSM doesn't carry ratings — omit rather than invent
+            entry = {
+                "name": name,
+                "type": amenity_type.replace("_", " ").title(),
             }
+            if cuisine:
+                entry["cuisine"] = cuisine.replace(";", ", ").title()
+            if address:
+                entry["address"] = address
+            if tags.get("opening_hours"):
+                entry["opening_hours"] = tags["opening_hours"]
+            if tags.get("website"):
+                entry["website"] = tags["website"]
+
+            # Compute approximate distance from attraction coords
+            el_lat = el.get("lat") or (el.get("center") or {}).get("lat")
+            el_lng = el.get("lon") or (el.get("center") or {}).get("lon")
+            if el_lat and el_lng:
+                import math
+                dlat = math.radians(el_lat - lat)
+                dlng = math.radians(el_lng - lng)
+                a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat)) * math.cos(math.radians(el_lat)) * math.sin(dlng / 2) ** 2
+                dist_m = int(6371000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+                entry["distance_m"] = dist_m
+
+            restaurants.append(entry)
+
+        # Sort by distance if available
+        restaurants.sort(key=lambda r: r.get("distance_m", 9999))
+
+        print(f"[INFO_AGENT] Nearby food search at ({lat},{lng}) returned {len(restaurants)} results.")
+        return {"restaurants": restaurants[:10]}
+
     
     def _get_restaurant_features(self, place):
         """Get restaurant features (cuisine types) from place types."""

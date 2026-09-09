@@ -141,8 +141,8 @@ class RecommendAgent:
             final_attractions.append(attr)
             seen_ids.add(attr['id'])
             
-        # Return top 15 recommendations to give a mix
-        return final_attractions[:15]
+        # Return top 50 recommendations to give a mix
+        return final_attractions[:50]
     
     def _create_recommendation_prompt(self, user_prefs, attractions, retrieved_knowledge=None):
         """Create prompt for the LLM to rank attractions"""

@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ExploreX — Sign In | AI Travel Architect</title>
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>"
+        type="image/svg+xml">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Sora:wght@600;700;800&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #070B1A;
+            --coral: #FF6A3D;
+            --teal: #2DD4BF;
+            --violet: #8B5CF6;
+            --gold: #FBBF24;
+            --sky: #38BDF8;
+            --pink: #F472B6;
+            --glass: rgba(255, 255, 255, .06);
+            --stroke: rgba(255, 255, 255, .14);
+            --txt: #EEF2FF;
+            --muted: rgba(238, 242, 255, .62);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--txt);
+            overflow-x: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* ---------- aurora background ---------- */
+        .aurora {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            overflow: hidden;
+            background:
+                radial-gradient(1100px 600px at 15% -10%, rgba(139, 92, 246, .22), transparent 60%),
+                radial-gradient(900px 500px at 90% 10%, rgba(45, 212, 191, .16), transparent 60%),
+                radial-gradient(800px 600px at 50% 110%, rgba(255, 106, 61, .14), transparent 60%),
+                var(--bg);
+        }
+
+        .aurora i {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(90px);
+            opacity: .5;
+            animation: drift 16s ease-in-out infinite alternate;
+        }
+
+        .aurora i:nth-child(1) {
+            width: 420px;
+            height: 420px;
+            background: rgba(139, 92, 246, .35);
+            top: -120px;
+            left: -80px;
+        }
+
+        .aurora i:nth-child(2) {
+            width: 380px;
+            height: 380px;
+            background: rgba(45, 212, 191, .28);
+            bottom: -120px;
+            right: -60px;
+            animation-delay: -6s;
+        }
+
+        .aurora i:nth-child(3) {
+            width: 300px;
+            height: 300px;
+            background: rgba(255, 106, 61, .25);
+            top: 40%;
+            left: 60%;
+            animation-delay: -11s;
+        }
+
+        @keyframes drift {
+            from {
+                transform: translate(0, 0) scale(1)
+            }
+
+            to {
+                transform: translate(60px, 40px) scale(1.15)
+            }
+        }
+
+        /* ---------- animated route SVG ---------- */
+        .route-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+            opacity: .9;
+        }
+
+        .twinkle {
+            position: fixed;
+            width: 3px;
+            height: 3px;
+            border-radius: 50%;
+            background: #fff;
+            z-index: 1;
+            animation: tw 3s ease-in-out infinite;
+        }
+
+        @keyframes tw {
+
+            0%,
+            100% {
+                opacity: .15
+            }
+
+            50% {
+                opacity: .9
+            }
+        }
+
+        /* ---------- layout ---------- */
+        .stage {
+            position: relative;
+            z-index: 5;
+            width: min(1060px, 94vw);
+            display: grid;
+            grid-template-columns: 1.15fr .85fr;
+            gap: 3rem;
+            align-items: center;
+            padding: 2rem 0;
+        }
+
+        @media(max-width:900px) {
+            .stage {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+                text-align: center;
+            }
+        }
+
+        .logo-row {
+            display: flex;
+            align-items: center;
+            gap: .8rem;
+            margin-bottom: 1.6rem;
+        }
+
+        .logo-mark {
+            width: 46px;
+            height: 46px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1B2350, #0B1026);
+            border: 1px solid var(--stroke);
+            box-shadow: 0 0 24px rgba(45, 212, 191, .25);
+            font-size: 1.2rem;
+            color: var(--gold);
+        }
+
+        .logo-name {
+            font-family: 'Sora', sans-serif;
+            font-weight: 800;
+            font-size: 1.5rem;
+            letter-spacing: -.02em;
+        }
+
+        .logo-sub {
+            font-size: .72rem;
+            color: var(--muted);
+            letter-spacing: .22em;
+            text-transform: uppercase;
+        }
+
+        .headline {
+            font-family: 'Sora', sans-serif;
+            font-weight: 800;
+            font-size: clamp(2.1rem, 4.6vw, 3.4rem);
+            line-height: 1.08;
+            letter-spacing: -.03em;
+            margin-bottom: 1.1rem;
+        }
+
+        .grad {
+            background: linear-gradient(92deg, var(--teal), var(--gold) 45%, var(--coral));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .lede {
+            color: var(--muted);
+            font-size: 1.05rem;
+            max-width: 520px;
+            line-height: 1.7;
+            margin-bottom: 1.8rem;
+        }
+
+        @media(max-width:900px) {
+            .lede {
+                margin-inline: auto;
+            }
+        }
+
+        /* tech badges */
+        .tech-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .6rem;
+            margin-bottom: 2rem;
+        }
+
+        @media(max-width:900px) {
+            .tech-row {
+                justify-content: center;
+            }
+        }
+
+        .tech-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            padding: .45rem .95rem;
+            border-radius: 999px;
+            background: var(--glass);
+            border: 1px solid var(--stroke);
+            font-size: .82rem;
+            font-weight: 600;
+            backdrop-filter: blur(10px);
+            animation: float 5s ease-in-out infinite;
+        }
+
+        .tech-chip i {
+            color: var(--c, var(--teal));
+        }
+
+        .tech-chip:nth-child(2) {
+            animation-delay: -1.2s
+        }
+
+        .tech-chip:nth-child(3) {
+            animation-delay: -2.4s
+        }
+
+        .tech-chip:nth-child(4) {
+            animation-delay: -3.6s
+        }
+
+        .tech-chip:nth-child(5) {
+            animation-delay: -4.4s
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0)
+            }
+
+            50% {
+                transform: translateY(-5px)
+            }
+        }
+
+        /* agent avatars */
+        .agent-line {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            color: var(--muted);
+            font-size: .88rem;
+        }
+
+        @media(max-width:900px) {
+            .agent-line {
+                justify-content: center;
+            }
+        }
+
+        .agent-stack {
+            display: flex;
+        }
+
+        .agent-stack span {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid var(--bg);
+            margin-left: -10px;
+            font-size: .85rem;
+            color: #0B1026;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, .4);
+        }
+
+        .agent-stack span:first-child {
+            margin-left: 0;
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--teal);
+            box-shadow: 0 0 0 0 rgba(45, 212, 191, .7);
+            animation: pl 1.8s infinite;
+        }
+
+        @keyframes pl {
+            70% {
+                box-shadow: 0 0 0 9px rgba(45, 212, 191, 0)
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(45, 212, 191, 0)
+            }
+        }
+
+        /* ---------- glass login card ---------- */
+        .login-card {
+            position: relative;
+            background: linear-gradient(160deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .03));
+            border: 1px solid var(--stroke);
+            border-radius: 26px;
+            padding: 2.4rem 2.2rem;
+            backdrop-filter: blur(22px);
+            -webkit-backdrop-filter: blur(22px);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .12);
+        }
+
+        .login-card::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: 26px;
+            padding: 1px;
+            z-index: -1;
+            background: linear-gradient(135deg, rgba(45, 212, 191, .6), transparent 40%, transparent 60%, rgba(255, 106, 61, .6));
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+        }
+
+        .lc-title {
+            font-family: 'Sora', sans-serif;
+            font-weight: 700;
+            font-size: 1.45rem;
+            margin-bottom: .3rem;
+        }
+
+        .lc-sub {
+            color: var(--muted);
+            font-size: .9rem;
+            margin-bottom: 1.7rem;
+        }
+
+        .fld {
+            position: relative;
+            margin-bottom: 1.1rem;
+        }
+
+        .fld i.f-ico {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--muted);
+            font-size: .9rem;
+        }
+
+        .fld input {
+            width: 100%;
+            background: rgba(7, 11, 26, .6);
+            border: 1px solid var(--stroke);
+            color: var(--txt);
+            border-radius: 14px;
+            padding: .85rem 1rem .85rem 2.7rem;
+            font-size: .95rem;
+            outline: none;
+            transition: .25s;
+        }
+
+        .fld input::placeholder {
+            color: rgba(238, 242, 255, .4);
+        }
+
+        .fld input:focus {
+            border-color: var(--teal);
+            box-shadow: 0 0 0 4px rgba(45, 212, 191, .14);
+        }
+
+        .btn-launch {
+            width: 100%;
+            border: none;
+            border-radius: 14px;
+            padding: .95rem;
+            font-weight: 700;
+            font-size: 1rem;
+            color: #0B1026;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(92deg, var(--teal), var(--gold));
+            transition: .3s;
+            box-shadow: 0 10px 30px rgba(45, 212, 191, .3);
+        }
+
+        .btn-launch:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 16px 40px rgba(251, 191, 36, .35);
+        }
+
+        .btn-launch::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -80%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, .55), transparent);
+            transform: skewX(-20deg);
+            animation: sheen 3.2s infinite;
+        }
+
+        @keyframes sheen {
+            0% {
+                left: -80%
+            }
+
+            55% {
+                left: 130%
+            }
+
+            100% {
+                left: 130%
+            }
+        }
+
+        .lc-div {
+            display: flex;
+            align-items: center;
+            gap: .9rem;
+            color: var(--muted);
+            font-size: .78rem;
+            margin: 1.3rem 0;
+        }
+
+        .lc-div::before,
+        .lc-div::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--stroke);
+        }
+
+        .stats-row {
+            display: flex;
+            gap: .7rem;
+        }
+
+        .stat {
+            flex: 1;
+            text-align: center;
+            background: var(--glass);
+            border: 1px solid var(--stroke);
+            border-radius: 14px;
+            padding: .7rem .4rem;
+        }
+
+        .stat b {
+            display: block;
+            font-family: 'Sora', sans-serif;
+            font-size: 1.05rem;
+            background: linear-gradient(92deg, var(--teal), var(--gold));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .stat small {
+            color: var(--muted);
+            font-size: .68rem;
+            letter-spacing: .04em;
+        }
+
+        .foot {
+            position: fixed;
+            bottom: 1rem;
+            left: 0;
+            right: 0;
+            text-align: center;
+            z-index: 5;
+            color: rgba(238, 242, 255, .35);
+            font-size: .72rem;
+            letter-spacing: .05em;
+        }
+
+        .err {
+            display: none;
+            color: #FCA5A5;
+            font-size: .8rem;
+            margin: -.3rem 0 .9rem;
+        }
+    </style>
+    <base target="_blank">
+</head>
+
+<body>
+    <div class="aurora"><i></i><i></i><i></i></div>
+
+    <!-- traveling lights across the whole page -->
+    <svg class="route-layer" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice"
+        xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <filter id="glow" x="-200%" y="-200%" width="500%" height="500%">
+                <feGaussianBlur stdDeviation="4" result="b" />
+                <feMerge>
+                    <feMergeNode in="b" />
+                    <feMergeNode in="SourceGraphic" />
+                </feMerge>
+            </filter>
+            <linearGradient id="rg" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#2DD4BF" />
+                <stop offset=".5" stop-color="#FBBF24" />
+                <stop offset="1" stop-color="#FF6A3D" />
+            </linearGradient>
+        </defs>
+        <path id="arc1" d="M-60 720 C 300 520, 620 860, 900 600 S 1300 320, 1520 420" fill="none"
+            stroke="rgba(124,247,212,0.16)" stroke-width="1.6" stroke-dasharray="3 9" />
+        <path id="arc2" d="M-60 260 C 260 420, 700 140, 1000 340 S 1320 640, 1520 560" fill="none"
+            stroke="rgba(251,191,36,0.14)" stroke-width="1.6" stroke-dasharray="3 9" />
+        <circle r="5.5" fill="#FFE9A8" filter="url(#glow)">
+            <animateMotion dur="9s" repeatCount="indefinite">
+                <mpath href="#arc1" />
+            </animateMotion>
+        </circle>
+        <circle r="2.6" fill="#fff" filter="url(#glow)">
+            <animateMotion dur="9s" repeatCount="indefinite">
+                <mpath href="#arc1" />
+            </animateMotion>
+        </circle>
+        <circle r="4.5" fill="#7CF7D4" filter="url(#glow)">
+            <animateMotion dur="11s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1">
+                <mpath href="#arc2" />
+            </animateMotion>
+        </circle>
+        <g filter="url(#glow)">
+            <circle cx="240" cy="625" r="3.4" fill="#2DD4BF" />
+            <circle cx="700" cy="700" r="3.4" fill="#FBBF24" />
+            <circle cx="1020" cy="520" r="3.4" fill="#8B5CF6" />
+            <circle cx="1290" cy="400" r="3.4" fill="#FF6A3D" />
+        </g>
+    </svg>
+    <div class="twinkle" style="top:18%;left:12%"></div>
+    <div class="twinkle" style="top:30%;left:78%;animation-delay:-1s"></div>
+    <div class="twinkle" style="top:66%;left:64%;animation-delay:-2s"></div>
+    <div class="twinkle" style="top:74%;left:26%;animation-delay:-.5s"></div>
+    <div class="twinkle" style="top:12%;left:55%;animation-delay:-1.6s"></div>
+
+    <main class="stage">
+        <!-- LEFT : pitch -->
+        <section>
+            <div class="logo-row">
+                <div class="logo-mark"><i class="fas fa-compass"></i></div>
+                <div>
+                    <div class="logo-name">ExploreX</div>
+                    <div class="logo-sub">AI Travel Architect</div>
+                </div>
+            </div>
+
+            <h1 class="headline">India, planned by a<br><span class="grad">swarm of AI agents.</span></h1>
+            <p class="lede">Tell ExploreX where you want to go. GenAI agents retrieve real attractions with RAG,
+                negotiate your preferences in chat, optimize the route and balance your budget — in one seamless
+                conversation.</p>
+
+            <div class="tech-row">
+                <span class="tech-chip" style="--c:#2DD4BF"><i class="fas fa-brain"></i> AI / ML</span>
+                <span class="tech-chip" style="--c:#FBBF24"><i class="fas fa-wand-magic-sparkles"></i> GenAI</span>
+                <span class="tech-chip" style="--c:#8B5CF6"><i class="fas fa-database"></i> RAG</span>
+                <span class="tech-chip" style="--c:#FF6A3D"><i class="fas fa-people-group"></i> Multi-Agent</span>
+                <span class="tech-chip" style="--c:#38BDF8"><i class="fas fa-map-location-dot"></i> Route
+                    Optimization</span>
+            </div>
+
+            <div class="agent-line">
+                <div class="agent-stack">
+                    <span style="background:linear-gradient(135deg,#FF6A3D,#FBBF24)"><i
+                            class="fas fa-satellite-dish"></i></span>
+                    <span style="background:linear-gradient(135deg,#2DD4BF,#38BDF8)"><i
+                            class="fas fa-compass"></i></span>
+                    <span style="background:linear-gradient(135deg,#8B5CF6,#F472B6)"><i class="fas fa-route"></i></span>
+                    <span style="background:linear-gradient(135deg,#FBBF24,#34D399)"><i
+                            class="fas fa-calculator"></i></span>
+                </div>
+                <span><span class="pulse-dot d-inline-block me-2"></span>4 specialist agents standing by</span>
+            </div>
+        </section>
+
+        <!-- RIGHT : login card -->
+        <section class="login-card">
+            <div class="lc-title">Begin your journey ✈️</div>
+            <div class="lc-sub">Sign in and let the agents do the planning.</div>
+
+            <form id="login-form" novalidate>
+                <div class="fld">
+                    <i class="fas fa-user f-ico"></i>
+                    <input type="text" id="login-name" placeholder="Your name" autocomplete="name" required>
+                </div>
+                <div class="fld">
+                    <i class="fas fa-envelope f-ico"></i>
+                    <input type="email" id="login-email" placeholder="Email address" autocomplete="email" required>
+                </div>
+                <div class="err" id="login-err"><i class="fas fa-triangle-exclamation me-1"></i>Please enter your name
+                    and a valid email.</div>
+                <button type="submit" class="btn-launch">
+                    <i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect
+                </button>
+            </form>
+
+            <div class="lc-div">TRUSTED BY TRAVELLERS</div>
+            <div class="stats-row">
+                <div class="stat"><b>28+</b><small>STATES COVERED</small></div>
+                <div class="stat"><b>4</b><small>AI AGENTS</small></div>
+                <div class="stat"><b>60s</b><small>TO A FULL PLAN</small></div>
+            </div>
+        </section>
+    </main>
+
+    <div class="foot">EXPLOREX · INTELLIGENT COLLABORATIVE AGENTS FOR DYNAMIC PERSONALIZED TRAVEL PLANNING</div>
+
+    <script>
+        // If already signed in, go straight to the app
+        try {
+            if (sessionStorage.getItem('explorex_user')) {
+                window.location.replace('/');
+            }
+        } catch (e) { }
+
+        document.getElementById('login-form').addEventListener('submit', function (e) {
+            e.preventDefault();
+            var name = document.getElementById('login-name').value.trim();
+            var email = document.getElementById('login-email').value.trim();
+            var err = document.getElementById('login-err');
+            var btn = document.querySelector('.btn-launch');
+            var okEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+            
+            if (!name || !okEmail) { 
+                err.style.display = 'block'; 
+                err.innerHTML = '<i class="fas fa-triangle-exclamation me-1"></i>Please enter your name and a valid email.';
+                return; 
+            }
+            
+            err.style.display = 'none';
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Initializing...';
+            btn.disabled = true;
+
+            fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, email: email })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    try {
+                        sessionStorage.setItem('explorex_user', name);
+                        sessionStorage.setItem('explorex_email', email);
+                    } catch (e2) { }
+                    window.location.replace('/');
+                } else {
+                    err.style.display = 'block';
+                    err.innerHTML = '<i class="fas fa-triangle-exclamation me-1"></i>' + (data.message || 'Login failed');
+                    btn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect';
+                    btn.disabled = false;
+                }
+            })
+            .catch(error => {
+                err.style.display = 'block';
+                err.innerHTML = '<i class="fas fa-triangle-exclamation me-1"></i>Network error. Please try again.';
+                btn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect';
+                btn.disabled = false;
+            });
+        });
+    </script>
+</body>
+
+</html>

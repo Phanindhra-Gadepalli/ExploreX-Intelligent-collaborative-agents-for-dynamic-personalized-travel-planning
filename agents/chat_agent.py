@@ -56,7 +56,7 @@ class ChatAgent:
         
         # Define required fields (these must be filled)
         # budget OR budget_amount must be present — checked by _has_budget()
-        self.required_fields = ["name", "origin_city", "city", "days", "people", "kids", "health", "hobbies", "start_date", "budget"]
+        self.required_fields = ["origin_city", "city", "days", "people", "kids", "health", "hobbies", "start_date", "budget"]
         # Define all fields, including optional ones
         self.all_fields = self.required_fields + ["budget_amount", "budget_strictness", "specificRequirements"]
         self.conversation_history = []

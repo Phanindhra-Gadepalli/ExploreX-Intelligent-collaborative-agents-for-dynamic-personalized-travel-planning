@@ -46,9 +46,8 @@ class StrategyAgent:
                     "id": spot["id"],
                     "name": spot["name"],
                     "estimated_duration": spot.get("estimated_duration", 2),
-                    "location": spot["location"]
                 })
-            name_to_all_map = {i["name"]:i for i in all_attractions} # Map name to full attraction object
+            name_to_all_map = {i["name"]:i for i in selected_spots} # Map name to full attraction object using ONLY selected spots
             
             max_try = 5
             final_planned_attractions_names = []
@@ -80,39 +79,36 @@ class StrategyAgent:
 
             for i in range(max_try):
                 prompt = f"""
-                You are an India travel advisor helping with trip logistics within India.
-                The user is planning a {total_days}-day trip to an Indian destination.
+            You are an India travel advisor helping with trip logistics within India.
+            The user is planning a {total_days}-day trip to an Indian destination.
 
-                User Preferences:
-                {user_prefs_str}
-                
-                {specific_requirements_section}
+            User Preferences:
+            {user_prefs_str}
+            
+            {specific_requirements_section}
 
-                Weather Summary for the trip period:
-                {weather_str}
-                
-                {rag_context_section}
+            Weather Summary for the trip period:
+            {weather_str}
+            
+            {rag_context_section}
 
-                Here are the attractions they have pre-selected (MUST be included in the plan):
-                {selected_data}
+            Here are the attractions they have pre-selected:
+            {selected_data}
 
-                Here is a list of all available attractions to choose from:
-                {all_attractions_data}
-
-                Please create an optimized daily itinerary for the {total_days} days.
-                - Distribute attractions across the days to minimize travel time.
-                - Consider estimated duration. Assume a travel day is about 8 hours.
-                - The selected attractions MUST be included.
-                - Group nearby attractions on the same day.
-                - Consider India-specific factors: midday heat (plan outdoor activities in morning/evening),
-                  local transport availability, religious site timings, and festival seasons.
-                - IMPORTANT: Do NOT duplicate the same attractions across multiple days just to fill the itinerary.
-                - IMPORTANT: If there are fewer available attractions than required for the days, leave some days empty or allocate them to "Relaxation" or "Leisure". Do NOT invent fake attractions.
-                
-                User preference considerations:
-                - Adjust for mobility/health conditions, families with children.
-                - Match attraction types with hobbies (temples, forts, beaches, nature, food markets, etc.)
-                - Consider budget (budget: street food/local transport; medium: mid-range; high: luxury experiences)
+            Please create an optimized daily itinerary for the {total_days} days using ONLY the pre-selected attractions.
+            - Distribute ONLY the selected attractions across the days to minimize travel time.
+            - Do NOT include any other attractions. Do NOT invent new attractions.
+            - Consider estimated duration. Assume a travel day is about 8 hours.
+            - Group nearby attractions on the same day.
+            - Consider India-specific factors: midday heat (plan outdoor activities in morning/evening),
+              local transport availability, religious site timings, and festival seasons.
+            - IMPORTANT: Do NOT duplicate the same attractions across multiple days just to fill the itinerary.
+            - IMPORTANT: If the selected attractions do not fill all the days, leave some days empty or allocate them to "Relaxation" or "Leisure".
+            
+            User preference considerations:
+            - Adjust for mobility/health conditions, families with children.
+            - Match attraction types with hobbies (temples, forts, beaches, nature, food markets, etc.)
+            - Consider budget (budget: street food/local transport; medium: mid-range; high: luxury experiences)
                 
                 Do not use bold font or any markdown.
                 Return ONLY a valid JSON object where keys are "day1", "day2", ..., "dayN" and values are lists of attraction names.

@@ -12,10 +12,11 @@ regardless of source, so all downstream agents work without modification.
 
 import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import time
 import hashlib
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 from chromadb.config import Settings
 
 # ---------------------------------------------------------------------------
@@ -92,9 +93,25 @@ class RetrievalAgent:
     that downstream agents consume unchanged.
     """
 
+    # ── Module-level singleton: loaded once per Python process ──────────────
+    # The HuggingFace embedding model (~90 MB / 383 MB weights) is expensive.
+    # By keeping it here, every TravelGraph / RetrievalAgent instance created
+    # during a session reuses the same object, so the weights are only fetched
+    # from disk once no matter how many sessions are active.
+    _shared_embeddings = None
+
+    @classmethod
+    def _get_embeddings(cls):
+        if cls._shared_embeddings is None:
+            print("[STARTUP] Initializing embedding model (all-MiniLM-L6-v2)…")
+            cls._shared_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            print("[STARTUP] Embedding model ready.")
+        return cls._shared_embeddings
+    # ────────────────────────────────────────────────────────────────────────
+
     def __init__(self, persist_directory="data/vector_db"):
         self.persist_directory = persist_directory
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        self.embeddings = RetrievalAgent._get_embeddings()
 
         # Load ChromaDB (India knowledge base)
         self.vector_db = Chroma(

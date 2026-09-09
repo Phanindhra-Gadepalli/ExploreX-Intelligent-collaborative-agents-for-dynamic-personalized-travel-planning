@@ -18,6 +18,10 @@ from dotenv import load_dotenv
 from workflows.travel_graph import TravelGraph
 import requests
 import time
+import warnings
+
+# Suppress the harmless schema title warning from langchain-google-genai
+warnings.filterwarnings("ignore", message=".*Key 'title' is not supported in schema.*")
 
 # Disable chromadb telemetry
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
@@ -36,15 +40,32 @@ app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
-# Clean up stale sessions on startup to prevent persistence bugs across restarts
+# ── Startup side-effects that must run ONLY in the actual serving process ────
+# When debug=True, Werkzeug spawns two processes:
+#   • Parent (stat-watcher / reloader monitor) — runs main.py once to watch files
+#   • Child  (WERKZEUG_RUN_MAIN=true)          — the real serving process
+#
+# Without this guard, stale-session cleanup and other one-time startup actions
+# would run twice, which is the root cause of the double initialisation logs.
+# ─────────────────────────────────────────────────────────────────────────────
 import shutil
-session_dir = app.config.get('SESSION_FILE_DIR', 'flask_session')
-if os.path.exists(session_dir):
-    try:
-        shutil.rmtree(session_dir)
-        print(f"[INFO] Cleared persistent session directory on startup: {session_dir}")
-    except Exception as e:
-        print(f"[WARN] Failed to clear session directory: {e}")
+_is_serving_process = (os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+                       or os.environ.get("FLASK_ENV") == "production"
+                       or os.environ.get("FLASK_DEBUG", "1") == "0")
+
+if _is_serving_process:
+    session_dir = app.config.get('SESSION_FILE_DIR', 'flask_session')
+    if os.path.exists(session_dir):
+        try:
+            shutil.rmtree(session_dir)
+            print(f"[STARTUP] Cleared stale session directory: {session_dir}")
+        except Exception as e:
+            print(f"[STARTUP] Could not clear session directory: {e}")
+else:
+    # This is the Werkzeug reloader/stat-watcher parent process.
+    # It just monitors source files and respawns the child on changes.
+    # No expensive initialisation should happen here.
+    print("[STARTUP] Werkzeug reloader parent process — skipping session cleanup.")
 
 # Initialize Flask-Session
 Session(app)
@@ -55,6 +76,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Create a session store for workflows
 workflows = {}
+
 
 @app.route('/test-image')
 def test_image():
@@ -74,21 +96,49 @@ def reset_session():
     session.clear() # Clear all Flask session data (including cookies and filesystem)
     return jsonify({"status": "success", "message": "Session reset completely."})
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Render the login page or handle login submission"""
+    if request.method == 'POST':
+        data = request.json or {}
+        name = data.get('name', '').strip()
+        email = data.get('email', '').strip()
+        if name and email:
+            session['authenticated'] = True
+            session['user_name'] = name
+            session['user_email'] = email
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error", "message": "Invalid credentials"}), 400
+    return render_template('login.html')
+
 @app.route('/')
 def index():
     """Render the main page"""
     # Always create a new session on page load to prevent stale state
     session_id = session.get('session_id')
+    
+    # Save auth data before clearing workflow state
+    is_auth = session.get('authenticated', False)
+    u_name = session.get('user_name')
+    u_email = session.get('user_email')
+    
     if session_id and session_id in workflows:
         del workflows[session_id]
         print(f"[DEBUG] Removed old workflow on page reload: {session_id}")
     
     session.clear()
+    
+    # Restore auth data
+    if is_auth:
+        session['authenticated'] = True
+        session['user_name'] = u_name
+        session['user_email'] = u_email
+        
     session_id = os.urandom(16).hex()
     session['session_id'] = session_id
     
     try:
-        workflows[session_id] = TravelGraph()
+        workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
         print(f"[DEBUG] Created fresh session on page load: {session_id}")
     except Exception as e:
         print(f"[ERROR] Failed to create TravelGraph: {str(e)}")
@@ -114,12 +164,12 @@ def process():
         if not session_id:
             session_id = os.urandom(16).hex()
             session['session_id'] = session_id
-            workflows[session_id] = TravelGraph()
+            workflows[session_id] = TravelGraph(user_name=session.get('user_name'), user_email=session.get('user_email'))
             print(f"[DEBUG] Created new session: {session_id}")
         else:
             print(f"[DEBUG] Using existing session: {session_id}")
         if session_id not in workflows:
-            workflows[session_id] = TravelGraph()
+            workflows[session_id] = TravelGraph(user_name=session.get('user_name'), user_email=session.get('user_email'))
             print(f"[DEBUG] Recreated workflow for session: {session_id}")
         workflow = workflows[session_id]
         # Keep only critical step information for logging
@@ -190,7 +240,7 @@ def stream():
             print(f"[DEBUG] session_id {session_id} not in workflows, recreating")
         session['session_id'] = session_id
         try:
-            workflows[session_id] = TravelGraph()
+            workflows[session_id] = TravelGraph(user_name=session.get('user_name'), user_email=session.get('user_email'))
             print(f"[DEBUG] Created new TravelGraph for session: {session_id}")
         except Exception as e:
             print(f"[ERROR] Failed to create TravelGraph: {str(e)}")
@@ -259,7 +309,7 @@ def stream():
                 
                 # Check the should_rent_car status right after processing
                 current_should_rent_car = workflow.get_current_state().get('should_rent_car', False)
-                print(f"[CRITICAL] After processing step {current_step}, should_rent_car = {current_should_rent_car}")
+                print(f"[DEBUG] After processing step {current_step}, should_rent_car = {current_should_rent_car}")
                 
                 # Helper: extract plain text from Gemini chunk content (may be str or list of dicts)
                 def extract_text(content):
@@ -364,7 +414,7 @@ def stream():
             
             # Verify the final decision after sending the completion data
             final_next_step = completion_data.get('next_step')
-            print(f"[CRITICAL] Final decision: next_step = {final_next_step}, should_rent_car = {workflow.get_current_state().get('should_rent_car', False)}")
+            print(f"[DEBUG] Final decision: next_step = {final_next_step}, should_rent_car = {workflow.get_current_state().get('should_rent_car', False)}")
             
         except Exception as e:
             print(f"[ERROR] in stream route: {str(e)}")

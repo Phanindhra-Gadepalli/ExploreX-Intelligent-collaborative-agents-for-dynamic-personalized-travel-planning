@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from langchain_core.messages import AIMessage
 import json
 from utils import extract_number
+from services.email_service import send_trip_email
 
 import traceback
 
@@ -99,7 +100,7 @@ _INDIA_LOCAL_CITY_SET = frozenset(
 
 # This is a simplified state graph manager since we're not using the actual langgraph library
 class TravelGraph:
-    def __init__(self):
+    def __init__(self, user_name=None, user_email=None):
         self.chat_agent = ChatAgent()
         self.info_agent = InformationAgent() # InfoAgent now handles LLM re-ranking
         self.retrieval_agent = RetrievalAgent()
@@ -110,8 +111,14 @@ class TravelGraph:
         self.comm_agent = CommunicationAgent()
         self.transit_agent = TransitAgent()
         
+        self.default_user_info = {}
+        if user_name:
+            self.default_user_info["name"] = user_name
+        if user_email:
+            self.default_user_info["email"] = user_email
+            
         self.state = { # Default state for a new session
-            "user_info": {},
+            "user_info": self.default_user_info.copy(),
             "attractions": [], # This will hold LLM-ranked attractions from InfoAgent
             "retrieved_knowledge": None, # Store RAG context
             "weather_summary": None, # To store weather summary string
@@ -123,6 +130,7 @@ class TravelGraph:
             "budget": {},
             "ai_recommendation_generated": False, # Flag for strategy AI advice
             "transit_options": None,
+            "email_sent": False, # Prevent duplicate emails
         }
         self.session_states = {} # To store states for different sessions
     
@@ -130,13 +138,14 @@ class TravelGraph:
         if session_id not in self.session_states:
             # Create a new state by copying the default state structure
             self.session_states[session_id] = {
-                "user_info": {}, "attractions": [], "retrieved_knowledge": None, "weather_summary": None,
+                "user_info": self.default_user_info.copy(), "attractions": [], "retrieved_knowledge": None, "weather_summary": None,
                 "selected_attractions": [], "additional_attractions": [],
                 "should_rent_car": False, # Ensure this defaults to False
                 # "rental_post": None, # Intentionally removed from state
                 "itinerary": [], "budget": {},
                 "ai_recommendation_generated": False,
                 "transit_options": None,
+                "email_sent": False,
             }
         return self.session_states[session_id]
     
@@ -747,7 +756,7 @@ class TravelGraph:
             ai_should_rent_car = self.state["user_info"].get("should_rent_car", False)
             self.state["should_rent_car"] = ai_should_rent_car
             
-            print(f"[CRITICAL] AI rental recommendation set should_rent_car to: {ai_should_rent_car}")
+            print(f"[DEBUG] AI rental recommendation set should_rent_car to: {ai_should_rent_car}")
             print(f"[DEBUG] Updated state should_rent_car value: {self.state['should_rent_car']}")
             
             # Create a copy of the state to return
@@ -771,7 +780,7 @@ class TravelGraph:
             
             # Check if this is a satisfaction confirmation message and we need to process it specially
             if is_satisfaction_confirmation and not self.state['ai_recommendation_generated']:
-                print("[CRITICAL] Handling satisfaction confirmation without prior recommendation generation")
+                print("[DEBUG] Handling satisfaction confirmation without prior recommendation generation")
                 # This means user sent satisfaction message before going through normal flow
                 # We need to ensure should_rent_car is correctly set to false in this case
                 self.state["should_rent_car"] = False # Ensure it's false
@@ -779,7 +788,7 @@ class TravelGraph:
             
             # ALWAYS GO TO COMMUNICATION STEP
             next_step = "communication"
-            print(f"[CRITICAL] Decision point: Setting next_step to '{next_step}' to generate summaries and travel tips.")
+            print(f"[INFO] Decision point: Setting next_step to '{next_step}' to generate summaries and travel tips.")
             
             # Create a generator that yields the transition message
             def transition_generator():
@@ -1038,6 +1047,28 @@ class TravelGraph:
                 days = self.state["user_info"].get("days", "?")
                 confirmation = f"Your {days}-day trip to {city} has been planned, {name}! Check your itinerary below."
             
+            # Send email exactly once
+            if not self.state.get("email_sent"):
+                user_email = self.state["user_info"].get("email")
+                if user_email:
+                    try:
+                        email_status = send_trip_email(
+                            user_email,
+                            self.state["user_info"].get("name", "Traveler"),
+                            self.state["user_info"].get("city", "your destination"),
+                            itinerary,
+                            budget,
+                            confirmation
+                        )
+                        if email_status:
+                            self.state["email_sent"] = True
+                            print(f"[INFO] Successfully sent trip email to {user_email}")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to send trip email to {user_email}: {e}")
+                        # Don't break the trip if email fails!
+                else:
+                    print(f"[WARN] No user email found in state. Skipping email delivery.")
+
             return {
                 "next_step": "complete",
                 "response": confirmation,

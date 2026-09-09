@@ -1,623 +1,367 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ExploreX — Sign In | AI Travel Architect</title>
-    <link rel="icon"
-        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>"
-        type="image/svg+xml">
+    <title>ExploreX - Sign In | Intelligent Multi-Agent Travel Architect</title>
+    <meta name="description" content="ExploreX uses 9 collaborative AI agents, RAG pipelines, and GenAI to plan personalized trips anywhere in the world.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F9ED;</text></svg>" type="image/svg+xml">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Sora:wght@600;700;800&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #070B1A;
+            --bg: #050914;
             --coral: #FF6A3D;
             --teal: #2DD4BF;
             --violet: #8B5CF6;
             --gold: #FBBF24;
             --sky: #38BDF8;
             --pink: #F472B6;
-            --glass: rgba(255, 255, 255, .06);
-            --stroke: rgba(255, 255, 255, .14);
+            --green: #34D399;
+            --glass: rgba(255,255,255,.06);
+            --stroke: rgba(255,255,255,.12);
             --txt: #EEF2FF;
-            --muted: rgba(238, 242, 255, .62);
+            --muted: rgba(238,242,255,.58);
         }
-
-        * {
-            box-sizing: border-box
-        }
-
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            margin: 0;
             min-height: 100vh;
             font-family: 'Inter', system-ui, sans-serif;
             background: var(--bg);
             color: var(--txt);
-            overflow-x: hidden;
+            overflow: hidden auto;
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             justify-content: center;
+            padding: 2rem 2rem;
         }
-
-        /* ---------- aurora background ---------- */
-        .aurora {
-            position: fixed;
-            inset: 0;
-            z-index: 0;
-            overflow: hidden;
-            background:
-                radial-gradient(1100px 600px at 15% -10%, rgba(139, 92, 246, .22), transparent 60%),
-                radial-gradient(900px 500px at 90% 10%, rgba(45, 212, 191, .16), transparent 60%),
-                radial-gradient(800px 600px at 50% 110%, rgba(255, 106, 61, .14), transparent 60%),
-                var(--bg);
+        /* Neural canvas */
+        #neural-canvas {
+            position: fixed; inset: 0; z-index: 0; opacity: .5;
         }
-
-        .aurora i {
-            position: absolute;
-            border-radius: 50%;
-            filter: blur(90px);
-            opacity: .5;
-            animation: drift 16s ease-in-out infinite alternate;
+        /* Aurora */
+        .aurora { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+        .aurora span {
+            position: absolute; border-radius: 50%;
+            filter: blur(100px);
+            animation: drift 18s ease-in-out infinite alternate;
         }
-
-        .aurora i:nth-child(1) {
-            width: 420px;
-            height: 420px;
-            background: rgba(139, 92, 246, .35);
-            top: -120px;
-            left: -80px;
-        }
-
-        .aurora i:nth-child(2) {
-            width: 380px;
-            height: 380px;
-            background: rgba(45, 212, 191, .28);
-            bottom: -120px;
-            right: -60px;
-            animation-delay: -6s;
-        }
-
-        .aurora i:nth-child(3) {
-            width: 300px;
-            height: 300px;
-            background: rgba(255, 106, 61, .25);
-            top: 40%;
-            left: 60%;
-            animation-delay: -11s;
-        }
-
-        @keyframes drift {
-            from {
-                transform: translate(0, 0) scale(1)
-            }
-
-            to {
-                transform: translate(60px, 40px) scale(1.15)
-            }
-        }
-
-        /* ---------- animated route SVG ---------- */
-        .route-layer {
-            position: fixed;
-            inset: 0;
-            z-index: 1;
-            pointer-events: none;
-            opacity: .9;
-        }
-
-        .twinkle {
-            position: fixed;
-            width: 3px;
-            height: 3px;
-            border-radius: 50%;
-            background: #fff;
-            z-index: 1;
-            animation: tw 3s ease-in-out infinite;
-        }
-
-        @keyframes tw {
-
-            0%,
-            100% {
-                opacity: .15
-            }
-
-            50% {
-                opacity: .9
-            }
-        }
-
-        /* ---------- layout ---------- */
+        .aurora span:nth-child(1){width:500px;height:500px;background:rgba(139,92,246,.25);top:-150px;left:-100px;}
+        .aurora span:nth-child(2){width:420px;height:420px;background:rgba(45,212,191,.2);bottom:-130px;right:-80px;animation-delay:-7s;}
+        .aurora span:nth-child(3){width:360px;height:360px;background:rgba(255,106,61,.18);top:45%;left:55%;animation-delay:-13s;}
+        .aurora span:nth-child(4){width:280px;height:280px;background:rgba(56,189,248,.15);top:20%;left:35%;animation-delay:-4s;}
+        @keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(55px,38px) scale(1.18)}}
+        /* Route layer */
+        .route-layer{position:fixed;inset:0;z-index:2;pointer-events:none;opacity:.85;}
+        /* Stars */
+        .star{position:fixed;border-radius:50%;background:#fff;z-index:2;animation:tw 3s ease-in-out infinite;}
+        @keyframes tw{0%,100%{opacity:.1}50%{opacity:.85}}
+        /* Layout */
         .stage {
-            position: relative;
-            z-index: 5;
-            width: min(1060px, 94vw);
+            position: relative; z-index: 10;
+            /* Use calc to leave room for the login card on all viewports */
+            width: calc(100vw - 4rem);
+            max-width: 1180px;
             display: grid;
-            grid-template-columns: 1.15fr .85fr;
-            gap: 3rem;
-            align-items: center;
+            grid-template-columns: minmax(0,1.1fr) minmax(320px,0.9fr);
+            gap: 2.5rem;
+            align-items: start;
             padding: 2rem 0;
+            margin: 0 auto;
         }
-
-        @media(max-width:900px) {
-            .stage {
-                grid-template-columns: 1fr;
-                gap: 2rem;
-                text-align: center;
-            }
+        /* Below 740px: stack vertically */
+        @media(max-width:740px){ .stage{ grid-template-columns:1fr; gap:1.8rem; text-align:center; } }
+        /* Left section must not overflow */
+        .stage > section:first-child { min-width: 0; overflow: hidden; }
+        /* Logo */
+        .logo-row{display:flex;align-items:center;gap:.85rem;margin-bottom:1.8rem;}
+        .logo-mark{
+            width:50px;height:50px;border-radius:16px;
+            display:flex;align-items:center;justify-content:center;
+            background:linear-gradient(135deg,#1a2255,#0a0f1e);
+            border:1px solid rgba(45,212,191,.35);
+            box-shadow:0 0 28px rgba(45,212,191,.3),inset 0 1px 0 rgba(255,255,255,.1);
+            font-size:1.25rem;color:var(--gold);position:relative;
         }
-
-        .logo-row {
-            display: flex;
-            align-items: center;
-            gap: .8rem;
-            margin-bottom: 1.6rem;
+        .logo-name{font-family:'Sora',sans-serif;font-weight:800;font-size:1.55rem;letter-spacing:-.02em;}
+        .logo-sub{font-size:.68rem;color:var(--muted);letter-spacing:.24em;text-transform:uppercase;font-family:'JetBrains Mono',monospace;}
+        /* Headline */
+        .headline{font-family:'Sora',sans-serif;font-weight:800;font-size:clamp(1.7rem,3.5vw,3.1rem);line-height:1.07;letter-spacing:-.035em;margin-bottom:1.2rem;}
+        .grad{background:linear-gradient(92deg,var(--teal),var(--gold) 48%,var(--coral));-webkit-background-clip:text;background-clip:text;color:transparent;}
+        /* Lede */
+        .lede{color:var(--muted);font-size:1rem;max-width:530px;line-height:1.75;margin-bottom:1.8rem;}
+        @media(max-width:740px){.lede{margin-inline:auto;}}
+        /* Tech chips */
+        .tech-row{display:flex;flex-wrap:wrap;gap:.55rem;margin-bottom:1.8rem;}
+        @media(max-width:740px){.tech-row{justify-content:center;}}
+        .tech-chip{
+            display:inline-flex;align-items:center;gap:.5rem;
+            padding:.42rem .9rem;border-radius:999px;
+            background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.13);
+            font-size:.79rem;font-weight:600;backdrop-filter:blur(12px);
+            animation:float 5s ease-in-out infinite;
         }
-
-        .logo-mark {
-            width: 46px;
-            height: 46px;
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #1B2350, #0B1026);
-            border: 1px solid var(--stroke);
-            box-shadow: 0 0 24px rgba(45, 212, 191, .25);
-            font-size: 1.2rem;
-            color: var(--gold);
+        .tech-chip i{color:var(--c,var(--teal));}
+        .tech-chip:nth-child(2){animation-delay:-1s}
+        .tech-chip:nth-child(3){animation-delay:-2.1s}
+        .tech-chip:nth-child(4){animation-delay:-3.3s}
+        .tech-chip:nth-child(5){animation-delay:-4.2s}
+        .tech-chip:nth-child(6){animation-delay:-0.7s}
+        @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+        /* Agent showcase */
+        .agent-showcase{margin-bottom:1.6rem;}
+        .agent-showcase-label{
+            font-size:.74rem;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;
+            font-family:'JetBrains Mono',monospace;margin-bottom:.9rem;
+            display:flex;align-items:center;gap:.6rem;
         }
-
-        .logo-name {
-            font-family: 'Sora', sans-serif;
-            font-weight: 800;
-            font-size: 1.5rem;
-            letter-spacing: -.02em;
+        @media(max-width:740px){.agent-showcase-label{justify-content:center;}}
+        .agent-grid{display:flex;flex-wrap:wrap;gap:.5rem;}
+        @media(max-width:740px){.agent-grid{justify-content:center;}}
+        .agent-pill{
+            display:inline-flex;align-items:center;gap:.42rem;
+            padding:.32rem .78rem;border-radius:999px;
+            font-size:.76rem;font-weight:600;border:1px solid;
+            position:relative;overflow:hidden;
+            animation:ap 3s ease-in-out infinite;
         }
-
-        .logo-sub {
-            font-size: .72rem;
-            color: var(--muted);
-            letter-spacing: .22em;
-            text-transform: uppercase;
+        .agent-pill::before{content:'';position:absolute;inset:0;background:currentColor;opacity:.1;}
+        .agent-pill i{font-size:.72rem;}
+        @keyframes ap{0%,100%{opacity:.85}50%{opacity:1}}
+        .ap-chat    {color:#2DD4BF;border-color:rgba(45,212,191,.35);animation-delay:0s;}
+        .ap-info    {color:#FBBF24;border-color:rgba(251,191,36,.35);animation-delay:-.4s;}
+        .ap-rag     {color:#8B5CF6;border-color:rgba(139,92,246,.35);animation-delay:-.8s;}
+        .ap-rec     {color:#F472B6;border-color:rgba(244,114,182,.35);animation-delay:-1.2s;}
+        .ap-strat   {color:#38BDF8;border-color:rgba(56,189,248,.35);animation-delay:-1.6s;}
+        .ap-route   {color:#FF6A3D;border-color:rgba(255,106,61,.35);animation-delay:-2s;}
+        .ap-budget  {color:#34D399;border-color:rgba(52,211,153,.35);animation-delay:-2.4s;}
+        .ap-transit {color:#FB923C;border-color:rgba(251,146,60,.35);animation-delay:-2.8s;}
+        .ap-comm    {color:#A78BFA;border-color:rgba(167,139,250,.35);animation-delay:-3.2s;}
+        .pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--teal);display:inline-block;box-shadow:0 0 0 0 rgba(45,212,191,.7);animation:pl 1.8s infinite;}
+        @keyframes pl{70%{box-shadow:0 0 0 8px rgba(45,212,191,0)}100%{box-shadow:0 0 0 0 rgba(45,212,191,0)}}
+        /* Destination ticker */
+        .dest-ticker{margin-top:1.1rem;overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent);mask-image:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent);}
+        .dest-ticker-inner{display:flex;gap:.7rem;animation:ticker 22s linear infinite;width:max-content;}
+        @keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+        .dest-tag{display:inline-flex;align-items:center;gap:.35rem;padding:.28rem .7rem;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);font-size:.73rem;color:var(--muted);white-space:nowrap;}
+        .dest-tag i{font-size:.65rem;}
+        /* Login card */
+        .login-card{
+            position:relative;
+            background:linear-gradient(150deg,rgba(255,255,255,.09),rgba(255,255,255,.03));
+            border:1px solid var(--stroke);border-radius:28px;
+            padding:2.5rem 2.3rem;backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+            box-shadow:0 40px 90px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.11);
         }
-
-        .headline {
-            font-family: 'Sora', sans-serif;
-            font-weight: 800;
-            font-size: clamp(2.1rem, 4.6vw, 3.4rem);
-            line-height: 1.08;
-            letter-spacing: -.03em;
-            margin-bottom: 1.1rem;
+        .login-card::before{
+            content:'';position:absolute;inset:-1px;border-radius:28px;padding:1px;z-index:-1;
+            background:linear-gradient(135deg,rgba(45,212,191,.55),transparent 40%,transparent 60%,rgba(255,106,61,.55));
+            -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+            -webkit-mask-composite:xor;mask-composite:exclude;
         }
-
-        .grad {
-            background: linear-gradient(92deg, var(--teal), var(--gold) 45%, var(--coral));
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
+        .login-card::after{
+            content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);
+            width:60%;height:1px;
+            background:linear-gradient(90deg,transparent,rgba(45,212,191,.6),transparent);
         }
-
-        .lede {
-            color: var(--muted);
-            font-size: 1.05rem;
-            max-width: 520px;
-            line-height: 1.7;
-            margin-bottom: 1.8rem;
+        /* RAG badge */
+        .rag-badge{
+            display:inline-flex;align-items:center;gap:.4rem;
+            padding:.28rem .7rem;border-radius:999px;
+            background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.3);
+            color:#C4B5FD;font-size:.72rem;font-weight:600;
+            font-family:'JetBrains Mono',monospace;margin-bottom:1.3rem;
         }
-
-        @media(max-width:900px) {
-            .lede {
-                margin-inline: auto;
-            }
+        .lc-header{margin-bottom:1.8rem;}
+        .lc-title{font-family:'Sora',sans-serif;font-weight:700;font-size:1.5rem;margin-bottom:.35rem;}
+        .lc-sub{color:var(--muted);font-size:.88rem;line-height:1.5;}
+        /* Fields */
+        .fld{position:relative;margin-bottom:1rem;}
+        .fld i.f-ico{position:absolute;left:1rem;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.88rem;pointer-events:none;}
+        .fld input{
+            width:100%;background:rgba(5,9,20,.65);border:1px solid var(--stroke);
+            color:var(--txt);border-radius:14px;padding:.88rem 1rem .88rem 2.7rem;
+            font-size:.94rem;outline:none;transition:.25s;font-family:'Inter',sans-serif;
         }
-
-        /* tech badges */
-        .tech-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: .6rem;
-            margin-bottom: 2rem;
+        .fld input::placeholder{color:rgba(238,242,255,.35);}
+        .fld input:focus{border-color:var(--teal);box-shadow:0 0 0 4px rgba(45,212,191,.13);background:rgba(5,9,20,.8);}
+        /* Button */
+        .btn-launch{
+            width:100%;border:none;border-radius:14px;padding:1rem;
+            font-weight:700;font-size:1rem;color:#040810;cursor:pointer;
+            position:relative;overflow:hidden;
+            background:linear-gradient(92deg,var(--teal),var(--gold) 50%,var(--coral));
+            background-size:200% auto;transition:.35s;
+            box-shadow:0 10px 35px rgba(45,212,191,.28);
+            font-family:'Sora',sans-serif;letter-spacing:.01em;
         }
-
-        @media(max-width:900px) {
-            .tech-row {
-                justify-content: center;
-            }
+        .btn-launch:hover{background-position:right center;transform:translateY(-2px);box-shadow:0 18px 45px rgba(251,191,36,.32);}
+        .btn-launch:disabled{opacity:.7;cursor:not-allowed;transform:none;}
+        .btn-launch::after{
+            content:'';position:absolute;top:0;left:-80%;width:50%;height:100%;
+            background:linear-gradient(105deg,transparent,rgba(255,255,255,.5),transparent);
+            transform:skewX(-20deg);animation:sheen 3.5s infinite;
         }
+        @keyframes sheen{0%{left:-80%}55%,100%{left:130%}}
+        /* Divider */
+        .lc-div{display:flex;align-items:center;gap:.9rem;color:var(--muted);font-size:.72rem;letter-spacing:.08em;margin:1.4rem 0;}
+        .lc-div::before,.lc-div::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,transparent,var(--stroke),transparent);}
+        /* Stats */
+        .stats-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.65rem;}
+        .stat{text-align:center;background:rgba(255,255,255,.04);border:1px solid var(--stroke);border-radius:14px;padding:.8rem .4rem;position:relative;overflow:hidden;}
+        .stat::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:40%;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);}
+        .stat b{display:block;font-family:'Sora',sans-serif;font-size:1.15rem;font-weight:800;background:linear-gradient(92deg,var(--teal),var(--gold));-webkit-background-clip:text;background-clip:text;color:transparent;margin-bottom:.2rem;}
+        .stat small{color:var(--muted);font-size:.6rem;letter-spacing:.07em;text-transform:uppercase;font-family:'JetBrains Mono',monospace;}
+        /* Error */
+        .err{display:none;color:#FCA5A5;font-size:.8rem;margin:-.2rem 0 .8rem;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:.55rem .8rem;}
+        /* Footer */
+        .foot{position:fixed;bottom:.9rem;left:0;right:0;text-align:center;z-index:10;color:rgba(238,242,255,.3);font-size:.68rem;letter-spacing:.06em;font-family:'JetBrains Mono',monospace;}
 
-        .tech-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: .5rem;
-            padding: .45rem .95rem;
-            border-radius: 999px;
-            background: var(--glass);
-            border: 1px solid var(--stroke);
-            font-size: .82rem;
-            font-weight: 600;
-            backdrop-filter: blur(10px);
-            animation: float 5s ease-in-out infinite;
-        }
-
-        .tech-chip i {
-            color: var(--c, var(--teal));
-        }
-
-        .tech-chip:nth-child(2) {
-            animation-delay: -1.2s
-        }
-
-        .tech-chip:nth-child(3) {
-            animation-delay: -2.4s
-        }
-
-        .tech-chip:nth-child(4) {
-            animation-delay: -3.6s
-        }
-
-        .tech-chip:nth-child(5) {
-            animation-delay: -4.4s
-        }
-
-        @keyframes float {
-
-            0%,
-            100% {
-                transform: translateY(0)
-            }
-
-            50% {
-                transform: translateY(-5px)
-            }
-        }
-
-        /* agent avatars */
-        .agent-line {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            color: var(--muted);
-            font-size: .88rem;
-        }
-
-        @media(max-width:900px) {
-            .agent-line {
-                justify-content: center;
-            }
-        }
-
-        .agent-stack {
-            display: flex;
-        }
-
-        .agent-stack span {
-            width: 38px;
-            height: 38px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 2px solid var(--bg);
-            margin-left: -10px;
-            font-size: .85rem;
-            color: #0B1026;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, .4);
-        }
-
-        .agent-stack span:first-child {
-            margin-left: 0;
-        }
-
-        .pulse-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--teal);
-            box-shadow: 0 0 0 0 rgba(45, 212, 191, .7);
-            animation: pl 1.8s infinite;
-        }
-
-        @keyframes pl {
-            70% {
-                box-shadow: 0 0 0 9px rgba(45, 212, 191, 0)
-            }
-
-            100% {
-                box-shadow: 0 0 0 0 rgba(45, 212, 191, 0)
-            }
-        }
-
-        /* ---------- glass login card ---------- */
-        .login-card {
-            position: relative;
-            background: linear-gradient(160deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .03));
-            border: 1px solid var(--stroke);
-            border-radius: 26px;
-            padding: 2.4rem 2.2rem;
-            backdrop-filter: blur(22px);
-            -webkit-backdrop-filter: blur(22px);
-            box-shadow: 0 30px 80px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .12);
-        }
-
-        .login-card::before {
-            content: '';
-            position: absolute;
-            inset: -1px;
-            border-radius: 26px;
-            padding: 1px;
-            z-index: -1;
-            background: linear-gradient(135deg, rgba(45, 212, 191, .6), transparent 40%, transparent 60%, rgba(255, 106, 61, .6));
-            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-        }
-
-        .lc-title {
-            font-family: 'Sora', sans-serif;
-            font-weight: 700;
-            font-size: 1.45rem;
-            margin-bottom: .3rem;
-        }
-
-        .lc-sub {
-            color: var(--muted);
-            font-size: .9rem;
-            margin-bottom: 1.7rem;
-        }
-
-        .fld {
-            position: relative;
-            margin-bottom: 1.1rem;
-        }
-
-        .fld i.f-ico {
-            position: absolute;
-            left: 1rem;
-            top: 50%;
-            transform: translateY(-50%);
-            color: var(--muted);
-            font-size: .9rem;
-        }
-
-        .fld input {
-            width: 100%;
-            background: rgba(7, 11, 26, .6);
-            border: 1px solid var(--stroke);
-            color: var(--txt);
-            border-radius: 14px;
-            padding: .85rem 1rem .85rem 2.7rem;
-            font-size: .95rem;
-            outline: none;
-            transition: .25s;
-        }
-
-        .fld input::placeholder {
-            color: rgba(238, 242, 255, .4);
-        }
-
-        .fld input:focus {
-            border-color: var(--teal);
-            box-shadow: 0 0 0 4px rgba(45, 212, 191, .14);
-        }
-
-        .btn-launch {
-            width: 100%;
-            border: none;
-            border-radius: 14px;
-            padding: .95rem;
-            font-weight: 700;
-            font-size: 1rem;
-            color: #0B1026;
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-            background: linear-gradient(92deg, var(--teal), var(--gold));
-            transition: .3s;
-            box-shadow: 0 10px 30px rgba(45, 212, 191, .3);
-        }
-
-        .btn-launch:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 16px 40px rgba(251, 191, 36, .35);
-        }
-
-        .btn-launch::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -80%;
-            width: 50%;
-            height: 100%;
-            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, .55), transparent);
-            transform: skewX(-20deg);
-            animation: sheen 3.2s infinite;
-        }
-
-        @keyframes sheen {
-            0% {
-                left: -80%
-            }
-
-            55% {
-                left: 130%
-            }
-
-            100% {
-                left: 130%
-            }
-        }
-
-        .lc-div {
-            display: flex;
-            align-items: center;
-            gap: .9rem;
-            color: var(--muted);
-            font-size: .78rem;
-            margin: 1.3rem 0;
-        }
-
-        .lc-div::before,
-        .lc-div::after {
-            content: '';
-            flex: 1;
-            height: 1px;
-            background: var(--stroke);
-        }
-
-        .stats-row {
-            display: flex;
-            gap: .7rem;
-        }
-
-        .stat {
-            flex: 1;
-            text-align: center;
-            background: var(--glass);
-            border: 1px solid var(--stroke);
-            border-radius: 14px;
-            padding: .7rem .4rem;
-        }
-
-        .stat b {
-            display: block;
-            font-family: 'Sora', sans-serif;
-            font-size: 1.05rem;
-            background: linear-gradient(92deg, var(--teal), var(--gold));
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-        }
-
-        .stat small {
-            color: var(--muted);
-            font-size: .68rem;
-            letter-spacing: .04em;
-        }
-
-        .foot {
-            position: fixed;
-            bottom: 1rem;
-            left: 0;
-            right: 0;
-            text-align: center;
-            z-index: 5;
-            color: rgba(238, 242, 255, .35);
-            font-size: .72rem;
-            letter-spacing: .05em;
-        }
-
-        .err {
-            display: none;
-            color: #FCA5A5;
-            font-size: .8rem;
-            margin: -.3rem 0 .9rem;
+        /* Mid-width tweaks (741px-1099px) so both columns stay visible */
+        @media(min-width:741px) and (max-width:1099px){
+            .lede{font-size:.88rem;margin-bottom:1rem;line-height:1.6;}
+            .tech-row{margin-bottom:1rem;}
+            .agent-showcase{margin-bottom:.9rem;}
+            .dest-ticker{margin-top:.6rem;}
+            .login-card{padding:1.8rem 1.6rem;}
+            .logo-row{margin-bottom:1rem;}
+            .headline{margin-bottom:.7rem;font-size:clamp(1.5rem,2.8vw,2.6rem);}
+            .agent-pill{padding:.26rem .6rem;font-size:.72rem;}
+            .tech-chip{padding:.36rem .7rem;font-size:.76rem;}
+            .rag-badge{font-size:.67rem;}
+            .stats-row .stat b{font-size:1rem;}
         }
     </style>
     <base target="_blank">
 </head>
-
 <body>
-    <div class="aurora"><i></i><i></i><i></i></div>
+    <canvas id="neural-canvas"></canvas>
+    <div class="aurora"><span></span><span></span><span></span><span></span></div>
 
-    <!-- traveling lights across the whole page -->
-    <svg class="route-layer" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice"
-        xmlns="http://www.w3.org/2000/svg">
+    <svg class="route-layer" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
         <defs>
             <filter id="glow" x="-200%" y="-200%" width="500%" height="500%">
-                <feGaussianBlur stdDeviation="4" result="b" />
-                <feMerge>
-                    <feMergeNode in="b" />
-                    <feMergeNode in="SourceGraphic" />
-                </feMerge>
+                <feGaussianBlur stdDeviation="3.5" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
             </filter>
-            <linearGradient id="rg" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0" stop-color="#2DD4BF" />
-                <stop offset=".5" stop-color="#FBBF24" />
-                <stop offset="1" stop-color="#FF6A3D" />
-            </linearGradient>
         </defs>
-        <path id="arc1" d="M-60 720 C 300 520, 620 860, 900 600 S 1300 320, 1520 420" fill="none"
-            stroke="rgba(124,247,212,0.16)" stroke-width="1.6" stroke-dasharray="3 9" />
-        <path id="arc2" d="M-60 260 C 260 420, 700 140, 1000 340 S 1320 640, 1520 560" fill="none"
-            stroke="rgba(251,191,36,0.14)" stroke-width="1.6" stroke-dasharray="3 9" />
-        <circle r="5.5" fill="#FFE9A8" filter="url(#glow)">
-            <animateMotion dur="9s" repeatCount="indefinite">
-                <mpath href="#arc1" />
-            </animateMotion>
+        <path id="arc1" d="M-60 750 C 280 560, 600 880, 880 620 S 1280 310, 1520 430" fill="none" stroke="rgba(45,212,191,0.13)" stroke-width="1.5" stroke-dasharray="3 10"/>
+        <path id="arc2" d="M-60 240 C 240 410, 680 130, 1000 330 S 1320 660, 1520 550" fill="none" stroke="rgba(251,191,36,0.12)" stroke-width="1.5" stroke-dasharray="3 10"/>
+        <path id="arc3" d="M200 900 C 450 700, 800 800, 1100 550 S 1400 300, 1520 200" fill="none" stroke="rgba(139,92,246,0.1)" stroke-width="1.2" stroke-dasharray="2 12"/>
+        <circle r="5" fill="#FFE9A8" filter="url(#glow)">
+            <animateMotion dur="10s" repeatCount="indefinite"><mpath href="#arc1"/></animateMotion>
         </circle>
-        <circle r="2.6" fill="#fff" filter="url(#glow)">
-            <animateMotion dur="9s" repeatCount="indefinite">
-                <mpath href="#arc1" />
-            </animateMotion>
+        <circle r="2.5" fill="#fff" filter="url(#glow)">
+            <animateMotion dur="10s" repeatCount="indefinite" begin="5s"><mpath href="#arc1"/></animateMotion>
         </circle>
-        <circle r="4.5" fill="#7CF7D4" filter="url(#glow)">
-            <animateMotion dur="11s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1">
-                <mpath href="#arc2" />
-            </animateMotion>
+        <circle r="4" fill="#7CF7D4" filter="url(#glow)">
+            <animateMotion dur="13s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1"><mpath href="#arc2"/></animateMotion>
+        </circle>
+        <circle r="3" fill="#C4B5FD" filter="url(#glow)">
+            <animateMotion dur="16s" repeatCount="indefinite"><mpath href="#arc3"/></animateMotion>
         </circle>
         <g filter="url(#glow)">
-            <circle cx="240" cy="625" r="3.4" fill="#2DD4BF" />
-            <circle cx="700" cy="700" r="3.4" fill="#FBBF24" />
-            <circle cx="1020" cy="520" r="3.4" fill="#8B5CF6" />
-            <circle cx="1290" cy="400" r="3.4" fill="#FF6A3D" />
+            <circle cx="230" cy="640" r="3" fill="#2DD4BF" opacity=".8"/>
+            <circle cx="680" cy="720" r="3" fill="#FBBF24" opacity=".8"/>
+            <circle cx="1010" cy="540" r="3" fill="#8B5CF6" opacity=".8"/>
+            <circle cx="1290" cy="390" r="3" fill="#FF6A3D" opacity=".8"/>
+            <circle cx="480" cy="300" r="2.5" fill="#38BDF8" opacity=".7"/>
+            <circle cx="860" cy="180" r="2.5" fill="#F472B6" opacity=".7"/>
         </g>
     </svg>
-    <div class="twinkle" style="top:18%;left:12%"></div>
-    <div class="twinkle" style="top:30%;left:78%;animation-delay:-1s"></div>
-    <div class="twinkle" style="top:66%;left:64%;animation-delay:-2s"></div>
-    <div class="twinkle" style="top:74%;left:26%;animation-delay:-.5s"></div>
-    <div class="twinkle" style="top:12%;left:55%;animation-delay:-1.6s"></div>
+
+    <div class="star" style="width:2px;height:2px;top:16%;left:11%;animation-delay:0s"></div>
+    <div class="star" style="width:3px;height:3px;top:28%;left:76%;animation-delay:-1.1s"></div>
+    <div class="star" style="width:2px;height:2px;top:65%;left:62%;animation-delay:-2.2s"></div>
+    <div class="star" style="width:2px;height:2px;top:72%;left:23%;animation-delay:-.5s"></div>
+    <div class="star" style="width:3px;height:3px;top:11%;left:52%;animation-delay:-1.7s"></div>
+    <div class="star" style="width:2px;height:2px;top:48%;left:88%;animation-delay:-0.3s"></div>
 
     <main class="stage">
-        <!-- LEFT : pitch -->
+        <!-- LEFT -->
         <section>
             <div class="logo-row">
                 <div class="logo-mark"><i class="fas fa-compass"></i></div>
                 <div>
                     <div class="logo-name">ExploreX</div>
-                    <div class="logo-sub">AI Travel Architect</div>
+                    <div class="logo-sub">Multi-Agent Travel Architect</div>
                 </div>
             </div>
 
-            <h1 class="headline">India, planned by a<br><span class="grad">swarm of AI agents.</span></h1>
-            <p class="lede">Tell ExploreX where you want to go. GenAI agents retrieve real attractions with RAG,
-                negotiate your preferences in chat, optimize the route and balance your budget — in one seamless
-                conversation.</p>
+            <h1 class="headline">The World, planned by a<br><span class="grad">swarm of AI agents.</span></h1>
+            <p class="lede">
+                ExploreX deploys <strong style="color:#EEF2FF">9 specialized AI agents</strong> powered by GenAI, RAG pipelines,
+                and multi-agent orchestration to plan personalized trips across
+                <strong style="color:#EEF2FF">India &amp; worldwide</strong> &mdash; itinerary, budget, route, weather, transit, and more.
+            </p>
 
             <div class="tech-row">
                 <span class="tech-chip" style="--c:#2DD4BF"><i class="fas fa-brain"></i> AI / ML</span>
                 <span class="tech-chip" style="--c:#FBBF24"><i class="fas fa-wand-magic-sparkles"></i> GenAI</span>
                 <span class="tech-chip" style="--c:#8B5CF6"><i class="fas fa-database"></i> RAG</span>
                 <span class="tech-chip" style="--c:#FF6A3D"><i class="fas fa-people-group"></i> Multi-Agent</span>
-                <span class="tech-chip" style="--c:#38BDF8"><i class="fas fa-map-location-dot"></i> Route
-                    Optimization</span>
+                <span class="tech-chip" style="--c:#38BDF8"><i class="fas fa-map-location-dot"></i> Route Optimization</span>
+                <span class="tech-chip" style="--c:#34D399"><i class="fas fa-microchip"></i> LLM Orchestration</span>
             </div>
 
-            <div class="agent-line">
-                <div class="agent-stack">
-                    <span style="background:linear-gradient(135deg,#FF6A3D,#FBBF24)"><i
-                            class="fas fa-satellite-dish"></i></span>
-                    <span style="background:linear-gradient(135deg,#2DD4BF,#38BDF8)"><i
-                            class="fas fa-compass"></i></span>
-                    <span style="background:linear-gradient(135deg,#8B5CF6,#F472B6)"><i class="fas fa-route"></i></span>
-                    <span style="background:linear-gradient(135deg,#FBBF24,#34D399)"><i
-                            class="fas fa-calculator"></i></span>
+            <div class="agent-showcase">
+                <div class="agent-showcase-label">
+                    <span class="pulse-dot"></span> 9 specialist agents online
                 </div>
-                <span><span class="pulse-dot d-inline-block me-2"></span>4 specialist agents standing by</span>
+                <div class="agent-grid">
+                    <span class="agent-pill ap-chat"><i class="fas fa-comments"></i> Chat</span>
+                    <span class="agent-pill ap-info"><i class="fas fa-circle-info"></i> Information</span>
+                    <span class="agent-pill ap-rag"><i class="fas fa-database"></i> Retrieval &bull; RAG</span>
+                    <span class="agent-pill ap-rec"><i class="fas fa-star"></i> Recommend</span>
+                    <span class="agent-pill ap-strat"><i class="fas fa-chess"></i> Strategy</span>
+                    <span class="agent-pill ap-route"><i class="fas fa-route"></i> Route</span>
+                    <span class="agent-pill ap-budget"><i class="fas fa-calculator"></i> Budget</span>
+                    <span class="agent-pill ap-transit"><i class="fas fa-train"></i> Transit</span>
+                    <span class="agent-pill ap-comm"><i class="fas fa-envelope"></i> Communication</span>
+                </div>
+            </div>
+
+            <div class="dest-ticker">
+                <div class="dest-ticker-inner">
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#2DD4BF"></i> Munnar, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FBBF24"></i> Paris, France</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#8B5CF6"></i> Rajasthan, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FF6A3D"></i> Tokyo, Japan</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#38BDF8"></i> Goa, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#F472B6"></i> Bali, Indonesia</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#34D399"></i> Kerala, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FB923C"></i> New York, USA</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#A78BFA"></i> Manali, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#2DD4BF"></i> Dubai, UAE</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FBBF24"></i> Singapore</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#8B5CF6"></i> Ladakh, India</span>
+                    <!-- duplicate for loop -->
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#2DD4BF"></i> Munnar, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FBBF24"></i> Paris, France</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#8B5CF6"></i> Rajasthan, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FF6A3D"></i> Tokyo, Japan</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#38BDF8"></i> Goa, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#F472B6"></i> Bali, Indonesia</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#34D399"></i> Kerala, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FB923C"></i> New York, USA</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#A78BFA"></i> Manali, India</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#2DD4BF"></i> Dubai, UAE</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#FBBF24"></i> Singapore</span>
+                    <span class="dest-tag"><i class="fas fa-map-pin" style="color:#8B5CF6"></i> Ladakh, India</span>
+                </div>
             </div>
         </section>
 
-        <!-- RIGHT : login card -->
+        <!-- RIGHT: Login card -->
         <section class="login-card">
-            <div class="lc-title">Begin your journey ✈️</div>
-            <div class="lc-sub">Sign in and let the agents do the planning.</div>
-
+            <div class="rag-badge">
+                <i class="fas fa-network-wired"></i> RAG + GenAI + 9-Agent Orchestration
+            </div>
+            <div class="lc-header">
+                <div class="lc-title">Begin your journey &#x2708;&#xFE0F;</div>
+                <div class="lc-sub">Sign in and let the agent swarm plan your trip &mdash; India or anywhere worldwide.</div>
+            </div>
             <form id="login-form" novalidate>
                 <div class="fld">
                     <i class="fas fa-user f-ico"></i>
@@ -627,78 +371,116 @@
                     <i class="fas fa-envelope f-ico"></i>
                     <input type="email" id="login-email" placeholder="Email address" autocomplete="email" required>
                 </div>
-                <div class="err" id="login-err"><i class="fas fa-triangle-exclamation me-1"></i>Please enter your name
-                    and a valid email.</div>
-                <button type="submit" class="btn-launch">
+                <div class="err" id="login-err">
+                    <i class="fas fa-triangle-exclamation me-1"></i>Please enter your name and a valid email.
+                </div>
+                <button type="submit" class="btn-launch" id="launch-btn">
                     <i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect
                 </button>
             </form>
-
             <div class="lc-div">TRUSTED BY TRAVELLERS</div>
             <div class="stats-row">
-                <div class="stat"><b>28+</b><small>STATES COVERED</small></div>
-                <div class="stat"><b>4</b><small>AI AGENTS</small></div>
-                <div class="stat"><b>60s</b><small>TO A FULL PLAN</small></div>
+                <div class="stat"><b>150+</b><small>Destinations<br>Worldwide</small></div>
+                <div class="stat"><b>9</b><small>AI Agents<br>Deployed</small></div>
+                <div class="stat"><b>&lt;2 min</b><small>To a Full<br>Trip Plan</small></div>
             </div>
         </section>
     </main>
 
-    <div class="foot">EXPLOREX · INTELLIGENT COLLABORATIVE AGENTS FOR DYNAMIC PERSONALIZED TRAVEL PLANNING</div>
+    <div class="foot">EXPLOREX &middot; INTELLIGENT COLLABORATIVE AGENTS FOR DYNAMIC PERSONALIZED TRAVEL PLANNING</div>
 
     <script>
-        // If already signed in, go straight to the app
-        try {
-            if (sessionStorage.getItem('explorex_user')) {
-                window.location.replace('/');
+        /* Neural network animation */
+        (function(){
+            var canvas = document.getElementById('neural-canvas');
+            var ctx = canvas.getContext('2d');
+            var W, H, nodes = [];
+            var COLORS = ['#2DD4BF','#8B5CF6','#FBBF24','#FF6A3D','#38BDF8','#F472B6'];
+            function resize(){ W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+            function init(){
+                nodes = [];
+                for(var i=0;i<55;i++) nodes.push({
+                    x: Math.random()*W, y: Math.random()*H,
+                    vx: (Math.random()-.5)*.35, vy: (Math.random()-.5)*.35,
+                    r: Math.random()*2.2+1,
+                    color: COLORS[Math.floor(Math.random()*COLORS.length)],
+                    opacity: Math.random()*.5+.3
+                });
             }
-        } catch (e) { }
+            function draw(){
+                ctx.clearRect(0,0,W,H);
+                for(var i=0;i<nodes.length;i++){
+                    for(var j=i+1;j<nodes.length;j++){
+                        var dx=nodes[i].x-nodes[j].x, dy=nodes[i].y-nodes[j].y;
+                        var d=Math.sqrt(dx*dx+dy*dy);
+                        if(d<160){
+                            ctx.beginPath();
+                            ctx.strokeStyle='rgba(45,212,191,'+(0.12*(1-d/160))+')';
+                            ctx.lineWidth=.6;
+                            ctx.moveTo(nodes[i].x,nodes[i].y);
+                            ctx.lineTo(nodes[j].x,nodes[j].y);
+                            ctx.stroke();
+                        }
+                    }
+                }
+                nodes.forEach(function(n){
+                    ctx.beginPath();
+                    ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+                    ctx.fillStyle=n.color;
+                    ctx.globalAlpha=n.opacity;
+                    ctx.fill();
+                    ctx.globalAlpha=1;
+                });
+            }
+            function update(){
+                nodes.forEach(function(n){
+                    n.x+=n.vx; n.y+=n.vy;
+                    if(n.x<0||n.x>W) n.vx*=-1;
+                    if(n.y<0||n.y>H) n.vy*=-1;
+                });
+            }
+            function loop(){ update(); draw(); requestAnimationFrame(loop); }
+            resize(); init(); loop();
+            window.addEventListener('resize',function(){ resize(); init(); });
+        })();
 
-        document.getElementById('login-form').addEventListener('submit', function (e) {
+        /* Redirect if already signed in */
+        try{ if(sessionStorage.getItem('explorex_user')) window.location.replace('/'); }catch(e){}
+
+        /* Login */
+        document.getElementById('login-form').addEventListener('submit', function(e){
             e.preventDefault();
-            var name = document.getElementById('login-name').value.trim();
+            var name  = document.getElementById('login-name').value.trim();
             var email = document.getElementById('login-email').value.trim();
-            var err = document.getElementById('login-err');
-            var btn = document.querySelector('.btn-launch');
-            var okEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-            
-            if (!name || !okEmail) { 
-                err.style.display = 'block'; 
-                err.innerHTML = '<i class="fas fa-triangle-exclamation me-1"></i>Please enter your name and a valid email.';
-                return; 
+            var err   = document.getElementById('login-err');
+            var btn   = document.getElementById('launch-btn');
+            if(!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+                err.style.display='block'; return;
             }
-            
-            err.style.display = 'none';
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Initializing...';
-            btn.disabled = true;
-
-            fetch('/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name, email: email })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    try {
-                        sessionStorage.setItem('explorex_user', name);
-                        sessionStorage.setItem('explorex_email', email);
-                    } catch (e2) { }
-                    window.location.replace('/');
-                } else {
-                    err.style.display = 'block';
-                    err.innerHTML = '<i class="fas fa-triangle-exclamation me-1"></i>' + (data.message || 'Login failed');
-                    btn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect';
-                    btn.disabled = false;
+            err.style.display='none';
+            btn.innerHTML='<i class="fas fa-spinner fa-spin me-2"></i>Initializing agents...';
+            btn.disabled=true;
+            fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,email:email})})
+            .then(function(r){return r.json();})
+            .then(function(data){
+                if(data.status==='success'){
+                    try{sessionStorage.setItem('explorex_user',name);sessionStorage.setItem('explorex_email',email);}catch(e2){}
+                    btn.innerHTML='<i class="fas fa-check me-2"></i>Agents ready - launching...';
+                    setTimeout(function(){window.location.replace('/');},400);
+                }else{
+                    err.textContent=data.message||'Login failed.';
+                    err.style.display='block';
+                    btn.innerHTML='<i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect';
+                    btn.disabled=false;
                 }
             })
-            .catch(error => {
-                err.style.display = 'block';
-                err.innerHTML = '<i class="fas fa-triangle-exclamation me-1"></i>Network error. Please try again.';
-                btn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect';
-                btn.disabled = false;
+            .catch(function(){
+                err.innerHTML='<i class="fas fa-triangle-exclamation me-1"></i>Network error. Please try again.';
+                err.style.display='block';
+                btn.innerHTML='<i class="fas fa-paper-plane me-2"></i>Launch My Travel Architect';
+                btn.disabled=false;
             });
         });
     </script>
 </body>
-
 </html>

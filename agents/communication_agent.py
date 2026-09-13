@@ -105,7 +105,7 @@ class CommunicationAgent:
         
         Itinerary: {itinerary_summary}
         Number of attractions: {attractions_count}
-        Estimated budget: ${budget_estimate['total']}{car_rental_prompt}
+        Estimated budget: ₹{budget_estimate['total']}{car_rental_prompt}
         
         The message should:
         1. Confirm the booking is complete

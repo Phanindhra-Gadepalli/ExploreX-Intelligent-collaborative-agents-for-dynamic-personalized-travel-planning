@@ -10,7 +10,7 @@ class TravelState(BaseModel):
     name: Optional[str] = Field(default=None, description="User's name")
     origin_city: Optional[str] = Field(default=None, description="The city the user is starting their journey from")
     city: Optional[str] = Field(default=None, description="Destination city, state, or country anywhere in the world (e.g., 'Goa', 'Kerala', 'Paris', 'Tokyo', 'Dubai', 'Singapore', 'Rajasthan')")
-    days: Optional[str] = Field(default=None, description="Number of days for the trip (e.g. '4', '5')")
+    days: Optional[int] = Field(default=None, description="Number of days for the trip (e.g. 4, 5)")
     budget: Optional[str] = Field(
         default=None,
         description="Budget category: 'low', 'medium', or 'high'. Set this ONLY when the user says low/medium/high/budget/luxury. "
@@ -30,8 +30,8 @@ class TravelState(BaseModel):
                     "Set to 'flexible' when the user says: 'around', 'approximately', 'about', "
                     "'roughly', 'up to', 'nearly'. Leave None if not mentioned."
     )
-    people: Optional[str] = Field(default=None, description="Number of people traveling (e.g. '2', '5')")
-    kids: Optional[str] = Field(default=None, description="Are kids traveling? (yes or no)")
+    people: Optional[int] = Field(default=None, description="Number of people traveling (e.g. 2, 5)")
+    kids: Optional[int] = Field(default=None, description="Number of kids traveling. 0 means no kids.")
     health: Optional[str] = Field(default=None, description="Health status (e.g., 'good', 'limited')")
     hobbies: Optional[str] = Field(default=None, description="Hobbies and interests (e.g., 'history, nature')")
     start_date: Optional[str] = Field(default=None, description="Start date of the trip (YYYY-MM-DD or 'flexible'). If the user says 'not decided', 'flexible', 'no fixed date', 'haven't decided', or 'any date', you MUST output 'flexible'.")
@@ -129,7 +129,7 @@ class ChatAgent:
         if user_input and user_input.strip():
             # Budget is special: either budget (category) OR budget_amount (numeric) satisfies the requirement
             missing_budget = not self._has_budget(state)
-            missing_current = [f for f in self.required_fields if not state.get(f)]
+            missing_current = [f for f in self.required_fields if state.get(f) in (None, "")]
             # Always try to extract budget fields if budget is not yet fully resolved
             extra_extract = []
             if missing_budget:
@@ -147,6 +147,15 @@ class ChatAgent:
                 
                 desc_str = "\n".join(field_descriptions)
                 
+                history_texts = []
+                for msg in self.conversation_history[-3:]:
+                    if isinstance(msg, HumanMessage):
+                        history_texts.append(f"User: {msg.content}")
+                    elif isinstance(msg, AIMessage):
+                        history_texts.append(f"Assistant: {msg.content}")
+                history_texts.append(f"User: {user_input}")
+                context_str = "\n".join(history_texts)
+                
                 extraction_prompt = (
                     f"Carefully extract the following travel details from the user's input: {', '.join(fields_to_extract)}.\n\n"
                     f"Definitions:\n{desc_str}\n\n"
@@ -157,31 +166,27 @@ class ChatAgent:
                     f"- Detect strictness from phrases: 'strictly/must not exceed/keep below/no more than' → 'strict'; 'around/approximately/up to/roughly' → 'flexible'.\n\n"
                     f"CRITICAL: Extract ONLY information explicitly stated by the user. Do not infer, guess, or use default values for ANY missing fields.\n\n"
                     f"Do NOT confuse health status with destination, or budget amount with number of people.\n\n"
-                    f"User Input: '{user_input}'"
+                    f"Conversation Context:\n{context_str}"
                 )
                 
                 try:
-                    import concurrent.futures
                     print(f"[DEBUG] Invoking structured_extractor...")
-                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                    future = executor.submit(self.structured_extractor.invoke, extraction_prompt)
+                    # Pass timeout in config instead of using ThreadPoolExecutor
                     try:
-                        extracted_data = future.result(timeout=15)  # 15-second hard timeout
-                    except concurrent.futures.TimeoutError:
-                        print(f"[WARN] Structured extraction timed out after 15s — skipping extraction")
+                        extracted_data = self.structured_extractor.invoke(
+                            extraction_prompt, 
+                            config={"timeout": 15}
+                        )
+                    except Exception as e:
+                        print(f"[WARN] Structured extraction timed out or failed: {e} — skipping extraction")
                         extracted_data = None
-                    finally:
-                        # CRITICAL: shutdown(wait=False) so we do NOT block waiting for the
-                        # still-running background thread. Without this, the 'with' block's
-                        # __exit__ calls shutdown(wait=True) which hangs until Gemini responds.
-                        executor.shutdown(wait=False)
                     if extracted_data is not None:
                         print(f"[DEBUG] structured_extractor returned: {type(extracted_data)}")
                         extracted_dict = extracted_data.model_dump(exclude_none=True)
                         print(f"[DEBUG] extracted_dict: {extracted_dict}")
                         for field, value in extracted_dict.items():
                             # Only update fields that are genuinely missing or budget extras
-                            if value and (field in missing_current or field in extra_extract):
+                            if value is not None and (field in missing_current or field in extra_extract):
                                 state[field] = value
                                 print(f"Updated state: {field} = {value}")
                                 
@@ -210,7 +215,7 @@ class ChatAgent:
 
         # Get AI response based on current state and conversation history
         messages = self.conversation_history.copy()
-        missing = [f for f in self.required_fields if not state.get(f)]
+        missing = [f for f in self.required_fields if state.get(f) in (None, "")]
         # Budget is satisfied if either category OR numeric amount is provided
         if self._has_budget(state) and "budget" in missing:
             missing = [f for f in missing if f != "budget"]

@@ -329,7 +329,15 @@ class RouteAgent:
                 if name in all_spots_object_map:
                     current_day_spot_objects_raw.append(all_spots_object_map[name])
                 else:
-                    print(f"[WARN] Attraction name '{name}' from daily plan (day {day_number}) not found in all_spots_object_map.")
+                    print(f"[WARN] Attraction name '{name}' from daily plan (day {day_number}) not found in all_spots_object_map. Treating as semantic activity.")
+                    # Treat non-POI activities as semantic rest/leisure time
+                    current_day_spot_objects_raw.append({
+                        "id": f"semantic_activity_{name.replace(' ', '_').lower()}",
+                        "name": name,
+                        "description": "Leisure or semantic activity suggested by AI.",
+                        "estimated_duration": 3,
+                        "location": None
+                    })
 
             # Optimise the route for this day's attractions
             if current_day_spot_objects_raw and len(current_day_spot_objects_raw) > 1:

@@ -719,9 +719,7 @@ class TravelGraph:
             
         # If recommendations haven't been generated yet and this is the initial confirm selection
         if not self.state['ai_recommendation_generated'] and is_confirm_selection:
-            # Update state flags BEFORE generating recommendations
-            self.state['ai_recommendation_generated'] = True
-            self.state['user_input_processed'] = True
+            # (Moved state updates to the end to ensure idempotency if an exception occurs)
             
             selected_attractions = self.state["selected_attractions"]
             total_days = self.state["user_info"].get("days", 1)

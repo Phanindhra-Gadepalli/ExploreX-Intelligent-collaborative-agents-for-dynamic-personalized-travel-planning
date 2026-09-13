@@ -355,7 +355,11 @@ class StrategyAgent:
         
         # Extract specific preferences
         people = user_prefs.get('people', 1)
-        has_kids = user_prefs.get('kids', 'no').lower() == 'yes'
+        kids_val = user_prefs.get('kids', 0)
+        if isinstance(kids_val, str):
+            has_kids = kids_val.lower() in ('yes', 'true')
+        else:
+            has_kids = bool(kids_val)
         health_prefs = user_prefs.get('health', 'good')
         budget = user_prefs.get('budget', 'medium')
         hobbies = user_prefs.get('hobbies', '')

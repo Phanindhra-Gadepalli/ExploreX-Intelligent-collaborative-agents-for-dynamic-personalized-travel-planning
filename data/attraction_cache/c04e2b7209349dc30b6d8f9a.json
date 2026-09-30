@@ -1,0 +1,14 @@
+{
+  "data": {
+    "description": "The Conciergerie is a former courthouse and prison in Paris, France located on the west of the Île de la Cité below the Palais de Justice. It was originally part of the former royal palace, the Palais de la Cité, which also included the Sainte-Chapelle. Two large medieval halls remain from the royal palace. During the French Revolution, 2,781 prisoners, including Marie Antoinette, were imprisoned, tried and sentenced at the Conciergerie then sent to different sites to be executed by the guillotine.",
+    "description_source": "wikipedia",
+    "significance": "Medieval building in Paris, France",
+    "wiki_url": "https://en.wikipedia.org/wiki/Conciergerie",
+    "wiki_thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Paris_Conciergerie_265.jpg/330px-Paris_Conciergerie_265.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "wiki_location": {
+      "lat": 48.8564,
+      "lng": 2.3456
+    }
+  },
+  "ts": 1790751556.111293
+}

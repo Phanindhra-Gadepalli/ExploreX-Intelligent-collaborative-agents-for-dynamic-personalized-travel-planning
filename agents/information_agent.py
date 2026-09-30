@@ -146,50 +146,40 @@ class InformationAgent:
         if not hobbies or hobbies == 'none':
             return []
             
-        # Normalize keywords - expanded to cover OSM tag values, Indian tourism terms, and Geoapify categories
         keyword_map = {
-            'waterfalls': ['water falls', 'waterfalls', 'waterfall', 'falls', 'cascade', 'abhisheka', 'jharna'],
-            'beaches': ['beaches', 'beach', 'sea beach', 'coast', 'coastal', 'shore', 'bay', 'cove', 'lagoon', 'promenade'],
-            'temples': ['temples', 'temple', 'hindu temple', 'place of worship', 'religious', 'spiritual places',
-                        'mandir', 'shrine', 'mosque', 'church', 'gurudwara', 'masjid', 'dargah', 'jain temple',
-                        'buddhist temple', 'pagoda', 'monastery', 'ashram', 'kund', 'ghat', 'gurdwara',
-                        'devalaya', 'devasthan', 'sansthan'],
-            'heritage': ['historic', 'monument', 'fort', 'palace', 'tomb', 'archaeological', 'unesco', 'museum',
-                         'architecture', 'cultural', 'heritage', 'castle', 'memorial', 'ruins', 'citadel',
-                         'fortress', 'bastion', 'rampart', 'haveli', 'mahal', 'qila', 'burj', 'minaret',
-                         'gateway', 'darwaza', 'arch', 'pillar', 'stupa', 'baoli', 'stepwell', 'mausoleum',
-                         'cenotaph', 'cenotaphs', 'chhatri', 'sculpture', 'ancient', 'medieval', 'mughal',
-                         'maratha', 'rajput', 'colonial', 'heritage site', 'world heritage', 'protected site',
-                         'archaeological survey', 'asi site', 'historical', 'antiquity', 'antiquities',
-                         'amphitheater', 'amphitheatre'],
-            'sightseeing': ['sight seeing', 'sightseeing', 'tourist attraction', 'tourism', 'landmark',
-                            'viewpoint', 'famous place', 'iconic site', 'places to visit', 'tourist attractions',
-                            'observation', 'observation deck', 'view point', 'lookout', 'panorama',
-                            'notable building', 'notable_building', 'notable', 'wonders', 'visitor center',
-                            'market', 'bazaar', 'chowk', 'garden', 'park', 'botanical garden', 'zoological',
-                            'zoo', 'aquarium', 'planetarium', 'science center', 'art gallery', 'gallery',
-                            'exhibition', 'cultural center', 'community center', 'stadium', 'arena',
-                            'popular', 'must visit', 'must-visit', 'attraction'],
-            'nature': ['nature', 'forest', 'wildlife', 'national park', 'mountain', 'hill', 'trek', 'hike',
-                       'valley', 'meadow', 'peak', 'ridge', 'plateau', 'sanctuary', 'reserve', 'jungle',
-                       'river', 'lake', 'dam', 'reservoir', 'wetland', 'mangrove', 'grassland', 'dune',
-                       'desert', 'cave', 'gorge', 'cliff', 'rock formation', 'hot spring', 'geyser',
-                       'ecological', 'eco park', 'bird watching', 'adventure'],
+            'nature': ['nature', 'forest', 'wildlife', 'national park', 'mountain', 'hill', 'trek', 'hike', 'valley', 'meadow', 'peak', 'ridge', 'sanctuary', 'reserve', 'jungle', 'river', 'lake', 'waterfall', 'beach', 'eco park'],
+            'history': ['historic', 'monument', 'fort', 'palace', 'tomb', 'archaeological', 'unesco', 'museum', 'castle', 'memorial', 'ruins', 'heritage', 'historical', 'ancient'],
+            'architecture': ['architecture', 'fortress', 'bastion', 'haveli', 'mahal', 'qila', 'minaret', 'gateway', 'darwaza', 'arch', 'pillar', 'stupa', 'baoli', 'stepwell', 'mausoleum', 'sculpture'],
+            'spiritual': ['temple', 'hindu temple', 'place of worship', 'religious', 'spiritual', 'mandir', 'shrine', 'mosque', 'church', 'gurudwara', 'masjid', 'dargah', 'buddhist temple', 'ashram', 'ghat'],
+            'culture': ['culture', 'art gallery', 'gallery', 'exhibition', 'cultural center', 'art', 'traditional'],
+            'food': ['food', 'restaurant', 'cafe', 'street food', 'dining', 'culinary', 'market', 'bazaar', 'chowk'],
+            'photography': ['photography', 'viewpoint', 'observation', 'lookout', 'panorama', 'scenic', 'picturesque', 'sunset', 'sunrise'],
+            'adventure': ['adventure', 'trekking', 'hiking', 'camping', 'safari', 'water sports', 'paragliding', 'climbing'],
+            'shopping': ['shopping', 'mall', 'bazaar', 'market', 'souvenir', 'boutique', 'crafts'],
+            'nightlife': ['nightlife', 'club', 'bar', 'pub', 'lounge', 'night market', 'evening'],
+            'family': ['family', 'zoo', 'aquarium', 'theme park', 'amusement park', 'water park', 'planetarium', 'kids'],
+            'offbeat': ['offbeat', 'hidden gem', 'unexplored', 'local secret', 'quiet', 'secluded']
         }
-
         
-        # Tokenize hobbies robustly
         hobbies_cleaned = hobbies.replace(',', ' ').replace('&', ' ').replace('/', ' ').replace('with', ' ').replace('plus', ' ')
         hobbies_parts = [p.strip() for p in hobbies_cleaned.split()]
         hobbies_rejoined = " ".join(hobbies_parts)
         
-        # Determine which keyword groups the user is interested in
         user_groups = []
         for group_name, keywords in keyword_map.items():
             if any(k in hobbies_rejoined for k in keywords):
                 user_groups.append(group_name)
                 
-        # Combine all relevant text fields into one searchable string for robustness
+        # Support for specific interest weights (e.g., 'photography:90')
+        interest_weights = {}
+        for part in hobbies_parts:
+            if ':' in part:
+                try:
+                    category, weight = part.split(':')
+                    interest_weights[category.lower()] = int(weight)
+                except:
+                    pass
+                    
         a_name = str(attr.get('name', '')).lower()
         a_category = str(attr.get('category', '')).lower()
         a_desc = str(attr.get('description', '')).lower()
@@ -206,6 +196,9 @@ class InformationAgent:
             keywords = keyword_map[group_name]
             if any(k in attr_text_pool for k in keywords):
                 matched_groups.append(group_name)
+                
+        # Include weight mapping
+        attr['_interest_weights'] = interest_weights
                 
         return matched_groups
 
@@ -226,30 +219,58 @@ class InformationAgent:
         return "medium"
 
     def _calculate_score(self, attr, user_prefs, llm_score=0):
-        """Deterministic scoring for an attraction."""
+        """Calculate normalized Match Percentage (0-100)."""
         score = 0
+        max_possible_score = 100
         
-        # 1. Base Quality
+        # 1. Quality (0-20 points)
         quality = self._evaluate_attraction_quality(attr)
         if quality == "low":
-            score -= 1000  # Heavily penalize
-            
-        # 2. Interest Relevance
-        matched_groups = self._heuristic_interest_match(attr, user_prefs)
-        score += (len(matched_groups) * 30)
+            return -1, [] # Discard
         
-        # 3. Source and Popularity
-        if attr.get("source") == "rag":
-            score += 40  # RAG typically holds the best hand-curated places
+        quality_score = 10
+        metadata = attr.get('metadata', {})
+        if metadata.get("wikidata_id") or metadata.get("wikipedia") or attr.get('wikidata_id'):
+            quality_score = 20
+        if attr.get("description") and len(attr.get("description")) > 20:
+            quality_score += 5
             
+        score += min(20, quality_score)
+            
+        # 2. Interest Compatibility (0-40 points)
+        matched_groups = self._heuristic_interest_match(attr, user_prefs)
+        interest_score = 0
+        weights = attr.get('_interest_weights', {})
+        
+        if matched_groups:
+            for group in matched_groups:
+                weight = weights.get(group, 50) # Default weight 50
+                interest_score += (weight / 100) * 20
+        else:
+            interest_score = 5 # Baseline for generic attractions
+            
+        score += min(40, interest_score)
+        
+        # 3. Popularity & Rating (0-20 points)
+        rating_score = 0
         rating = attr.get("rating")
         if rating and isinstance(rating, (int, float)):
-            score += (rating * 5)
-            
-        # 4. LLM Score (0-100)
-        score += (llm_score * 0.5)
+            rating_score = (rating / 5.0) * 15
         
-        return score, matched_groups
+        if attr.get("source") == "rag":
+            rating_score += 5 # RAG sources are highly curated
+            
+        score += min(20, rating_score)
+            
+        # 4. LLM AI Score (0-20 points)
+        llm_normalized = (llm_score / 100.0) * 20 if isinstance(llm_score, (int, float)) else 0
+        score += min(20, llm_normalized)
+        
+        # Normalize to 0-100
+        match_percentage = min(100, max(0, int((score / max_possible_score) * 100)))
+        attr['match_percentage'] = match_percentage
+        
+        return match_percentage, matched_groups
 
     def _rerank_attractions_with_llm(self, attractions_list: list, user_prefs: dict, weather_summary: str = None):
         """Re-rank attractions using an LLM based on user preferences and weather."""
@@ -433,9 +454,9 @@ class InformationAgent:
                     if not hasattr(self, 'retrieval_agent') or self.retrieval_agent is None:
                         self.retrieval_agent = RetrievalAgent()
                     
-                    rag_context = self.retrieval_agent._retrieve_from_rag(city, user_prefs)
+                    rag_context = self.retrieval_agent.retrieve_context(user_prefs, city)
                     
-                    if rag_context and "No relevant travel information found" not in rag_context:
+                    if rag_context and "No additional background knowledge found" not in rag_context and "No destination provided" not in rag_context:
                         print(f"[INFO_AGENT] RAG Context found for {city}. Asking LLM to extract POIs.")
                         if self.llm:
                             prompt = f"""

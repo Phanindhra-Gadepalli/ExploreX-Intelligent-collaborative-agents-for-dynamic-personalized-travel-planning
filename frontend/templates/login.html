@@ -17,7 +17,7 @@
         rel="stylesheet">
     <style>
         :root {
-            --bg: #050914;
+            --bg: #F3F5FA;
             --coral: #FF6A3D;
             --teal: #2DD4BF;
             --violet: #8B5CF6;
@@ -25,10 +25,10 @@
             --sky: #38BDF8;
             --pink: #F472B6;
             --green: #34D399;
-            --glass: rgba(255, 255, 255, .06);
-            --stroke: rgba(255, 255, 255, .12);
-            --txt: #EEF2FF;
-            --muted: rgba(238, 242, 255, .58);
+            --glass: rgba(15, 23, 42, .04);
+            --stroke: rgba(15, 23, 42, .12);
+            --txt: #1B2545;
+            --muted: #47537A;
         }
 
         * {
@@ -40,7 +40,7 @@
         body {
             min-height: 100vh;
             font-family: 'Inter', system-ui, sans-serif;
-            background: var(--bg);
+            background: linear-gradient(180deg, #FAFBFE, #F3F5FA);
             color: var(--txt);
             overflow: hidden auto;
             display: flex;
@@ -54,7 +54,7 @@
             position: fixed;
             inset: 0;
             z-index: 0;
-            opacity: .5;
+            opacity: .35;
         }
 
         /* Aurora */
@@ -75,7 +75,7 @@
         .aurora span:nth-child(1) {
             width: 500px;
             height: 500px;
-            background: rgba(139, 92, 246, .25);
+            background: rgba(139, 92, 246, .14);
             top: -150px;
             left: -100px;
         }
@@ -83,7 +83,7 @@
         .aurora span:nth-child(2) {
             width: 420px;
             height: 420px;
-            background: rgba(45, 212, 191, .2);
+            background: rgba(45, 212, 191, .14);
             bottom: -130px;
             right: -80px;
             animation-delay: -7s;
@@ -92,7 +92,7 @@
         .aurora span:nth-child(3) {
             width: 360px;
             height: 360px;
-            background: rgba(255, 106, 61, .18);
+            background: rgba(240, 84, 42, .12);
             top: 45%;
             left: 55%;
             animation-delay: -13s;
@@ -101,15 +101,20 @@
         .aurora span:nth-child(4) {
             width: 280px;
             height: 280px;
-            background: rgba(56, 189, 248, .15);
+            background: rgba(56, 189, 248, .12);
             top: 20%;
             left: 35%;
             animation-delay: -4s;
         }
 
         @keyframes drift {
-            from { transform: translate(0, 0) scale(1) }
-            to   { transform: translate(55px, 38px) scale(1.18) }
+            from {
+                transform: translate(0, 0) scale(1)
+            }
+
+            to {
+                transform: translate(55px, 38px) scale(1.18)
+            }
         }
 
         /* Route layer */
@@ -125,14 +130,21 @@
         .star {
             position: fixed;
             border-radius: 50%;
-            background: #fff;
+            background: #94A3C0;
             z-index: 2;
             animation: tw 3s ease-in-out infinite;
         }
 
         @keyframes tw {
-            0%, 100% { opacity: .1 }
-            50%       { opacity: .85 }
+
+            0%,
+            100% {
+                opacity: .1
+            }
+
+            50% {
+                opacity: .85
+            }
         }
 
         /* Layout */
@@ -157,7 +169,7 @@
             }
         }
 
-        .stage > section:first-child {
+        .stage>section:first-child {
             min-width: 0;
             overflow: hidden;
         }
@@ -171,34 +183,40 @@
             gap: 0.85rem;
         }
 
-        /* "ExploreX" heading — animated gradient sweep */
         .lx-brand {
             font-family: 'Sora', sans-serif;
             font-weight: 800;
             font-size: clamp(3rem, 6.5vw, 5.2rem);
             letter-spacing: -0.03em;
             line-height: 1;
-            background: linear-gradient(92deg,
-                var(--teal)   0%,
-                var(--violet) 28%,
-                var(--gold)   55%,
-                var(--coral)  78%,
-                var(--teal)   100%);
-            background-size: 250% auto;
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-            filter:
-                drop-shadow(0 0 32px rgba(45, 212, 191, 0.45))
-                drop-shadow(0 0 72px rgba(139, 92, 246, 0.25))
-                drop-shadow(0 2px 4px rgba(0,0,0,0.5));
-            animation: brandSweep 5s linear infinite;
+            color: #1B2545;
+            display: flex;
+            align-items: center;
         }
 
-        @keyframes brandSweep {
-            0%   { background-position: 0% center; }
-            100% { background-position: 250% center; }
+        .earth-o {
+            display: inline-block;
+            width: 0.85em;
+            height: 0.85em;
+            border-radius: 50%;
+            margin: 0 0.05em;
+            background: url('https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Land_ocean_ice_2048.jpg/1024px-Land_ocean_ice_2048.jpg');
+            background-size: auto 100%;
+            box-shadow: inset -15px -8px 20px rgba(0, 0, 0, 0.65), inset 0px 0px 8px rgba(255, 255, 255, 0.4), 0 0 20px rgba(56, 189, 248, 0.4);
+            animation: rotateEarth 15s linear infinite;
         }
+
+        @keyframes rotateEarth {
+            from {
+                background-position-x: 0;
+            }
+
+            to {
+                background-position-x: 200%;
+            }
+        }
+
+
 
         /* Tagline */
         .lx-tagline {
@@ -225,8 +243,8 @@
             gap: 0.38rem;
             padding: 0.28rem 0.75rem 0.28rem 0.55rem;
             border-radius: 999px;
-            background: rgba(255, 255, 255, 0.055);
-            border: 1px solid rgba(255, 255, 255, 0.13);
+            background: #fff;
+            border: 1px solid rgba(15, 23, 42, 0.13);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
             font-family: 'JetBrains Mono', monospace;
@@ -234,27 +252,58 @@
             font-weight: 600;
             letter-spacing: 0.06em;
             text-transform: uppercase;
-            color: rgba(238, 242, 255, 0.82);
+            color: #1B2545;
             cursor: default;
             animation: chipFloat 4s ease-in-out infinite;
             transition: transform 0.25s, box-shadow 0.25s, background 0.25s;
         }
 
         .lx-chip:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: #F6F8FC;
             transform: translateY(-3px);
         }
 
         /* staggered float delays — 5 chips: RAG violet, Route coral, Chat gold, Budget green, MAS pink */
-        .lx-chip:nth-child(1) { animation-delay: 0s;    box-shadow: 0 4px 18px rgba(139,92,246,0.22);  border-color: rgba(139,92,246,0.40); }
-        .lx-chip:nth-child(2) { animation-delay: 0.5s;  box-shadow: 0 4px 18px rgba(255,106,61,0.22);  border-color: rgba(255,106,61,0.40); }
-        .lx-chip:nth-child(3) { animation-delay: 1.0s;  box-shadow: 0 4px 18px rgba(251,191,36,0.22);  border-color: rgba(251,191,36,0.40); }
-        .lx-chip:nth-child(4) { animation-delay: 1.5s;  box-shadow: 0 4px 18px rgba(52,211,153,0.22);  border-color: rgba(52,211,153,0.40); }
-        .lx-chip:nth-child(5) { animation-delay: 2.0s;  box-shadow: 0 4px 18px rgba(244,114,182,0.22); border-color: rgba(244,114,182,0.40); }
+        .lx-chip:nth-child(1) {
+            animation-delay: 0s;
+            box-shadow: 0 4px 18px rgba(139, 92, 246, 0.22);
+            border-color: rgba(139, 92, 246, 0.40);
+        }
+
+        .lx-chip:nth-child(2) {
+            animation-delay: 0.5s;
+            box-shadow: 0 4px 18px rgba(255, 106, 61, 0.22);
+            border-color: rgba(255, 106, 61, 0.40);
+        }
+
+        .lx-chip:nth-child(3) {
+            animation-delay: 1.0s;
+            box-shadow: 0 4px 18px rgba(251, 191, 36, 0.22);
+            border-color: rgba(251, 191, 36, 0.40);
+        }
+
+        .lx-chip:nth-child(4) {
+            animation-delay: 1.5s;
+            box-shadow: 0 4px 18px rgba(52, 211, 153, 0.22);
+            border-color: rgba(52, 211, 153, 0.40);
+        }
+
+        .lx-chip:nth-child(5) {
+            animation-delay: 2.0s;
+            box-shadow: 0 4px 18px rgba(244, 114, 182, 0.22);
+            border-color: rgba(244, 114, 182, 0.40);
+        }
 
         @keyframes chipFloat {
-            0%, 100% { transform: translateY(0px); }
-            50%       { transform: translateY(-4px); }
+
+            0%,
+            100% {
+                transform: translateY(0px);
+            }
+
+            50% {
+                transform: translateY(-4px);
+            }
         }
 
         .lx-chip-dot {
@@ -272,12 +321,12 @@
             height: 420px;
             border-radius: 20px;
             overflow: hidden;
-            border: 1px solid rgba(45, 212, 191, 0.22);
+            border: 1px solid rgba(13, 148, 136, 0.25);
             box-shadow:
                 0 0 0 1px rgba(255, 255, 255, 0.04) inset,
-                0 28px 70px rgba(0, 0, 0, 0.65),
-                0 0 60px rgba(45, 212, 191, 0.07);
-            background: #060d1c;
+                0 18px 45px rgba(27, 37, 69, .12),
+                0 0 40px rgba(13, 148, 136, 0.05);
+            background: #FFFFFF;
         }
 
         #lx-city-canvas {
@@ -294,26 +343,37 @@
             border-radius: 20px;
             background:
                 linear-gradient(to right,
-                    rgba(5,9,20,0.6) 0%,
+                    rgba(243, 245, 250, 0.9) 0%,
                     transparent 16%,
                     transparent 84%,
-                    rgba(5,9,20,0.6) 100%),
+                    rgba(243, 245, 250, 0.9) 100%),
                 linear-gradient(to bottom,
-                    rgba(5,9,20,0.5) 0%,
+                    rgba(243, 245, 250, 0.85) 0%,
                     transparent 14%,
                     transparent 78%,
-                    rgba(5,9,20,0.75) 100%);
+                    rgba(243, 245, 250, 0.95) 100%);
         }
 
         @media(max-width:740px) {
-            .lx-left    { align-items: center; }
-            .lx-tagline { text-align: center; }
-            .lx-map-wrap { height: 260px; }
+            .lx-left {
+                align-items: center;
+            }
+
+            .lx-tagline {
+                text-align: center;
+            }
+
+            .lx-map-wrap {
+                height: 260px;
+            }
         }
 
         @media(min-width:741px) and (max-width:1099px) {
-            .lx-map-wrap { height: 340px; }
+            .lx-map-wrap {
+                height: 340px;
+            }
         }
+
         /* ═══════════════════════════════════════════════════════════════
            END NEW LEFT PANEL
         ═══════════════════════════════════════════════════════════════ */
@@ -321,13 +381,13 @@
         /* Login card — UNCHANGED ──────────────────────────────────── */
         .login-card {
             position: relative;
-            background: linear-gradient(150deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .03));
+            background: #FFFFFF;
             border: 1px solid var(--stroke);
             border-radius: 28px;
             padding: 2.5rem 2.3rem;
             backdrop-filter: blur(28px);
             -webkit-backdrop-filter: blur(28px);
-            box-shadow: 0 40px 90px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .11);
+            box-shadow: 0 24px 60px rgba(27, 37, 69, .12), inset 0 1px 0 rgba(255, 255, 255, .8);
         }
 
         .login-card::before {
@@ -337,7 +397,7 @@
             border-radius: 28px;
             padding: 1px;
             z-index: -1;
-            background: linear-gradient(135deg, rgba(45, 212, 191, .55), transparent 40%, transparent 60%, rgba(255, 106, 61, .55));
+            background: linear-gradient(135deg, rgba(13, 148, 136, .4), transparent 40%, transparent 60%, rgba(240, 84, 42, .4));
             -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
             -webkit-mask-composite: xor;
             mask-composite: exclude;
@@ -351,7 +411,7 @@
             transform: translateX(-50%);
             width: 60%;
             height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(45, 212, 191, .6), transparent);
+            background: linear-gradient(90deg, transparent, rgba(13, 148, 136, .4), transparent);
         }
 
         /* RAG badge */
@@ -361,9 +421,9 @@
             gap: .4rem;
             padding: .28rem .7rem;
             border-radius: 999px;
-            background: rgba(139, 92, 246, .12);
-            border: 1px solid rgba(139, 92, 246, .3);
-            color: #C4B5FD;
+            background: rgba(124, 58, 237, .08);
+            border: 1px solid rgba(124, 58, 237, .3);
+            color: #7C3AED;
             font-size: .72rem;
             font-weight: 600;
             font-family: 'JetBrains Mono', monospace;
@@ -405,7 +465,7 @@
 
         .fld input {
             width: 100%;
-            background: rgba(5, 9, 20, .65);
+            background: #F6F8FC;
             border: 1px solid var(--stroke);
             color: var(--txt);
             border-radius: 14px;
@@ -417,13 +477,13 @@
         }
 
         .fld input::placeholder {
-            color: rgba(238, 242, 255, .35);
+            color: rgba(27, 37, 69, .35);
         }
 
         .fld input:focus {
             border-color: var(--teal);
-            box-shadow: 0 0 0 4px rgba(45, 212, 191, .13);
-            background: rgba(5, 9, 20, .8);
+            box-shadow: 0 0 0 4px rgba(13, 148, 136, .12);
+            background: #FFFFFF;
         }
 
         /* Button */
@@ -438,18 +498,16 @@
             cursor: pointer;
             position: relative;
             overflow: hidden;
-            background: linear-gradient(92deg, var(--teal), var(--gold) 50%, var(--coral));
-            background-size: 200% auto;
+            background: #F0542A;
             transition: .35s;
-            box-shadow: 0 10px 35px rgba(45, 212, 191, .28);
+            box-shadow: 0 10px 28px rgba(240, 84, 42, .30);
             font-family: 'Sora', sans-serif;
             letter-spacing: .01em;
         }
 
         .btn-launch:hover {
-            background-position: right center;
             transform: translateY(-2px);
-            box-shadow: 0 18px 45px rgba(251, 191, 36, .32);
+            box-shadow: 0 16px 38px rgba(240, 84, 42, .36);
         }
 
         .btn-launch:disabled {
@@ -465,14 +523,20 @@
             left: -80%;
             width: 50%;
             height: 100%;
-            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, .5), transparent);
+            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, .35), transparent);
             transform: skewX(-20deg);
             animation: sheen 3.5s infinite;
         }
 
         @keyframes sheen {
-            0%       { left: -80% }
-            55%, 100% { left: 130% }
+            0% {
+                left: -80%
+            }
+
+            55%,
+            100% {
+                left: 130%
+            }
         }
 
         /* Divider */
@@ -491,7 +555,7 @@
             content: '';
             flex: 1;
             height: 1px;
-            background: linear-gradient(90deg, transparent, var(--stroke), transparent);
+            background: linear-gradient(90deg, transparent, rgba(15, 23, 42, .12), transparent);
         }
 
         /* Stats */
@@ -503,7 +567,7 @@
 
         .stat {
             text-align: center;
-            background: rgba(255, 255, 255, .04);
+            background: #F6F8FC;
             border: 1px solid var(--stroke);
             border-radius: 14px;
             padding: .8rem .4rem;
@@ -519,7 +583,7 @@
             transform: translateX(-50%);
             width: 40%;
             height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .25), transparent);
+            background: linear-gradient(90deg, transparent, rgba(15, 23, 42, .10), transparent);
         }
 
         .stat b {
@@ -527,10 +591,7 @@
             font-family: 'Sora', sans-serif;
             font-size: 1.15rem;
             font-weight: 800;
-            background: linear-gradient(92deg, var(--teal), var(--gold));
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
+            color: #F0542A;
             margin-bottom: .2rem;
         }
 
@@ -545,11 +606,11 @@
         /* Error */
         .err {
             display: none;
-            color: #FCA5A5;
+            color: #DC2626;
             font-size: .8rem;
             margin: -.2rem 0 .8rem;
-            background: rgba(239, 68, 68, .08);
-            border: 1px solid rgba(239, 68, 68, .2);
+            background: rgba(220, 38, 38, .06);
+            border: 1px solid rgba(220, 38, 38, .25);
             border-radius: 10px;
             padding: .55rem .8rem;
         }
@@ -562,7 +623,7 @@
             right: 0;
             text-align: center;
             z-index: 10;
-            color: rgba(238, 242, 255, .3);
+            color: rgba(27, 37, 69, .4);
             font-size: .68rem;
             letter-spacing: .06em;
             font-family: 'JetBrains Mono', monospace;
@@ -585,6 +646,382 @@
     </style>
     <base target="_blank">
     <base target="_blank">
+    <base target="_blank">
+
+    <style id="explorex-storyboard-login-overrides">
+        /* ══════════════════════════════════════════════════════════════
+           ExploreX Login — Two-Panel Premium Redesign
+           Left: Cinematic dark panel with revolving 3-D Earth (Three.js)
+           Right: Glassmorphism login card
+        ══════════════════════════════════════════════════════════════ */
+
+        /* 1 ─ Reset body to a clean dark two-column shell */
+        * { box-sizing: border-box; }
+
+        body {
+            min-height: 100vh !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            background: #060F1E !important;
+            display: flex !important;
+            align-items: stretch !important;
+            justify-content: flex-start !important;
+            font-family: 'Inter', system-ui, sans-serif !important;
+        }
+
+        /* Hide old decorative elements */
+        #neural-canvas, .aurora, .route-layer, .star, .lx-architecture, .foot {
+            display: none !important;
+        }
+
+        /* 2 ─ Stage becomes the two-column wrapper */
+        .stage {
+            position: relative !important;
+            z-index: 10 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            height: 100vh !important;
+            min-height: 100vh !important;
+            display: flex !important;
+            align-items: stretch !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            gap: 0 !important;
+            grid-template-columns: unset !important;
+        }
+
+        /* 3 ─ LEFT PANEL — dark cinematic Earth panel */
+        .lx-left {
+            position: relative !important;
+            width: 55% !important;
+            height: 100vh !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            background: linear-gradient(135deg, #060F1E 0%, #0C1B33 40%, #071A32 100%) !important;
+            overflow: hidden !important;
+            flex-shrink: 0 !important;
+            pointer-events: auto !important;
+            inset: unset !important;
+        }
+
+        /* Subtle grid overlay on the dark panel */
+        .lx-left::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(56,189,248,.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(56,189,248,.04) 1px, transparent 1px);
+            background-size: 55px 55px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Glow orbs behind the Earth */
+        .lx-left::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 480px;
+            height: 480px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(14,165,233,.22) 0%, rgba(56,189,248,.08) 45%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Earth canvas — covers the left panel */
+        #login-earth-canvas {
+            position: absolute !important;
+            inset: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            z-index: 1 !important;
+            display: block !important;
+        }
+
+        /* Brand text overlay on top of the Earth */
+        .lx-earth-overlay {
+            position: relative;
+            z-index: 2;
+            text-align: center;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            height: 100%;
+            padding-bottom: 3.5rem;
+        }
+
+        /* Hide original left-panel sub-elements (keep only our new overlay) */
+        .lx-left > .lx-brand,
+        .lx-left > .lx-tagline,
+        .lx-left > .lx-chips,
+        .lx-left > .lx-map-wrap {
+            display: none !important;
+        }
+
+        /* Brand name at bottom of Earth panel */
+        .login-earth-brand {
+            font-family: 'Sora', sans-serif;
+            font-weight: 800;
+            font-size: clamp(2.4rem, 4.5vw, 3.6rem);
+            letter-spacing: -0.04em;
+            color: #fff;
+            text-shadow: 0 4px 28px rgba(0,0,0,.55);
+            line-height: 1;
+            margin-bottom: .5rem;
+        }
+
+        .login-earth-brand span {
+            color: #22D3EE;
+            text-shadow: 0 0 32px rgba(34,211,238,.55);
+        }
+
+        .login-earth-tagline {
+            font-size: .95rem;
+            font-weight: 500;
+            color: rgba(255,255,255,.60);
+            letter-spacing: .01em;
+            margin-bottom: 1.4rem;
+        }
+
+        /* Tech pill badges row */
+        .login-earth-badges {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: .45rem;
+        }
+
+        .login-earth-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+            padding: .32rem .75rem;
+            border: 1px solid rgba(148,163,184,.22);
+            border-radius: 999px;
+            background: rgba(255,255,255,.07);
+            color: rgba(255,255,255,.78);
+            font-size: .72rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            backdrop-filter: blur(8px);
+        }
+
+        .login-earth-badge i {
+            color: #38BDF8;
+            font-size: .68rem;
+        }
+
+        /* 4 ─ RIGHT PANEL — scrollable login area */
+        .login-card {
+            flex: 1 !important;
+            width: 45% !important;
+            min-width: 320px !important;
+            height: 100vh !important;
+            overflow-y: auto !important;
+            border-radius: 0 !important;
+            background: #F8FAFD !important;
+            border: none !important;
+            border-left: 1px solid rgba(15,23,42,.08) !important;
+            box-shadow: none !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            padding: 2.5rem 2.8rem !important;
+            backdrop-filter: none !important;
+        }
+
+        .login-card::before,
+        .login-card::after {
+            display: none !important;
+        }
+
+        /* Inner content max-width constraint */
+        .login-card > * {
+            max-width: 380px;
+            width: 100%;
+        }
+
+        /* Realign all direct children to center column */
+        .login-card {
+            align-items: center !important;
+        }
+
+        /* Brand inside login card */
+        .lx-login-brand {
+            font-family: 'Sora', sans-serif !important;
+            font-weight: 800 !important;
+            font-size: 2rem !important;
+            letter-spacing: -.045em !important;
+            color: #0F172A !important;
+            text-align: center !important;
+            line-height: 1 !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            margin-bottom: .3rem !important;
+        }
+
+        .lx-login-brand .earth-o-login {
+            width: .80em !important;
+            height: .80em !important;
+            margin: 0 .04em !important;
+            vertical-align: middle !important;
+        }
+
+        .lx-login-tagline {
+            text-align: center !important;
+            margin: .4rem 0 1.1rem !important;
+            color: #64748B !important;
+            font-size: .82rem !important;
+            font-weight: 500 !important;
+        }
+
+        /* Sign In / Sign Up switcher */
+        .login-switcher {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: .25rem !important;
+            padding: .25rem !important;
+            background: #EEF3F9 !important;
+            border-radius: 12px !important;
+            margin-bottom: 1.25rem !important;
+        }
+
+        .login-mode {
+            border: 0 !important;
+            background: transparent !important;
+            color: #64748B !important;
+            border-radius: 9px !important;
+            padding: .58rem !important;
+            font-size: .82rem !important;
+            font-weight: 700 !important;
+            cursor: pointer !important;
+        }
+
+        .login-mode.active {
+            background: #fff !important;
+            color: #0F6CBD !important;
+            box-shadow: 0 2px 8px rgba(15,23,42,.08) !important;
+        }
+
+        /* RAG badge */
+        .rag-badge {
+            margin: 0 auto 1rem !important;
+            display: flex !important;
+            width: max-content !important;
+            background: rgba(14,165,233,.08) !important;
+            border-color: rgba(14,165,233,.20) !important;
+            color: #0369A1 !important;
+        }
+
+        /* Header */
+        .lc-header {
+            text-align: center !important;
+            margin-bottom: 1.15rem !important;
+        }
+
+        .lc-title {
+            font-size: 1.32rem !important;
+            color: #15233D !important;
+        }
+
+        .lc-sub {
+            color: #64748B !important;
+            font-size: .82rem !important;
+        }
+
+        /* Inputs */
+        .fld {
+            margin-bottom: .72rem !important;
+        }
+
+        .fld input {
+            background: #F8FAFC !important;
+            border-color: #D8E1EC !important;
+            border-radius: 11px !important;
+            padding: .78rem 1rem .78rem 2.55rem !important;
+        }
+
+        .fld input:focus {
+            border-color: #0EA5E9 !important;
+            box-shadow: 0 0 0 4px rgba(14,165,233,.10) !important;
+            background: #fff !important;
+        }
+
+        /* Submit button */
+        .btn-launch {
+            background: linear-gradient(135deg, #0EA5E9, #1477D4) !important;
+            color: #fff !important;
+            border-radius: 11px !important;
+            padding: .82rem !important;
+            box-shadow: 0 10px 26px rgba(14,165,233,.26) !important;
+            font-size: .96rem !important;
+        }
+
+        /* Divider */
+        .lc-div {
+            color: #94A3B8 !important;
+            margin: 1rem 0 .65rem !important;
+        }
+
+        /* Stats */
+        .stat b { color: #0F6CBD !important; }
+        .stat small { color: #64748B !important; }
+
+        /* Footnote */
+        .login-footnote {
+            margin-top: .9rem;
+            text-align: center;
+            font-size: .68rem;
+            color: #94A3B8;
+        }
+
+        .login-footnote i {
+            margin-right: .3rem;
+            color: #10B981;
+        }
+
+        /* 5 ─ Responsive: stack vertically on small screens */
+        @media (max-width: 840px) {
+            .stage {
+                flex-direction: column !important;
+                height: auto !important;
+            }
+
+            .lx-left {
+                width: 100% !important;
+                height: 38vh !important;
+                min-height: 260px !important;
+            }
+
+            .lx-earth-overlay {
+                padding-bottom: 1.5rem;
+            }
+
+            .login-earth-brand { font-size: 2rem; }
+            .login-earth-badges { display: none; }
+
+            .login-card {
+                width: 100% !important;
+                height: auto !important;
+                min-height: 62vh !important;
+                border-left: none !important;
+                border-top: 1px solid rgba(15,23,42,.08) !important;
+                padding: 1.8rem 1.4rem !important;
+                justify-content: flex-start !important;
+            }
+        }
+    </style>
+
+
 </head>
 
 <body>
@@ -603,11 +1040,11 @@
             </filter>
         </defs>
         <path id="arc1" d="M-60 750 C 280 560, 600 880, 880 620 S 1280 310, 1520 430" fill="none"
-            stroke="rgba(45,212,191,0.13)" stroke-width="1.5" stroke-dasharray="3 10" />
+            stroke="rgba(13,148,136,0.28)" stroke-width="1.5" stroke-dasharray="3 10" />
         <path id="arc2" d="M-60 240 C 240 410, 680 130, 1000 330 S 1320 660, 1520 550" fill="none"
-            stroke="rgba(251,191,36,0.12)" stroke-width="1.5" stroke-dasharray="3 10" />
+            stroke="rgba(217,119,6,0.24)" stroke-width="1.5" stroke-dasharray="3 10" />
         <path id="arc3" d="M200 900 C 450 700, 800 800, 1100 550 S 1400 300, 1520 200" fill="none"
-            stroke="rgba(139,92,246,0.1)" stroke-width="1.2" stroke-dasharray="2 12" />
+            stroke="rgba(124,58,237,0.22)" stroke-width="1.2" stroke-dasharray="2 12" />
         <circle r="5" fill="#FFE9A8" filter="url(#glow)">
             <animateMotion dur="10s" repeatCount="indefinite">
                 <mpath href="#arc1" />
@@ -646,50 +1083,38 @@
     <div class="star" style="width:2px;height:2px;top:48%;left:88%;animation-delay:-0.3s"></div>
 
     <main class="stage">
-        <!-- LEFT: Redesigned panel -->
+        <!-- LEFT: Redesigned panel (Earth) -->
         <section class="lx-left">
-            <div class="lx-brand">ExploreX</div>
-            <div class="lx-tagline">Intelligent Collaborative Agents For Dynamic Personalized Travel Planning</div>
-
-            <!-- Agent chips — 5 agents (no GenAI) -->
-            <div class="lx-chips">
-                <div class="lx-chip">
-                    <span class="lx-chip-dot" style="color:#8B5CF6;background:#8B5CF6;"></span>
-                    RAG Agent
+            <canvas id="login-earth-canvas"></canvas>
+            
+            <!-- Floating overlay over Earth -->
+            <div class="lx-earth-overlay">
+                <div class="login-earth-brand">
+                    ExploreX
                 </div>
-                <div class="lx-chip">
-                    <span class="lx-chip-dot" style="color:#FF6A3D;background:#FF6A3D;"></span>
-                    Route Agent
+                <div class="login-earth-tagline">AI-Powered Personalized Travel Planning</div>
+                
+                <!-- Pill badges row -->
+                <div class="login-earth-badges">
+                    <div class="login-earth-badge"><i class="fas fa-sparkles"></i> GenAI</div>
+                    <div class="login-earth-badge"><i class="fas fa-database"></i> ChromaDB RAG</div>
+                    <div class="login-earth-badge"><i class="fas fa-network-wired"></i> 9 Multi-Agent Swarm</div>
                 </div>
-                <div class="lx-chip">
-                    <span class="lx-chip-dot" style="color:#FBBF24;background:#FBBF24;"></span>
-                    Chat Agent
-                </div>
-                <div class="lx-chip">
-                    <span class="lx-chip-dot" style="color:#34D399;background:#34D399;"></span>
-                    Budget Agent
-                </div>
-                <div class="lx-chip">
-                    <span class="lx-chip-dot" style="color:#F472B6;background:#F472B6;"></span>
-                    Multi-Agent System
-                </div>
-            </div>
-
-            <div class="lx-map-wrap">
-                <canvas id="lx-city-canvas"></canvas>
-                <div class="lx-map-overlay"></div>
             </div>
         </section>
 
         <!-- RIGHT: Login card — UNCHANGED -->
         <section class="login-card">
-            <div class="rag-badge">
-                <i class="fas fa-network-wired"></i> RAG + GenAI + 9-Agent Orchestration
+            <div class="rag-badge"><i class="fas fa-sparkles"></i> AI-powered travel planning</div>
+            <div class="lx-login-brand">Expl<span class="earth-o earth-o-login"></span>reX</div>
+            <div class="lx-login-tagline">Plan less. Explore more.</div>
+            <div class="login-switcher" aria-label="Authentication mode">
+                <button type="button" class="login-mode active">Sign In</button>
+                <button type="button" class="login-mode">Sign Up</button>
             </div>
             <div class="lc-header">
-                <div class="lc-title">Begin your journey &#x2708;&#xFE0F;</div>
-                <div class="lc-sub">Sign in and let the agent swarm plan your trip &mdash; India or anywhere worldwide.
-                </div>
+                <div class="lc-title">Welcome back 👋</div>
+                <div class="lc-sub">Continue your personalized travel planning journey.</div>
             </div>
             <form id="login-form" novalidate>
                 <div class="fld">
@@ -713,10 +1138,166 @@
                 <div class="stat"><b>9</b><small>AI Agents<br>Deployed</small></div>
                 <div class="stat"><b>&lt;2 min</b><small>To a Full<br>Trip Plan</small></div>
             </div>
+            <div class="login-footnote"><i class="fas fa-lock"></i> Your travel preferences stay with your ExploreX
+                session.</div>
         </section>
     </main>
 
-    <div class="foot">EXPLOREX &middot; INTELLIGENT COLLABORATIVE AGENTS FOR DYNAMIC PERSONALIZED TRAVEL PLANNING</div>
+    <style>
+        .lx-architecture {
+            width: 100%;
+            max-width: 1180px;
+            margin: 4rem auto;
+            position: relative;
+            z-index: 10;
+            padding: 0 2rem;
+            text-align: center;
+        }
+
+        .lx-arch-title {
+            font-family: 'Sora', sans-serif;
+            font-weight: 700;
+            font-size: 2rem;
+            color: #1B2545;
+            margin-bottom: 3rem;
+        }
+
+        .lx-arch-flow {
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .lx-arch-node {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            border-radius: 16px;
+            padding: 1.5rem;
+            width: 160px;
+            box-shadow: 0 8px 32px rgba(15, 23, 42, 0.05);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .lx-arch-node:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(15, 23, 42, 0.1);
+        }
+
+        .lx-arch-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #2DD4BF, #38BDF8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .lx-arch-node:nth-child(2) .lx-arch-icon {
+            background: linear-gradient(135deg, #8B5CF6, #F472B6);
+            -webkit-background-clip: text;
+        }
+
+        .lx-arch-node:nth-child(3) .lx-arch-icon {
+            background: linear-gradient(135deg, #FBBF24, #FF6A3D);
+            -webkit-background-clip: text;
+        }
+
+        .lx-arch-node:nth-child(4) .lx-arch-icon {
+            background: linear-gradient(135deg, #34D399, #10B981);
+            -webkit-background-clip: text;
+        }
+
+        .lx-arch-node:nth-child(5) .lx-arch-icon {
+            background: linear-gradient(135deg, #0EA5E9, #2563EB);
+            -webkit-background-clip: text;
+        }
+
+        .lx-arch-node:nth-child(6) .lx-arch-icon {
+            background: linear-gradient(135deg, #6366F1, #8B5CF6);
+            -webkit-background-clip: text;
+        }
+
+        .lx-arch-label {
+            font-weight: 700;
+            font-size: 0.9rem;
+            color: #1B2545;
+            margin-bottom: 0.5rem;
+        }
+
+        .lx-arch-desc {
+            font-size: 0.75rem;
+            color: #47537A;
+            line-height: 1.4;
+        }
+
+        .lx-arch-arrow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #94A3C0;
+            font-size: 1.5rem;
+            padding-top: 2rem;
+        }
+
+        @media(max-width:900px) {
+            .lx-arch-arrow {
+                display: none;
+            }
+
+            .lx-arch-node {
+                width: 140px;
+            }
+        }
+    </style>
+
+    <section class="lx-architecture">
+        <h2 class="lx-arch-title">How ExploreX Works</h2>
+        <div class="lx-arch-flow">
+            <div class="lx-arch-node">
+                <i class="fas fa-comment-dots lx-arch-icon"></i>
+                <div class="lx-arch-label">User Query</div>
+                <div class="lx-arch-desc">Understands travel needs</div>
+            </div>
+            <div class="lx-arch-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="lx-arch-node">
+                <i class="fas fa-robot lx-arch-icon"></i>
+                <div class="lx-arch-label">Multi-Agent System</div>
+                <div class="lx-arch-desc">Specialized AI Agents</div>
+            </div>
+            <div class="lx-arch-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="lx-arch-node">
+                <i class="fas fa-network-wired lx-arch-icon"></i>
+                <div class="lx-arch-label">RAG Pipeline</div>
+                <div class="lx-arch-desc">Retrieves relevant information</div>
+            </div>
+            <div class="lx-arch-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="lx-arch-node">
+                <i class="fas fa-database lx-arch-icon"></i>
+                <div class="lx-arch-label">Vector Database</div>
+                <div class="lx-arch-desc">Chroma DB Embeddings</div>
+            </div>
+            <div class="lx-arch-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="lx-arch-node">
+                <i class="fas fa-cloud lx-arch-icon"></i>
+                <div class="lx-arch-label">Real-Time Data</div>
+                <div class="lx-arch-desc">Attractions, Hotels, Weather</div>
+            </div>
+            <div class="lx-arch-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="lx-arch-node">
+                <i class="fas fa-map-marked-alt lx-arch-icon"></i>
+                <div class="lx-arch-label">Personalized Itinerary</div>
+                <div class="lx-arch-desc">Optimized travel plan</div>
+            </div>
+        </div>
+    </section>
+
+    <div class="foot">EXPLOREX &middot; AI-POWERED PERSONALIZED TRAVEL PLANNING</div>
 
     <script>
         /* ── Neural network animation (unchanged) ──────────────────────── */
@@ -744,7 +1325,7 @@
                         var d = Math.sqrt(dx * dx + dy * dy);
                         if (d < 160) {
                             ctx.beginPath();
-                            ctx.strokeStyle = 'rgba(45,212,191,' + (0.12 * (1 - d / 160)) + ')';
+                            ctx.strokeStyle = 'rgba(13,148,136,' + (0.16 * (1 - d / 160)) + ')';
                             ctx.lineWidth = .6;
                             ctx.moveTo(nodes[i].x, nodes[i].y);
                             ctx.lineTo(nodes[j].x, nodes[j].y);
@@ -812,642 +1393,88 @@
         });
 
         /* ── AI-Themed Animated City Map ──────────────────────────────── */
-        (function () {
-            'use strict';
-
-            var canvas = document.getElementById('lx-city-canvas');
+        // (Removed in favor of 3D Earth)
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        /* ── 3D Rotating Earth (Three.js) ──────────────────────────────── */
+        (function() {
+            var canvas = document.getElementById('login-earth-canvas');
             if (!canvas) return;
-            var ctx = canvas.getContext('2d');
-            var CW = 0, CH = 0;
 
-            /* ── Brand palette ──────────────────────────────────────────── */
-            var P = {
-                teal:   '#2DD4BF', violet: '#8B5CF6', gold:   '#FBBF24',
-                coral:  '#FF6A3D', sky:    '#38BDF8', pink:   '#F472B6',
-                green:  '#34D399', purple: '#A78BFA'
-            };
-            var ALL_COLORS = [P.teal, P.violet, P.gold, P.coral, P.sky, P.pink, P.green, P.purple];
+            var scene = new THREE.Scene();
+            
+            // Camera
+            var camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+            camera.position.z = 2.8;
+            camera.position.x = -0.2; // slight offset to balance text
 
-            /* ── AI Agent definitions ────────────────────────────────────── */
-            var AGENT_DEFS = [
-                { name: 'RAG',    color: P.violet, speed: 195 },
-                { name: 'GenAI',  color: P.teal,   speed: 215 },
-                { name: 'Route',  color: P.coral,  speed: 185 },
-                { name: 'Chat',   color: P.gold,   speed: 230 },
-                { name: 'Budget', color: P.green,  speed: 200 },
-                { name: 'MAS',    color: P.pink,   speed: 175 }
-            ];
+            // Renderer
+            var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+            renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-            /* ── Tech labels at major intersections ─────────────────────── */
-            var TECH = ['AI','ML','RAG','LLM','NLP','DL','RL','CNN','GPT','BERT','AGI','MAS','KNN','GAN','SVM'];
+            // Textures
+            var textureLoader = new THREE.TextureLoader();
+            // Use high-res earth map
+            textureLoader.setCrossOrigin('Anonymous');
+            var earthTexture = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg');
+            
+            // Earth Sphere
+            var earthGeometry = new THREE.SphereGeometry(1, 64, 64);
+            var earthMaterial = new THREE.MeshPhongMaterial({
+                map: earthTexture,
+                specular: new THREE.Color(0x333333),
+                shininess: 15,
+            });
+            var earth = new THREE.Mesh(earthGeometry, earthMaterial);
+            // Tilt the earth slightly
+            earth.rotation.z = 23.5 * Math.PI / 180;
+            scene.add(earth);
 
-            /* ── City data ───────────────────────────────────────────────── */
-            var gNodes = [], gEdges = [], gParks = [], gWater = [], gBuildings = [];
-            var edgeColors = [];
+            // Atmosphere Glow
+            var atmosGeometry = new THREE.SphereGeometry(1.05, 64, 64);
+            var atmosMaterial = new THREE.MeshBasicMaterial({
+                color: 0x0ea5e9,
+                transparent: true,
+                opacity: 0.12,
+                blending: THREE.AdditiveBlending,
+                side: THREE.BackSide
+            });
+            var atmosphere = new THREE.Mesh(atmosGeometry, atmosMaterial);
+            scene.add(atmosphere);
 
-            /* ── Camera ─────────────────────────────────────────────────── */
-            var cam = { x: 800, y: 600, tx: 800, ty: 600 };
+            // Lights
+            var ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
+            scene.add(ambientLight);
 
-            /* ── Runtime arrays ─────────────────────────────────────────── */
-            var agents = [], packets = [], particles = [], rings = [];
-            var ringTimer = 0, lastTs = null;
+            var directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            directionalLight.position.set(5, 3, 5);
+            scene.add(directionalLight);
+            
+            // Backlight for edge rim
+            var backLight = new THREE.DirectionalLight(0x38bdf8, 0.7);
+            backLight.position.set(-5, 3, -5);
+            scene.add(backLight);
 
-            /* ─────────────────────────────────────────────────────────────
-               Utilities
-            ───────────────────────────────────────────────────────────── */
-            function rnd(a, b)   { return a + Math.random() * (b - a); }
-            function lrp(a, b, t){ return a + (b - a) * t; }
-            function sx(wx)      { return (wx - cam.x) + CW * 0.5; }
-            function sy(wy)      { return (wy - cam.y) + CH * 0.5; }
-            function offScr(x1, y1, x2, y2) {
-                var M = 44;
-                return Math.max(x1, x2) < -M || Math.min(x1, x2) > CW + M ||
-                       Math.max(y1, y2) < -M || Math.min(y1, y2) > CH + M;
+            // Animation Loop
+            function animate() {
+                requestAnimationFrame(animate);
+                // Rotate earth
+                earth.rotation.y += 0.002;
+                renderer.render(scene, camera);
             }
-            function rgba(hex, a) {
-                var r = parseInt(hex.slice(1, 3), 16) || 0;
-                var g = parseInt(hex.slice(3, 5), 16) || 0;
-                var b = parseInt(hex.slice(5, 7), 16) || 0;
-                return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
-            }
+            animate();
 
-            /* ─────────────────────────────────────────────────────────────
-               City Builder
-            ───────────────────────────────────────────────────────────── */
-            function addEdge(a, b, type) {
-                if (a === b || a >= gNodes.length || b >= gNodes.length) return;
-                gEdges.push({ a: a, b: b, type: type });
-                if (gNodes[a].neighbors.indexOf(b) < 0) gNodes[a].neighbors.push(b);
-                if (gNodes[b].neighbors.indexOf(a) < 0) gNodes[b].neighbors.push(a);
-            }
-
-            function buildCity() {
-                gNodes = []; gEdges = []; gParks = []; gWater = []; gBuildings = [];
-
-                var COLS = 7, ROWS = 5, SX = 232, SY = 202, OX = 175, OY = 155, JIT = 20;
-
-                /* Major intersection nodes */
-                for (var r = 0; r < ROWS; r++) {
-                    for (var c = 0; c < COLS; c++) {
-                        gNodes.push({
-                            id: gNodes.length, x: OX + c * SX + rnd(-JIT, JIT),
-                            y: OY + r * SY + rnd(-JIT, JIT),
-                            neighbors: [], isMajor: true, col: c, row: r,
-                            label: TECH[Math.floor(Math.random() * TECH.length)],
-                            phase: rnd(0, Math.PI * 2)
-                        });
-                    }
-                }
-
-                /* Major horizontal edges */
-                for (var r = 0; r < ROWS; r++)
-                    for (var c = 0; c < COLS - 1; c++)
-                        addEdge(r * COLS + c, r * COLS + c + 1, 'major');
-
-                /* Major vertical edges */
-                for (var r = 0; r < ROWS - 1; r++)
-                    for (var c = 0; c < COLS; c++)
-                        addEdge(r * COLS + c, (r + 1) * COLS + c, 'major');
-
-                /* Secondary streets inside each block */
-                for (var r = 0; r < ROWS - 1; r++) {
-                    for (var c = 0; c < COLS - 1; c++) {
-                        var tl = gNodes[r * COLS + c], tr = gNodes[r * COLS + c + 1];
-                        var bl = gNodes[(r + 1) * COLS + c], br = gNodes[(r + 1) * COLS + c + 1];
-                        var nH = Math.random() > 0.38 ? 2 : 1, pL = -1, pR = -1;
-                        for (var s = 0; s < nH; s++) {
-                            var f = (s + 1) / (nH + 1);
-                            var lid = gNodes.length;
-                            gNodes.push({ id: lid, x: lrp(tl.x, bl.x, f) + rnd(-11, 11), y: lrp(tl.y, bl.y, f) + rnd(-11, 11), neighbors: [], isMajor: false, col: -1, row: -1, label: '', phase: 0 });
-                            var rid = gNodes.length;
-                            gNodes.push({ id: rid, x: lrp(tr.x, br.x, f) + rnd(-11, 11), y: lrp(tr.y, br.y, f) + rnd(-11, 11), neighbors: [], isMajor: false, col: -1, row: -1, label: '', phase: 0 });
-                            addEdge(lid, rid, 'secondary');
-                            if (s === 0) { addEdge(tl.id, lid, 'secondary'); addEdge(tr.id, rid, 'secondary'); }
-                            else         { addEdge(pL,    lid, 'secondary'); addEdge(pR,    rid, 'secondary'); }
-                            if (s === nH - 1) { addEdge(bl.id, lid, 'secondary'); addEdge(br.id, rid, 'secondary'); }
-                            pL = lid; pR = rid;
-                        }
-                        var nV = Math.random() > 0.38 ? 2 : 1, pT = -1, pB = -1;
-                        for (var s = 0; s < nV; s++) {
-                            var f = (s + 1) / (nV + 1);
-                            var tid = gNodes.length;
-                            gNodes.push({ id: tid, x: lrp(tl.x, tr.x, f) + rnd(-11, 11), y: lrp(tl.y, tr.y, f) + rnd(-11, 11), neighbors: [], isMajor: false, col: -1, row: -1, label: '', phase: 0 });
-                            var bid = gNodes.length;
-                            gNodes.push({ id: bid, x: lrp(bl.x, br.x, f) + rnd(-11, 11), y: lrp(bl.y, br.y, f) + rnd(-11, 11), neighbors: [], isMajor: false, col: -1, row: -1, label: '', phase: 0 });
-                            addEdge(tid, bid, 'secondary');
-                            if (s === 0) { addEdge(tl.id, tid, 'secondary'); addEdge(bl.id, bid, 'secondary'); }
-                            else         { addEdge(pT,    tid, 'secondary'); addEdge(pB,    bid, 'secondary'); }
-                            if (s === nV - 1) { addEdge(tr.id, tid, 'secondary'); addEdge(br.id, bid, 'secondary'); }
-                            pT = tid; pB = bid;
-                        }
-                    }
-                }
-
-                /* Assign edge colors post-build */
-                var hCol = [P.teal, P.gold, P.sky, P.pink, P.green];
-                var vCol = [P.violet, P.coral, P.purple, P.teal, P.gold, P.sky, P.pink];
-                edgeColors = gEdges.map(function (e, idx) {
-                    if (e.type !== 'major') return null;
-                    var na = gNodes[e.a], nb = gNodes[e.b];
-                    if (na.isMajor && nb.isMajor) {
-                        if (na.row === nb.row) return hCol[na.row % hCol.length];
-                        return vCol[Math.min(na.col, nb.col) % vCol.length];
-                    }
-                    return ALL_COLORS[idx % ALL_COLORS.length];
-                });
-
-                /* Parks */
-                for (var p = 0; p < 6; p++)
-                    gParks.push({ x: rnd(220, 1380), y: rnd(170, 870), w: rnd(55, 135), h: rnd(45, 105) });
-
-                /* River */
-                var ry = rnd(300, 560);
-                for (var wx = -100; wx <= 1750; wx += 55)
-                    gWater.push({ x: wx, y: ry + Math.sin(wx * 0.0055) * 60 + Math.sin(wx * 0.017) * 20 });
-
-                /* Buildings */
-                for (var r = 0; r < ROWS - 1; r++) {
-                    for (var c = 0; c < COLS - 1; c++) {
-                        var n1 = gNodes[r * COLS + c], n2 = gNodes[r * COLS + c + 1];
-                        var n3 = gNodes[(r + 1) * COLS + c], n4 = gNodes[(r + 1) * COLS + c + 1];
-                        var minX = Math.min(n1.x, n3.x) + 15, maxX = Math.max(n2.x, n4.x) - 15;
-                        var minY = Math.min(n1.y, n2.y) + 15, maxY = Math.max(n3.y, n4.y) - 15;
-                        if (maxX - minX < 22 || maxY - minY < 22) continue;
-                        var bx = minX + 4;
-                        while (bx < maxX - 12) {
-                            var by = minY + 4;
-                            while (by < maxY - 10) {
-                                var bw = rnd(11, 34), bh = rnd(9, 26);
-                                if (bx + bw < maxX - 4 && by + bh < maxY - 4)
-                                    gBuildings.push({ x: bx, y: by, w: bw, h: bh });
-                                by += bh + rnd(3, 9);
-                            }
-                            bx += rnd(11, 28) + 4;
-                        }
-                    }
-                }
-
-                /* Init agents — spread at different major nodes */
-                agents = [];
-                var used = [];
-                AGENT_DEFS.forEach(function (def) {
-                    var startId, tries = 0;
-                    do { startId = Math.floor(rnd(0, COLS * ROWS)); tries++; }
-                    while (used.indexOf(startId) >= 0 && tries < 30);
-                    used.push(startId);
-                    var nb = gNodes[startId].neighbors;
-                    agents.push({
-                        def: def, fromId: startId,
-                        toId: nb[Math.floor(Math.random() * nb.length)],
-                        t: Math.random(), x: gNodes[startId].x, y: gNodes[startId].y,
-                        trail: [], trailMax: 60
-                    });
-                });
-                cam.x = cam.tx = agents[0].x;
-                cam.y = cam.ty = agents[0].y;
-
-                /* Init data packets along major edges */
-                packets = [];
-                var majEdges = gEdges.filter(function (e) { return e.type === 'major'; });
-                for (var i = 0; i < 58; i++) {
-                    var e = majEdges[Math.floor(Math.random() * majEdges.length)];
-                    if (!e) continue;
-                    packets.push({
-                        eidx: gEdges.indexOf(e), t: Math.random(),
-                        fwd: Math.random() > 0.5, spd: 0.35 + Math.random() * 0.5,
-                        color: ALL_COLORS[Math.floor(Math.random() * ALL_COLORS.length)],
-                        sz: 1.4 + Math.random() * 1.6
-                    });
-                }
-            }
-
-            /* ─────────────────────────────────────────────────────────────
-               Resize
-            ───────────────────────────────────────────────────────────── */
-            function resize() {
-                var w = canvas.parentElement;
-                if (!w) return;
-                CW = canvas.width  = w.clientWidth  || 520;
-                CH = canvas.height = w.clientHeight || 420;
-            }
-
-            /* ─────────────────────────────────────────────────────────────
-               Draw
-            ───────────────────────────────────────────────────────────── */
-            function draw(ts) {
-                ctx.clearRect(0, 0, CW, CH);
-
-                /* Deep-space radial bg */
-                var bg = ctx.createRadialGradient(CW * 0.5, CH * 0.5, 0, CW * 0.5, CH * 0.5, Math.max(CW, CH) * 0.8);
-                bg.addColorStop(0, '#0b1630');
-                bg.addColorStop(1, '#030810');
-                ctx.fillStyle = bg; ctx.fillRect(0, 0, CW, CH);
-
-                drawHexGrid();
-                drawRings();
-                drawWater();
-                drawParks();
-                drawBuildings();
-                drawCasings();
-                drawRoads(ts);
-                drawPackets();
-                drawConnections();
-                drawNodes(ts);
-                drawAgents(ts);
-                drawParticles();
-                drawScanLine(ts);
-                drawHUD(ts);
-            }
-
-            /* Hex-dot grid – gives the neural-network feel */
-            function drawHexGrid() {
-                var size = 34, colStep = size * 1.5, rowStep = size * Math.sqrt(3);
-                ctx.fillStyle = 'rgba(45,212,191,0.055)';
-                var col = 0;
-                for (var gx = -size; gx < CW + size; gx += colStep) {
-                    var off = (col % 2 === 0) ? 0 : rowStep / 2;
-                    for (var gy = -size + off; gy < CH + size; gy += rowStep) {
-                        ctx.beginPath(); ctx.arc(gx, gy, 1.5, 0, Math.PI * 2); ctx.fill();
-                    }
-                    col++;
-                }
-            }
-
-            /* Expanding broadcast rings from AI nodes */
-            function drawRings() {
-                rings.forEach(function (ring) {
-                    var rx = sx(ring.wx), ry = sy(ring.wy);
-                    ctx.beginPath(); ctx.arc(rx, ry, ring.r, 0, Math.PI * 2);
-                    ctx.strokeStyle = rgba(ring.color, ring.alpha);
-                    ctx.lineWidth = 1.5; ctx.stroke();
-                });
-            }
-
-            function drawWater() {
-                if (gWater.length < 2) return;
-                var wT = gWater.map(function (p) { return { x: sx(p.x), y: sy(p.y) }; });
-                ctx.beginPath();
-                ctx.moveTo(wT[0].x, wT[0].y);
-                for (var i = 1; i < wT.length; i++) ctx.lineTo(wT[i].x, wT[i].y);
-                for (var i = wT.length - 1; i >= 0; i--) ctx.lineTo(wT[i].x, wT[i].y + 26);
-                ctx.closePath();
-                ctx.fillStyle = 'rgba(10,40,100,0.52)'; ctx.fill();
-                ctx.beginPath(); ctx.moveTo(wT[0].x, wT[0].y);
-                for (var i = 1; i < wT.length; i++) ctx.lineTo(wT[i].x, wT[i].y);
-                ctx.strokeStyle = 'rgba(56,189,248,0.65)'; ctx.lineWidth = 1.5; ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(wT[0].x, wT[0].y + 26);
-                for (var i = 1; i < wT.length; i++) ctx.lineTo(wT[i].x, wT[i].y + 26);
-                ctx.strokeStyle = 'rgba(56,189,248,0.2)'; ctx.lineWidth = 0.7; ctx.stroke();
-            }
-
-            function drawParks() {
-                gParks.forEach(function (p) {
-                    var px = sx(p.x), py = sy(p.y);
-                    if (px + p.w < -10 || px > CW + 10 || py + p.h < -10 || py > CH + 10) return;
-                    ctx.fillStyle = 'rgba(34,197,94,0.11)'; ctx.fillRect(px, py, p.w, p.h);
-                    ctx.strokeStyle = 'rgba(52,211,153,0.28)'; ctx.lineWidth = 0.8;
-                    ctx.strokeRect(px, py, p.w, p.h);
-                    ctx.fillStyle = 'rgba(52,211,153,0.38)';
-                    for (var tx = p.x + 9; tx < p.x + p.w - 4; tx += 17)
-                        for (var ty = p.y + 7; ty < p.y + p.h - 4; ty += 15) {
-                            ctx.beginPath(); ctx.arc(sx(tx), sy(ty), 2, 0, Math.PI * 2); ctx.fill();
-                        }
-                });
-            }
-
-            function drawBuildings() {
-                ctx.fillStyle   = 'rgba(255,255,255,0.038)';
-                ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-                ctx.lineWidth   = 0.5;
-                gBuildings.forEach(function (b) {
-                    var bx = sx(b.x), by = sy(b.y);
-                    if (bx + b.w < -4 || bx > CW + 4 || by + b.h < -4 || by > CH + 4) return;
-                    ctx.fillRect(bx, by, b.w, b.h);
-                    ctx.strokeRect(bx, by, b.w, b.h);
-                });
-            }
-
-            function drawCasings() {
-                ctx.lineCap = 'round';
-                gEdges.forEach(function (e) {
-                    var na = gNodes[e.a], nb = gNodes[e.b];
-                    var x1 = sx(na.x), y1 = sy(na.y), x2 = sx(nb.x), y2 = sy(nb.y);
-                    if (offScr(x1, y1, x2, y2)) return;
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-                    ctx.strokeStyle = 'rgba(3,8,22,0.97)';
-                    ctx.lineWidth   = e.type === 'major' ? 11 : 5.5;
-                    ctx.stroke();
-                });
-            }
-
-            function drawRoads(ts) {
-                /* Secondary streets – subtle silver */
-                gEdges.forEach(function (e) {
-                    if (e.type !== 'secondary') return;
-                    var na = gNodes[e.a], nb = gNodes[e.b];
-                    var x1 = sx(na.x), y1 = sy(na.y), x2 = sx(nb.x), y2 = sy(nb.y);
-                    if (offScr(x1, y1, x2, y2)) return;
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-                    ctx.strokeStyle = 'rgba(140,165,210,0.18)';
-                    ctx.lineWidth = 2; ctx.lineCap = 'round';
-                    ctx.setLineDash([]); ctx.stroke();
-                });
-
-                /* Major roads – colored glow + animated flow dashes */
-                gEdges.forEach(function (e, idx) {
-                    if (e.type !== 'major') return;
-                    var na = gNodes[e.a], nb = gNodes[e.b];
-                    var x1 = sx(na.x), y1 = sy(na.y), x2 = sx(nb.x), y2 = sy(nb.y);
-                    if (offScr(x1, y1, x2, y2)) return;
-                    var col = edgeColors[idx] || P.teal;
-
-                    /* Wide ambient glow */
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-                    ctx.strokeStyle = rgba(col, 0.13);
-                    ctx.lineWidth = 16; ctx.lineCap = 'round';
-                    ctx.setLineDash([]); ctx.stroke();
-
-                    /* Colored road body */
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-                    ctx.strokeStyle = rgba(col, 0.72);
-                    ctx.lineWidth = 3.8; ctx.lineCap = 'round';
-                    ctx.setLineDash([]); ctx.stroke();
-
-                    /* Animated data-flow dashes */
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-                    ctx.strokeStyle = rgba(col, 0.92);
-                    ctx.lineWidth = 1.6;
-                    ctx.setLineDash([5, 20]);
-                    ctx.lineDashOffset = -(ts / 22) % 25;
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-                });
-            }
-
-            /* Tiny glowing data packets flying along roads */
-            function drawPackets() {
-                packets.forEach(function (pkt) {
-                    var e = gEdges[pkt.eidx];
-                    if (!e) return;
-                    var na = gNodes[e.a], nb = gNodes[e.b];
-                    var t  = pkt.fwd ? pkt.t : 1 - pkt.t;
-                    var px = sx(na.x + (nb.x - na.x) * t);
-                    var py = sy(na.y + (nb.y - na.y) * t);
-                    if (px < -8 || px > CW + 8 || py < -8 || py > CH + 8) return;
-                    var gr = ctx.createRadialGradient(px, py, 0, px, py, pkt.sz * 4);
-                    gr.addColorStop(0, rgba(pkt.color, 0.95));
-                    gr.addColorStop(1, rgba(pkt.color, 0));
-                    ctx.beginPath(); ctx.arc(px, py, pkt.sz * 4, 0, Math.PI * 2);
-                    ctx.fillStyle = gr; ctx.fill();
-                    ctx.beginPath(); ctx.arc(px, py, pkt.sz, 0, Math.PI * 2);
-                    ctx.fillStyle = pkt.color; ctx.fill();
-                });
-            }
-
-            /* Dashed network lines connecting nearby agents */
-            function drawConnections() {
-                for (var i = 0; i < agents.length; i++) {
-                    for (var j = i + 1; j < agents.length; j++) {
-                        var ai = agents[i], aj = agents[j];
-                        var dx = ai.x - aj.x, dy = ai.y - aj.y;
-                        var d  = Math.sqrt(dx * dx + dy * dy);
-                        if (d > 380) continue;
-                        var al = (1 - d / 380) * 0.28;
-                        var cx1 = sx(ai.x), cy1 = sy(ai.y);
-                        var cx2 = sx(aj.x), cy2 = sy(aj.y);
-                        ctx.beginPath(); ctx.moveTo(cx1, cy1); ctx.lineTo(cx2, cy2);
-                        ctx.strokeStyle = 'rgba(255,255,255,' + al + ')';
-                        ctx.lineWidth = 0.8;
-                        ctx.setLineDash([3, 9]); ctx.stroke(); ctx.setLineDash([]);
-                        /* Mid-point relay dot */
-                        var mx = (cx1 + cx2) / 2, my = (cy1 + cy2) / 2;
-                        ctx.beginPath(); ctx.arc(mx, my, 2, 0, Math.PI * 2);
-                        ctx.fillStyle = 'rgba(255,255,255,' + (al * 2.8) + ')'; ctx.fill();
-                    }
-                }
-            }
-
-            /* Pulsing neural nodes at major intersections */
-            function drawNodes(ts) {
-                gNodes.forEach(function (n) {
-                    if (!n.isMajor) return;
-                    var nx = sx(n.x), ny = sy(n.y);
-                    if (nx < -28 || nx > CW + 28 || ny < -28 || ny > CH + 28) return;
-                    var pulse = Math.sin(ts * 0.0022 + n.phase) * 0.5 + 0.5;
-
-                    /* Outer ring */
-                    ctx.beginPath(); ctx.arc(nx, ny, 9 + pulse * 5, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(45,212,191,' + (0.22 + pulse * 0.26) + ')';
-                    ctx.lineWidth = 1; ctx.stroke();
-
-                    /* Core fill */
-                    var ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, 5.5);
-                    ng.addColorStop(0, 'rgba(45,212,191,0.55)');
-                    ng.addColorStop(1, 'rgba(45,212,191,0)');
-                    ctx.beginPath(); ctx.arc(nx, ny, 5.5, 0, Math.PI * 2);
-                    ctx.fillStyle = ng; ctx.fill();
-                    ctx.beginPath(); ctx.arc(nx, ny, 3, 0, Math.PI * 2);
-                    ctx.fillStyle = 'rgba(45,212,191,0.88)'; ctx.fill();
-
-                    /* (tech labels removed — shown as HTML chips above map) */
-                });
-            }
-
-            /* AI agents: glowing colored markers + trails + name badges */
-            function drawAgents(ts) {
-                agents.forEach(function (ag, aIdx) {
-                    /* Fading trail */
-                    var trail = ag.trail;
-                    for (var i = 1; i < trail.length; i++) {
-                        var a = (i / trail.length) * 0.75;
-                        var w = 0.6 + (i / trail.length) * 3.8;
-                        ctx.beginPath();
-                        ctx.moveTo(sx(trail[i - 1].x), sy(trail[i - 1].y));
-                        ctx.lineTo(sx(trail[i].x),     sy(trail[i].y));
-                        ctx.strokeStyle = rgba(ag.def.color, a);
-                        ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.stroke();
-                    }
-
-                    var tx = sx(ag.x), ty = sy(ag.y);
-                    var pulse = Math.sin(ts * 0.006 + aIdx * 1.2) * 0.5 + 0.5;
-
-                    /* Outer halo */
-                    var gh = ctx.createRadialGradient(tx, ty, 0, tx, ty, 32 + pulse * 11);
-                    gh.addColorStop(0, rgba(ag.def.color, 0.30));
-                    gh.addColorStop(0.5, rgba(ag.def.color, 0.08));
-                    gh.addColorStop(1, rgba(ag.def.color, 0));
-                    ctx.beginPath(); ctx.arc(tx, ty, 32 + pulse * 11, 0, Math.PI * 2);
-                    ctx.fillStyle = gh; ctx.fill();
-
-                    /* Inner glow */
-                    var gw = ctx.createRadialGradient(tx, ty, 0, tx, ty, 14);
-                    gw.addColorStop(0, rgba(ag.def.color, 0.92));
-                    gw.addColorStop(0.55, rgba(ag.def.color, 0.28));
-                    gw.addColorStop(1, rgba(ag.def.color, 0));
-                    ctx.beginPath(); ctx.arc(tx, ty, 14, 0, Math.PI * 2);
-                    ctx.fillStyle = gw; ctx.fill();
-
-                    /* Core dot */
-                    ctx.beginPath(); ctx.arc(tx, ty, 5, 0, Math.PI * 2);
-                    ctx.fillStyle = ag.def.color; ctx.fill();
-                    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-                    ctx.lineWidth = 1.2; ctx.stroke();
-
-                    /* Pulse ring */
-                    ctx.beginPath(); ctx.arc(tx, ty, 11 + pulse * 9, 0, Math.PI * 2);
-                    ctx.strokeStyle = rgba(ag.def.color, 0.5 - pulse * 0.32);
-                    ctx.lineWidth = 1.5; ctx.stroke();
-
-                    /* (name badges removed — shown as HTML chips above map) */
-                });
-            }
-
-            function drawParticles() {
-                particles.forEach(function (p) {
-                    ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), p.r, 0, Math.PI * 2);
-                    ctx.fillStyle = rgba(p.color, p.alpha); ctx.fill();
-                });
-            }
-
-            /* Thin teal scan line sweeping across the map */
-            function drawScanLine(ts) {
-                var scanY = (ts / 42) % CH;
-                var sg = ctx.createLinearGradient(0, scanY - 18, 0, scanY + 4);
-                sg.addColorStop(0, 'rgba(45,212,191,0)');
-                sg.addColorStop(0.6, 'rgba(45,212,191,0.07)');
-                sg.addColorStop(1, 'rgba(45,212,191,0.15)');
-                ctx.fillStyle = sg; ctx.fillRect(0, scanY - 18, CW, 22);
-            }
-
-            /* HUD overlay: live status badges */
-            function drawHUD(ts) {
-                ctx.save();
-                ctx.font = 'bold 8.5px "JetBrains Mono",monospace';
-
-                /* Top-left: network badge */
-                ctx.fillStyle = 'rgba(3,8,22,0.76)';
-                ctx.fillRect(6, 5, 185, 18);
-                ctx.fillStyle = 'rgba(45,212,191,0.88)';
-                ctx.textAlign = 'left';
-                ctx.fillText('* MULTI-AGENT NETWORK ACTIVE', 10, 18);
-
-                /* Top-right: live blink */
-                var blink = Math.sin(ts * 0.006) > 0;
-                ctx.fillStyle = 'rgba(3,8,22,0.76)';
-                ctx.fillRect(CW - 58, 5, 52, 18);
-                ctx.fillStyle = blink ? 'rgba(52,211,153,0.98)' : 'rgba(52,211,153,0.38)';
-                ctx.textAlign = 'right';
-                ctx.fillText((blink ? '>> ' : '<< ') + 'LIVE', CW - 8, 18);
-
-
-                ctx.restore();
-            }
-
-            /* ─────────────────────────────────────────────────────────────
-               Update
-            ───────────────────────────────────────────────────────────── */
-            function spawnBurst(wx, wy, color) {
-                for (var i = 0; i < 10; i++) {
-                    var angle = Math.random() * Math.PI * 2;
-                    var spd   = 25 + Math.random() * 70;
-                    particles.push({ x: wx, y: wy, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, r: 1.5 + Math.random() * 3, alpha: 0.85, color: color });
-                }
-            }
-
-            function update(ts) {
-                if (!lastTs) lastTs = ts;
-                var dt = Math.min((ts - lastTs) / 1000, 0.05);
-                lastTs = ts;
-
-                /* Agents */
-                agents.forEach(function (ag) {
-                    var fromN = gNodes[ag.fromId], toN = gNodes[ag.toId];
-                    if (!fromN || !toN) return;
-                    var dx = toN.x - fromN.x, dy = toN.y - fromN.y;
-                    var segLen = Math.sqrt(dx * dx + dy * dy) || 1;
-                    ag.t += (ag.def.speed * dt) / segLen;
-                    ag.trail.push({ x: ag.x, y: ag.y });
-                    if (ag.trail.length > ag.trailMax) ag.trail.shift();
-                    if (ag.t >= 1) {
-                        spawnBurst(toN.x, toN.y, ag.def.color);
-                        var prevId = ag.fromId;
-                        ag.fromId = ag.toId; ag.x = toN.x; ag.y = toN.y; ag.t = 0;
-                        var arr  = gNodes[ag.fromId];
-                        var opts = arr.neighbors.filter(function (id) { return id !== prevId; });
-                        if (opts.length === 0) opts = arr.neighbors.slice();
-                        if (opts.length === 0) return;
-                        if (Math.random() < 0.6 && opts.length > 1) {
-                            var cl = Math.sqrt(dx * dx + dy * dy) || 1;
-                            var best = opts[0], bestD = -Infinity;
-                            opts.forEach(function (id) {
-                                var nn = gNodes[id], ndx = nn.x - arr.x, ndy = nn.y - arr.y;
-                                var nl = Math.sqrt(ndx * ndx + ndy * ndy) || 1;
-                                var dot = (dx / cl) * (ndx / nl) + (dy / cl) * (ndy / nl);
-                                if (dot > bestD) { bestD = dot; best = id; }
-                            });
-                            ag.toId = best;
-                        } else { ag.toId = opts[Math.floor(Math.random() * opts.length)]; }
-                        fromN = gNodes[ag.fromId]; toN = gNodes[ag.toId];
-                        if (!fromN || !toN) return;
-                    }
-                    ag.x = fromN.x + (toN.x - fromN.x) * ag.t;
-                    ag.y = fromN.y + (toN.y - fromN.y) * ag.t;
-                });
-
-                /* Camera tracks first agent */
-                if (agents.length > 0) {
-                    cam.tx = agents[0].x; cam.ty = agents[0].y;
-                    cam.x += (cam.tx - cam.x) * 0.036;
-                    cam.y += (cam.ty - cam.y) * 0.036;
-                }
-
-                /* Data packets */
-                packets.forEach(function (pkt) {
-                    pkt.t += pkt.spd * dt;
-                    if (pkt.t >= 1) {
-                        pkt.t = 0; pkt.fwd = !pkt.fwd;
-                        var maj = gEdges.filter(function (e) { return e.type === 'major'; });
-                        var ne  = maj[Math.floor(Math.random() * maj.length)];
-                        if (ne) pkt.eidx = gEdges.indexOf(ne);
-                    }
-                });
-
-                /* Particles */
-                particles = particles.filter(function (p) {
-                    p.x += p.vx * dt; p.y += p.vy * dt;
-                    p.alpha -= dt * 2.8; p.r *= 0.96;
-                    return p.alpha > 0;
-                });
-
-                /* Signal broadcast rings from AI nodes */
-                rings = rings.filter(function (ring) {
-                    ring.r += dt * 58;
-                    ring.alpha = ring.maxAlpha * (1 - ring.r / ring.maxR);
-                    return ring.alpha > 0.005;
-                });
-                ringTimer -= dt;
-                if (ringTimer <= 0) {
-                    ringTimer = rnd(0.5, 1.7);
-                    var majN = gNodes.filter(function (n) { return n.isMajor; });
-                    if (majN.length > 0) {
-                        var mn = majN[Math.floor(Math.random() * majN.length)];
-                        rings.push({ wx: mn.x, wy: mn.y, r: 4, maxR: 80 + rnd(0, 45), alpha: 0.48, maxAlpha: 0.48, color: ALL_COLORS[Math.floor(Math.random() * ALL_COLORS.length)] });
-                    }
-                }
-            }
-
-            /* ─────────────────────────────────────────────────────────────
-               Loop & Init
-            ───────────────────────────────────────────────────────────── */
-            function loop(ts) { update(ts); draw(ts); requestAnimationFrame(loop); }
-
-            function init() { resize(); buildCity(); requestAnimationFrame(loop); }
-
-            if (typeof ResizeObserver !== 'undefined')
-                new ResizeObserver(function () { resize(); }).observe(canvas.parentElement);
-            window.addEventListener('resize', resize);
-
-            init();
+            // Handle Resize
+            window.addEventListener('resize', function() {
+                if(!canvas.parentElement) return;
+                var width = canvas.parentElement.clientWidth;
+                var height = canvas.parentElement.clientHeight;
+                renderer.setSize(width, height);
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+            });
         })();
     </script>
 </body>

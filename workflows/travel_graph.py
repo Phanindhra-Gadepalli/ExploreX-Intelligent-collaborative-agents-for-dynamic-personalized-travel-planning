@@ -586,10 +586,38 @@ class TravelGraph:
         try:
             user_prefs = self.state["user_info"]
             attractions = self.state["attractions"]
+            user_input = kwargs.get('user_input', '').strip().lower()
             
+            # NLP mapping for confirmation phrases
+            confirmation_phrases = ['go ahead', 'continue', 'proceed', 'build my plan', 'create itinerary', 'continue with these', 'yes, continue']
+            is_confirmation = any(phrase in user_input for phrase in confirmation_phrases)
+
+            # If user confirms but didn't select any specific attractions via UI
+            if is_confirmation and not selected_attraction_ids:
+                days = int(user_prefs.get('days', 3))
+                required = days * 2
+                # Auto-select top required attractions
+                selected_attractions = attractions[:required] if attractions else []
+                self.state["selected_attractions"] = selected_attractions
+                
+                # Fetch accommodation if selected
+                if 'selected_accommodation_id' in kwargs and kwargs['selected_accommodation_id']:
+                    accs = self.state.get("accommodations", [])
+                    acc = next((a for a in accs if a["id"] == kwargs['selected_accommodation_id']), None)
+                    if acc:
+                        self.state["selected_accommodation"] = acc
+                        
+                def transition_generator():
+                    yield AIMessage(content=f"You didn't select specific attractions, so I've automatically selected {len(selected_attractions)} highly recommended places for your trip. Planning your itinerary now...")
+                    
+                return {
+                    "next_step": "strategy",
+                    "stream": transition_generator(),
+                    "selected_attractions": selected_attractions
+                }
             
             # Check if we have selected_attraction_ids provided
-            if selected_attraction_ids:
+            elif selected_attraction_ids or is_confirmation:
                 
                 # Fetch accommodation if selected
                 if 'selected_accommodation_id' in kwargs and kwargs['selected_accommodation_id']:
@@ -602,7 +630,7 @@ class TravelGraph:
                 selected_attractions = [
                     a for a in attractions 
                     if a and a.get("id") and a["id"] in selected_attraction_ids
-                ]
+                ] if selected_attraction_ids else []
                 self.state["selected_attractions"] = selected_attractions
                 
                 # Validation check
@@ -612,7 +640,7 @@ class TravelGraph:
                 # "force_continue" flag is sent by frontend if user wants to bypass warning
                 force_continue = kwargs.get('force_continue', 'false').lower() == 'true'
                 
-                if len(selected_attractions) < required and not force_continue:
+                if len(selected_attractions) < required and not force_continue and not is_confirmation:
                     # Return validation warning to frontend
                     def validation_msg():
                         yield AIMessage(content=f"You've selected {len(selected_attractions)} attractions for a {days}-day trip. We recommend selecting at least {required} attractions.")

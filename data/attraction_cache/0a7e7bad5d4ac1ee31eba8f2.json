@@ -1,0 +1,14 @@
+{
+  "data": {
+    "description": "The Taj Mahal is an ivory-white marble mausoleum on the right bank of the river Yamuna in Agra, Uttar Pradesh, India. It was commissioned in 1631 by the fifth Mughal emperor, Shah Jahan, to house the tomb of his late wife, Mumtaz Mahal; it also houses the tomb of Shah Jahan himself. The tomb is the centrepiece of a 17-hectare (42-acre) complex, which includes a mosque and a guest house, and is set in formal gardens bounded on three sides by a crenellated wall.",
+    "description_source": "wikipedia",
+    "significance": "Marble mausoleum in Agra, India",
+    "wiki_url": "https://en.wikipedia.org/wiki/Taj_Mahal",
+    "wiki_thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1d/Taj_Mahal_%28Edited%29.jpeg/330px-Taj_Mahal_%28Edited%29.jpeg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "wiki_location": {
+      "lat": 27.175,
+      "lng": 78.0419
+    }
+  },
+  "ts": 1790755900.7540464
+}

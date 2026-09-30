@@ -1,0 +1,14 @@
+{
+  "data": {
+    "description": "The Qutb Minar, also spelled Qutub Minar and Qutab Minar, is a minaret and victory tower, built during the Delhi sultanate, and comprising the Qutb complex, a UNESCO World Heritage Site in Mehrauli, South Delhi, India. It was mostly built between 1199 and 1220, contains 399 steps, and is one of the most frequented heritage spots in the city. After defeating Prithviraj Chauhan, the last Hindu ruler of Delhi before the Ghurid conquest of the region, Qutab-ud-din Aibak initiated the construction of the victory tower, but only managed to finish the first level. It was to mark the beginning of Islamic rule in the region.",
+    "description_source": "wikipedia",
+    "significance": "Minaret in the Mehrauli area of Delhi, India",
+    "wiki_url": "https://en.wikipedia.org/wiki/Qutb_Minar",
+    "wiki_thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3c/Qutb_Minar_2022.jpg/330px-Qutb_Minar_2022.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "wiki_location": {
+      "lat": 28.524355,
+      "lng": 77.185248
+    }
+  },
+  "ts": 1790521776.5682695
+}

@@ -37,11 +37,12 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation):
         
         # Add Budget Info
         text += f"Estimated Budget:\n"
-        text += f"Total: ₹{budget.get('total', '0')}\n"
-        text += f"Accommodation: ₹{budget.get('accommodation', '0')}\n"
-        text += f"Food: ₹{budget.get('food', '0')}\n"
-        text += f"Transport: ₹{budget.get('transport', '0')}\n"
-        text += f"Activities: ₹{budget.get('attractions', '0')}\n\n"
+        breakdown = budget.get('breakdown', {})
+        text += f"Total: ₹{budget.get('total_cost', '0')}\n"
+        text += f"Accommodation: {breakdown.get('accommodation', '0')}\n"
+        text += f"Food: {breakdown.get('food', '0')}\n"
+        text += f"Transport: {breakdown.get('local_transport', '0')}\n"
+        text += f"Activities: {breakdown.get('attractions', '0')}\n\n"
         
         # Add Itinerary
         text += "Itinerary:\n"
@@ -67,11 +68,11 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation):
             <div style="background: #f4f4f4; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                 <h4>Estimated Budget Summary</h4>
                 <ul style="list-style-type: none; padding-left: 0;">
-                    <li><strong>Total:</strong> ₹{budget.get('total', '0')}</li>
-                    <li><strong>Accommodation:</strong> ₹{budget.get('accommodation', '0')}</li>
-                    <li><strong>Food:</strong> ₹{budget.get('food', '0')}</li>
-                    <li><strong>Transport:</strong> ₹{budget.get('transport', '0')}</li>
-                    <li><strong>Activities:</strong> ₹{budget.get('attractions', '0')}</li>
+                    <li><strong>Total:</strong> ₹{budget.get('total_cost', '0')}</li>
+                    <li><strong>Accommodation:</strong> {breakdown.get('accommodation', '0')}</li>
+                    <li><strong>Food:</strong> {breakdown.get('food', '0')}</li>
+                    <li><strong>Transport:</strong> {breakdown.get('local_transport', '0')}</li>
+                    <li><strong>Activities:</strong> {breakdown.get('attractions', '0')}</li>
                 </ul>
             </div>
             

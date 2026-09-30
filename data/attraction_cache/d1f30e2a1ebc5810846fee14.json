@@ -1,0 +1,14 @@
+{
+  "data": {
+    "description": "Agra Fort, also known as the Red Fort of Agra (Lal-Qila) or Qila-i-Akbari, is an historic fort in the city of Agra in Uttar Pradesh, India. A brick fortification on the site, noted as early as 1080 and later known as Badalgarh, was extensively rebuilt in red sandstone by the Mughal emperor Akbar from 1565 to 1573. It served as the main residence of the rulers of the Mughal dynasty until 1638, when the capital was moved from Agra to Shahjahanabad in Delhi. Much of the present interior dates from the reign of Shah Jahan, who added a number of white marble palaces and mosques within the fort after 1628.",
+    "description_source": "wikipedia",
+    "significance": "Historical Mughal fort in India",
+    "wiki_url": "https://en.wikipedia.org/wiki/Agra_Fort",
+    "wiki_thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8d/Agra_03-2016_16_Agra_Fort.jpg/330px-Agra_03-2016_16_Agra_Fort.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "wiki_location": {
+      "lat": 27.179542,
+      "lng": 78.021101
+    }
+  },
+  "ts": 1790755901.7050595
+}

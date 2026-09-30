@@ -1,973 +1,511 @@
-/* ==========================================================================
-   ExploreX v4.0 "Midnight Aurora" — Frontend Controller
-   Preserves the full backend contract (/api/stream SSE, /api/reset,
-   /api/nearby) and adds the Focus-Window workspace + fullscreen details.
-   ========================================================================== */
-document.addEventListener('DOMContentLoaded', function () {
-    'use strict';
-
-    // === CORE STATE ===
-    const WORLD_DEFAULT_CENTER = [20.0, 0.0];
-    const WORLD_DEFAULT_ZOOM = 2;
-
-    let map = null;
-    let mapMarkers = [];
-    let selectedMarkers = [];
-    let routePolylines = [];
-    let routeMarkers = [];
-    let currentAttractions = [];
-    let selectedAttractions = [];
-    let _lastOptimalRoute = null;
-    let _attractionModal = null;
-
-    let state = {
-        step: 'chat',
-        userInfo: {},
+document.addEventListener('DOMContentLoaded', () => {
+    // === Core State ===
+    const state = {
+        sessionId: null,
         attractions: [],
-        selectedAttractions: [],
         itinerary: null,
         budget: null,
-        ai_recommendation_generated: false,
-        user_input_processed: false,
-        session_id: null,
-        rental_post: null,
-        force_continue: false,
-        selectedAccommodation: null
+        weather: [],
+        map: null,
+        mapMarkers: [],
+        routePolylines: [],
+        currentTab: 'chat'
     };
 
-    // === DOM CACHE ===
-    const chatForm = document.getElementById('chat-form');
-    const userInput = document.getElementById('user-input');
-    const chatContainer = document.getElementById('chat-container');
-    const loadingSpinner = document.getElementById('loading-spinner');
-    const resetBtn = document.getElementById('reset-btn');
-    const stepNav = document.getElementById('step-nav');
-    const missingFieldsContainer = document.getElementById('missing-fields-container');
-    const missingFieldsText = document.getElementById('missing-fields-text');
+    // === Navigation & Tabs ===
+    const navTabs = document.querySelectorAll('.nav-tab');
+    const viewSections = document.querySelectorAll('.view-section');
 
-    // === INIT ===
-    initializeCoreUI();
-    initializeMap();
-    initFocusPanels();
+    window.startApp = function() {
+        document.getElementById('view-login').classList.remove('active');
+        document.getElementById('main-nav').style.display = 'flex';
+        switchTab('chat');
+        initMap();
+    };
 
-    function initializeCoreUI() {
-        updateViewState(state.step);
-        // auto-scroll observer for any injected .scroll-container
-        const so = new MutationObserver(() => {
-            if (document.querySelector('.scroll-container')) { initAutoScroll(); so.disconnect(); }
+    navTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            switchTab(tab.dataset.tab);
         });
-        so.observe(document.body, { childList: true, subtree: true });
-    }
-
-    function initializeMap() {
-        try {
-            if (!document.getElementById('map')) { console.error('Map container not found.'); return; }
-            if (typeof L === 'undefined') { console.error('Leaflet not loaded'); return; }
-            map = L.map('map').setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap contributors'
-            }).addTo(map);
-        } catch (e) { console.error('Map init error:', e); }
-    }
-
-    function inr(amount) {
-        if (amount == null || isNaN(amount)) return '₹0';
-        return '₹' + Number(amount).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-    }
-
-    /* ----------------------------------------------------------------------
-       FOCUS WINDOW — click a panel name => fullscreen; chat open by default
-       ---------------------------------------------------------------------- */
-    function initFocusPanels() {
-        document.querySelectorAll('.focus-item').forEach(item => {
-            const header = item.querySelector('.focus-header');
-            if (!header) return;
-            header.addEventListener('click', () => {
-                if (item.classList.contains('open')) closeFocus();
-                else openFocus(item);
-            });
-        });
-        // add aurora orbs to body for extra wow
-        ['o1', 'o2', 'o3'].forEach(c => {
-            const orb = document.createElement('div');
-            orb.className = 'aurora-orb ' + c;
-            document.body.appendChild(orb);
-        });
-    }
-
-    function openFocus(itemOrName) {
-        const item = typeof itemOrName === 'string'
-            ? document.querySelector(`.focus-item[data-focus="${itemOrName}"]`)
-            : itemOrName;
-        if (!item) return;
-        document.querySelectorAll('.focus-item.open').forEach(i => i.classList.remove('open'));
-        item.classList.add('open');
-        const focus = item.dataset.focus;
-        if (focus === 'map') {
-            setTimeout(() => { if (map) { map.invalidateSize(); if (_lastOptimalRoute) drawRoute(_lastOptimalRoute); } }, 350);
-        }
-    }
-
-    function closeFocus() {
-        document.querySelectorAll('.focus-item.open').forEach(i => i.classList.remove('open'));
-    }
-
-    function isFocusOpen(name) {
-        const el = document.querySelector(`.focus-item[data-focus="${name}"]`);
-        return !!(el && el.classList.contains('open'));
-    }
-
-    /* ----------------------------------------------------------------------
-       AUTO-SCROLL (popular attractions strip, if injected by backend)
-       ---------------------------------------------------------------------- */
-    function initAutoScroll() {
-        const sc = document.querySelector('.scroll-container');
-        if (!sc) return;
-        sc.innerHTML += sc.innerHTML;
-        let speed = 1, paused = false;
-        (function loop() {
-            if (!paused) {
-                sc.scrollTop += speed;
-                if (sc.scrollTop >= sc.scrollHeight / 2) sc.scrollTop = 0;
-            }
-            requestAnimationFrame(loop);
-        })();
-        sc.addEventListener('mouseenter', () => paused = true);
-        sc.addEventListener('mouseleave', () => paused = false);
-    }
-
-    /* ----------------------------------------------------------------------
-       STEP NAV
-       ---------------------------------------------------------------------- */
-    function updateStepNav(step) {
-        if (!stepNav) return;
-        const order = ['chat', 'recommend', 'route'];
-        let n = step;
-        if (['retrieval', 'information'].includes(step)) n = 'chat';
-        if (['strategy', 'communication'].includes(step)) n = 'recommend';
-        if (step === 'complete') n = 'route';
-        let idx = order.indexOf(n); if (idx === -1) idx = 0;
-
-        stepNav.querySelectorAll('.step-nav-item').forEach((link, i) => {
-            const icon = link.querySelector('i');
-            link.classList.remove('active', 'completed', 'upcoming');
-            if (i < idx) { link.classList.add('completed'); icon.className = 'fas fa-check-circle'; icon.style.color = 'var(--teal-light)'; }
-            else if (i === idx) { link.classList.add('active'); icon.className = i === 0 ? 'fas fa-comment-dots' : (i === 1 ? 'fas fa-suitcase' : 'fas fa-route'); icon.style.color = ''; }
-            else { link.classList.add('upcoming'); icon.className = 'far fa-circle'; icon.style.color = ''; }
-        });
-    }
-
-    /* ----------------------------------------------------------------------
-       VIEW SWITCHING (masters are moved between slots)
-       ---------------------------------------------------------------------- */
-    function updateViewState(step) {
-        document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active', 'fade-in'));
-        const chatMaster = document.getElementById('chat-card-master');
-        const mapMaster = document.getElementById('map-card-master');
-
-        if (step === 'chat' || step === 'retrieval' || step === 'information') {
-            document.getElementById('view-landing').classList.add('active', 'fade-in');
-            if (chatMaster) document.getElementById('chat-column-landing').appendChild(chatMaster);
-        }
-        else if (step === 'recommend' || step === 'strategy' || step === 'communication') {
-            document.getElementById('view-recommendations').classList.add('active', 'fade-in');
-            if (chatMaster) document.getElementById('chat-column-recs').appendChild(chatMaster);
-            if (mapMaster) document.getElementById('map-container-recs').appendChild(mapMaster);
-            // initially chat window is displayed
-            setTimeout(() => {
-                openFocus('chat');
-                if (map) map.invalidateSize();
-            }, 300);
-        }
-        else if (step === 'route' || step === 'complete') {
-            document.getElementById('view-plan').classList.add('active', 'fade-in');
-            if (mapMaster) document.getElementById('map-container-plan').appendChild(mapMaster);
-            setTimeout(() => {
-                openFocus('itinerary');
-                if (map) {
-                    map.invalidateSize();
-                    if (_lastOptimalRoute && _lastOptimalRoute.length >= 2) drawRoute(_lastOptimalRoute);
-                }
-            }, 350);
-        }
-    }
-
-    /* ----------------------------------------------------------------------
-       MISSING FIELDS CHIPS
-       ---------------------------------------------------------------------- */
-    function showMissingFields(fields) {
-        if (!missingFieldsContainer) return;
-        
-        missingFieldsText.innerHTML = `Please provide: <strong style="color:#fff">${fields.map(f => f.replace(/_/g, ' ')).join(', ')}</strong>`;
-        
-        // Remove any existing chips container if it was previously added
-        const chipsWrap = missingFieldsContainer.querySelector(':scope > div:nth-child(2)');
-        if (chipsWrap) {
-            chipsWrap.remove();
-        }
-        
-        missingFieldsContainer.classList.remove('d-none');
-    }
-    
-    function hideMissingFields() {
-        if (missingFieldsContainer) {
-            missingFieldsContainer.classList.add('d-none');
-        }
-    }
-
-    /* ----------------------------------------------------------------------
-       CHAT RENDERING
-       ---------------------------------------------------------------------- */
-    function scrollToBottom() {
-        if (!chatContainer) return;
-        requestAnimationFrame(() => chatContainer.scrollTop = chatContainer.scrollHeight);
-        setTimeout(() => chatContainer.scrollTop = chatContainer.scrollHeight, 100);
-        chatContainer.querySelectorAll('img:not(.scroll-handled)').forEach(img => {
-            img.classList.add('scroll-handled');
-            img.addEventListener('load', () => chatContainer.scrollTop = chatContainer.scrollHeight);
-        });
-    }
-
-    function addChatMessage(message, role) {
-        try {
-            const div = document.createElement('div');
-            div.className = `chat-message ${role}`;
-            const content = document.createElement('div');
-            content.className = 'message-content';
-            content.innerHTML = marked.parse(message);
-            div.appendChild(content);
-            chatContainer.appendChild(div);
-            scrollToBottom();
-        } catch (e) { console.error('render error:', e); }
-    }
-
-    /* ----------------------------------------------------------------------
-       FORM SUBMISSION
-       ---------------------------------------------------------------------- */
-    chatForm.addEventListener('submit', function (e) {
-        e.preventDefault();
-        const message = userInput.value.trim();
-        if (message) {
-            addChatMessage(message, 'user');
-            userInput.value = '';
-            processUserInput(message);
-        }
     });
 
-    resetBtn.addEventListener('click', resetConversation);
+    function switchTab(tabId) {
+        navTabs.forEach(t => t.classList.remove('active'));
+        document.querySelector(`.nav-tab[data-tab="${tabId}"]`)?.classList.add('active');
+        
+        viewSections.forEach(v => {
+            v.classList.remove('active');
+            if (v.id === `view-${tabId}`) {
+                v.classList.add('active');
+            }
+        });
+        state.currentTab = tabId;
+        
+        if (tabId === 'map' && state.map) {
+            setTimeout(() => state.map.invalidateSize(), 100);
+        }
+    }
 
-    /* ----------------------------------------------------------------------
-       SSE STREAM — backend conversation pipeline (UNCHANGED CONTRACT)
-       ---------------------------------------------------------------------- */
-    function processUserInput(message) {
-        loadingSpinner.classList.remove('d-none');
+    // === Earth Animation ===
+    function initEarth(canvasId, containerId) {
+        const canvas = document.getElementById(canvasId);
+        const container = document.getElementById(containerId);
+        if (!canvas || !container || typeof THREE === 'undefined') return null;
 
-        const messageDiv = document.createElement('div');
-        messageDiv.className = 'chat-message assistant';
-        const messageContent = document.createElement('div');
-        messageContent.className = 'message-content';
-        messageDiv.appendChild(messageContent);
-        chatContainer.appendChild(messageDiv);
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(38, container.clientWidth / container.clientHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setSize(container.clientWidth, container.clientHeight);
 
-        const params = new URLSearchParams({ step: state.step, user_input: message, session_id: state.session_id || '' });
-        if (state.step === 'recommend' && state.selectedAttractions.length > 0)
-            params.append('selected_attraction_ids', JSON.stringify(state.selectedAttractions.map(a => a.id)));
-        if (state.step === 'recommend' && state.selectedAccommodation)
-            params.append('selected_accommodation_id', state.selectedAccommodation.id);
-        if (state.step === 'recommend' && state.force_continue)
-            params.append('force_continue', 'true');
-        params.append('ai_recommendation_generated', String(state.ai_recommendation_generated));
-        params.append('user_input_processed', String(state.user_input_processed));
+        const group = new THREE.Group();
+        scene.add(group);
 
-        const eventSource = new EventSource(`/api/stream?${params.toString()}`);
-        let fullResponse = '';
+        const textureLoader = new THREE.TextureLoader();
+        const earthTexture = textureLoader.load('https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg');
+        const earth = new THREE.Mesh(
+            new THREE.SphereGeometry(2.25, 64, 64),
+            new THREE.MeshPhongMaterial({ map: earthTexture, shininess: 15, specular: new THREE.Color(0x333333) })
+        );
+        group.add(earth);
 
-        eventSource.onmessage = function (event) {
-            let data;
-            try { data = JSON.parse(event.data); }
-            catch (e) { console.error('JSON parse error:', event.data, e); return; }
+        const cloudTexture = textureLoader.load('https://threejs.org/examples/textures/planets/earth_clouds_1024.png');
+        const clouds = new THREE.Mesh(
+            new THREE.SphereGeometry(2.28, 64, 64),
+            new THREE.MeshPhongMaterial({ map: cloudTexture, transparent: true, opacity: 0.4, depthWrite: false })
+        );
+        group.add(clouds);
 
-            if (data.type === 'chunk') {
-                fullResponse += data.content;
-                messageContent.innerHTML = marked.parse(fullResponse);
-                scrollToBottom();
+        const atmosphere = new THREE.Mesh(
+            new THREE.SphereGeometry(2.35, 64, 64),
+            new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.1, side: THREE.BackSide })
+        );
+        group.add(atmosphere);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(5, 3, 5);
+        scene.add(sun);
+
+        camera.position.z = 7.5;
+        
+        setTimeout(() => canvas.classList.add('visible'), 500);
+
+        function animate() {
+            requestAnimationFrame(animate);
+            earth.rotation.y += 0.002;
+            clouds.rotation.y += 0.0025;
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        window.addEventListener('resize', () => {
+            if(container.clientWidth && container.clientHeight) {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            }
+        });
+        return { scene, camera, renderer };
+    }
+
+    // Initialize Earths
+    initEarth('landing-earth-canvas', 'landing-earth-container');
+    initEarth('login-earth-canvas', 'login-earth-container');
+
+    // === Small Logo Earth Animation ===
+    function initSmallEarths() {
+        if (typeof THREE === 'undefined') return;
+        const containers = document.querySelectorAll('.earth-logo-container');
+        
+        const textureLoader = new THREE.TextureLoader();
+        const earthTexture = textureLoader.load('https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg');
+        
+        containers.forEach(container => {
+            // Style the container
+            container.style.display = 'inline-block';
+            container.style.width = '1em';
+            container.style.height = '1em';
+            container.style.verticalAlign = 'text-bottom';
+            container.style.position = 'relative';
+            
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+            const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            
+            // Set size based on font size. Using a fixed pixel size ensures it fits inside 1em.
+            // We'll let CSS scale the canvas.
+            renderer.setSize(64, 64);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.domElement.style.width = '100%';
+            renderer.domElement.style.height = '100%';
+            container.appendChild(renderer.domElement);
+            
+            const group = new THREE.Group();
+            scene.add(group);
+            
+            const earth = new THREE.Mesh(
+                new THREE.SphereGeometry(2.2, 32, 32),
+                new THREE.MeshPhongMaterial({ map: earthTexture, shininess: 15, specular: new THREE.Color(0x333333) })
+            );
+            group.add(earth);
+            
+            const atmosphere = new THREE.Mesh(
+                new THREE.SphereGeometry(2.4, 32, 32),
+                new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.15, side: THREE.BackSide })
+            );
+            group.add(atmosphere);
+            
+            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+            const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+            sun.position.set(5, 3, 5);
+            scene.add(sun);
+            
+            camera.position.z = 7.5;
+            
+            function animateSmall() {
+                requestAnimationFrame(animateSmall);
+                earth.rotation.y += 0.005;
+                renderer.render(scene, camera);
+            }
+            animateSmall();
+        });
+    }
+    initSmallEarths();
+
+    // === Map ===
+    function initMap() {
+        if (!state.map && document.getElementById('map')) {
+            state.map = L.map('map').setView([20.0, 0.0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(state.map);
+        }
+    }
+    
+    // Slider Sync
+    const interestWeight = document.getElementById('interest-weight');
+    const weightVal = document.getElementById('weight-val');
+    if (interestWeight && weightVal) {
+        interestWeight.addEventListener('input', (e) => {
+            weightVal.innerText = e.target.value + '%';
+        });
+    }
+
+    // === Backend Communication (SSE) ===
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input-field');
+    const chatContainer = document.getElementById('chat-container');
+
+    chatForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if (!text) return;
+        
+        addChatMessage(text, 'user');
+        chatInput.value = '';
+        
+        triggerBackend('chat', text);
+    });
+
+    function triggerBackend(step, userInput, extraParams = {}) {
+        let url = `/api/stream?step=${step}&user_input=${encodeURIComponent(userInput)}`;
+        if (state.sessionId) url += `&session_id=${state.sessionId}`;
+        for (const [k, v] of Object.entries(extraParams)) {
+            url += `&${k}=${encodeURIComponent(v)}`;
+        }
+
+        const msgDiv = addChatMessage('', 'ai');
+        msgDiv.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Processing...';
+        
+        const eventSource = new EventSource(url);
+        let fullText = '';
+        
+        eventSource.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            
+            if (data.type === 'error') {
+                msgDiv.innerHTML = `<span class="text-danger"><i class="fas fa-exclamation-circle"></i> Error: ${data.error}</span>`;
+                eventSource.close();
+            }
+            else if (data.type === 'chunk') {
+                if (fullText === '') msgDiv.innerHTML = '';
+                fullText += data.content;
+                msgDiv.innerHTML = marked.parse(fullText);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
             }
             else if (data.type === 'complete') {
                 eventSource.close();
-                loadingSpinner.classList.add('d-none');
-
-                // Validation warning flow (unchanged)
-                if (data.validation_warning) {
-                    const valMsg = document.getElementById('validation-message');
-                    if (valMsg) valMsg.textContent = `You have selected ${data.selected_count} attractions. For a balanced trip, we recommend at least ${data.required_count}.`;
-                    const modal = new bootstrap.Modal(document.getElementById('validationModal'));
-                    modal.show();
-                    document.getElementById('force-proceed-btn').onclick = function () {
-                        modal.hide();
-                        state.force_continue = true;
-                        processUserInput('Here are my selected attractions');
-                    };
-                    return;
-                }
-                state.force_continue = false;
-
-                const prevStep = state.step;
-                state.step = data.next_step || state.step;
-                if (data.next_step) {
-                    updateStepNav(data.next_step);
-                    updateViewState(state.step);
+                if (data.session_id) state.sessionId = data.session_id;
+                
+                if (fullText.trim() === '') {
+                    msgDiv.innerHTML = "Got it! Preparing the next steps.";
                 }
 
-                if (data.session_id) state.session_id = data.session_id;
-
-                if (data.missing_fields && data.missing_fields.length > 0) showMissingFields(data.missing_fields);
-                else hideMissingFields();
-
-                if (data.state) {
-                    if (data.state.user_info) state.userInfo = data.state.user_info;
-                    if (data.state.attractions) state.attractions = data.state.attractions;
-                    if (data.state.selected_attractions) state.selectedAttractions = data.state.selected_attractions;
-                    if (data.state.itinerary) state.itinerary = data.state.itinerary;
-                    if (data.state.budget) state.budget = data.state.budget;
-                    if (data.state.weather_summary) state.weatherSummary = data.state.weather_summary;
-                    if (data.state.ai_recommendation_generated !== undefined) state.ai_recommendation_generated = Boolean(data.state.ai_recommendation_generated);
-                    if (data.state.user_input_processed !== undefined) state.user_input_processed = Boolean(data.state.user_input_processed);
-                }
-
-                if (data.attractions) updateAttractions(data.attractions, data.accommodations || []);
-                if (data.map_data) updateMap(data.map_data);
-                if (data.itinerary) updateItinerary(data.itinerary);
-                if (data.budget) updateBudget(data.budget);
-                if (data.transit_options) updateTransitOptions(data.transit_options);
-                if (state.weatherSummary) updateWeather(state.weatherSummary);
-                if (data.response) updateConfirmation(data.response);
-
-                if (state.step === 'complete') {
-                    addChatMessage('Your itinerary and budget have been generated! Open the panels on the right for full-screen details.', 'assistant');
-                }
-
-                if (data.optimal_route && data.optimal_route.length >= 2) {
-                    _lastOptimalRoute = data.optimal_route;
-                    drawRoute(data.optimal_route);
-                }
-
-                // strategy-step UX: prefill confirmation + pulse input (unchanged logic)
-                if (state.step === 'strategy' && data.next_step === 'strategy') {
-                    const ui = document.getElementById('user-input');
-                    if (ui) {
-                        ui.value = 'I am satisfied with your recommendation, let us go to next step';
-                        scrollToBottom(); ui.focus();
-                        setTimeout(() => {
-                            const confEl = document.getElementById('confirmationModal');
-                            if (confEl) {
-                                const confModal = new bootstrap.Modal(confEl);
-                                const applyHighlight = () => {
-                                    ui.classList.add('highlight-input-dark');
-                                    const btn = ui.closest('form').querySelector('button[type="submit"]');
-                                    if (btn) btn.classList.add('highlight-input-dark');
-                                    ui.focus();
-                                    const remove = () => {
-                                        ui.classList.remove('highlight-input-dark');
-                                        if (btn) btn.classList.remove('highlight-input-dark');
-                                        ui.removeEventListener('input', remove);
-                                        if (btn) btn.removeEventListener('click', remove);
-                                    };
-                                    ui.addEventListener('input', remove);
-                                    if (btn) btn.addEventListener('click', remove);
-                                    confEl.removeEventListener('hidden.bs.modal', applyHighlight);
-                                };
-                                confEl.addEventListener('hidden.bs.modal', applyHighlight);
-                                confModal.show();
-                            }
-                        }, 200);
+                // Handle Step Outputs
+                if (data.next_step === 'recommend' || data.recommended_attractions) {
+                    if (data.recommended_attractions) {
+                        state.attractions = data.recommended_attractions;
+                        renderRecommendations(state.attractions);
+                        setTimeout(() => switchTab('explore'), 1500);
+                    } else {
+                        // Auto trigger recommend if backend expects it
+                        triggerBackend('recommend', 'continue');
                     }
                 }
-            }
-            else if (data.type === 'error') {
-                eventSource.close();
-                loadingSpinner.classList.add('d-none');
-                messageContent.innerHTML = 'Sorry, there was an error processing your request. Please try again.';
-                if (state.step === 'route' || state.step === 'complete') alert('Error: ' + (data.error || 'Please try again.'));
+                
+                if (data.itinerary || data.budget) {
+                    if (data.itinerary) {
+                        state.itinerary = data.itinerary;
+                        renderItinerary(data.itinerary);
+                        renderMap(data.itinerary);
+                    }
+                    if (data.budget) {
+                        state.budget = data.budget;
+                        renderBudget(data.budget);
+                    }
+                    if (data.weather_summary) {
+                        renderWeather(data.weather_summary);
+                    }
+                    setTimeout(() => switchTab('itinerary'), 1500);
+                }
+
+                // Auto-forwarding internal steps
+                if (['information', 'retrieval'].includes(data.next_step)) {
+                    triggerBackend(data.next_step, 'continue');
+                }
+                if (data.next_step === 'route' || data.next_step === 'communication') {
+                    triggerBackend(data.next_step, 'continue');
+                }
             }
         };
-
-        eventSource.onerror = function () {
+        eventSource.onerror = () => {
             eventSource.close();
-            loadingSpinner.classList.add('d-none');
-            messageContent.innerHTML = 'Sorry, a network error occurred. Please try again.';
-            if (state.step === 'route' || state.step === 'complete') alert('Network error while generating your itinerary. Please try again.');
+            msgDiv.innerHTML = `<span class="text-danger">Connection lost.</span>`;
         };
     }
 
-    /* ----------------------------------------------------------------------
-       TRANSIT
-       ---------------------------------------------------------------------- */
-    function updateTransitOptions(options) {
-        if (!options || typeof options !== 'object') return;
-        function renderList(items, iconClass) {
-            if (!items || items.length === 0) return '<p class="text-center muted small mb-0">No options available for this route.</p>';
-            let html = '';
-            items.forEach(opt => {
-                const price = opt.price_inr || opt.price || 0;
-                const operator = opt.operator || opt.provider || 'Unknown';
-                const dep = opt.departure_time || opt.departure || '';
-                const arr = opt.arrival_time || opt.arrival || '';
-                const dur = opt.duration || '';
-                const type = opt.type || '';
-                html += `
-                <div class="list-group-item transit-row px-3 py-2">
-                    <div class="d-flex justify-content-between align-items-start">
+    function addChatMessage(text, sender) {
+        const div = document.createElement('div');
+        div.className = sender === 'user' ? 'user-msg' : 'ai-msg';
+        
+        let icon = sender === 'user' ? '<i class="fas fa-user"></i>' : '<i class="fas fa-robot"></i>';
+        
+        div.innerHTML = `
+            ${sender === 'ai' ? `<div class="avatar">${icon}</div>` : ''}
+            <div class="msg-content">${text}</div>
+            ${sender === 'user' ? `<div class="avatar bg-primary text-white border-0">${icon}</div>` : ''}
+        `;
+        
+        chatContainer.appendChild(div);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+        return div.querySelector('.msg-content');
+    }
+
+    // === Render Logic ===
+    function renderRecommendations(attrs) {
+        const container = document.getElementById('recommendations-container');
+        if (!container) return;
+        container.innerHTML = '';
+        
+        attrs.forEach(a => {
+            const div = document.createElement('div');
+            div.className = 'bento-card';
+            div.onclick = () => openAttractionModal(a);
+            
+            const matchScore = a.score || 85;
+            
+            const nameFormatted = (a.name || '').toLowerCase().replace(/\s+/g, '-');
+            div.id = `attraction-card-${nameFormatted}`;
+            div.innerHTML = `
+                <img src="${a.image_url || 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800'}" class="bento-img">
+                <div class="bento-content">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h5 class="Bricolage mb-0">${a.name}</h5>
+                        <div class="match-badge"><i class="fas fa-check-circle"></i> ${matchScore}% Match</div>
+                    </div>
+                    <p class="text-muted small mb-3"><i class="fas fa-map-marker-alt text-accent me-1"></i> ${a.address || 'Location'}</p>
+                    <div class="d-flex justify-content-between text-secondary small">
+                        <span><i class="fas fa-star text-warning me-1"></i> ${a.rating || 4.5}</span>
+                        <span><i class="fas fa-clock me-1"></i> ${a.duration || '2h'}</span>
+                    </div>
+                </div>
+                <div class="p-3 border-top text-center text-accent fw-bold" style="background: var(--bg-alt); font-size: 0.9rem;">
+                    Explore <i class="fas fa-arrow-right ms-1"></i>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    function openAttractionModal(a) {
+        document.getElementById('modal-title').innerText = a.name;
+        document.getElementById('modal-location').innerText = a.address || 'Unknown Location';
+        document.getElementById('modal-rating').innerText = a.rating || 4.5;
+        document.getElementById('modal-desc').innerText = a.description || 'No description available.';
+        document.getElementById('modal-image').src = a.image_url || 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800';
+        
+        new bootstrap.Modal(document.getElementById('attractionModal')).show();
+    }
+
+    function renderItinerary(itineraryData) {
+        const tl = document.getElementById('itinerary-timeline');
+        const mapTl = document.getElementById('map-timeline');
+        if (!tl) return;
+        tl.innerHTML = '';
+        if(mapTl) mapTl.innerHTML = '';
+
+        itineraryData.forEach(day => {
+            const dayDiv = document.createElement('div');
+            dayDiv.id = `itinerary-day-${day.day}`;
+            dayDiv.setAttribute('data-testid', `itinerary-day-${day.day}`);
+            dayDiv.innerHTML = `<h4 class="Bricolage mt-5 mb-4 text-accent"><i class="fas fa-sun me-2"></i> Day ${day.day} <span class="text-secondary ms-2" style="font-size: 1.1rem; font-weight: normal;">${day.date || ''}</span></h4>`;
+            tl.appendChild(dayDiv);
+            
+            day.spots.forEach(spot => {
+                const item = document.createElement('div');
+                item.className = 'timeline-item';
+                item.innerHTML = `
+                    <div class="timeline-dot"></div>
+                    <div class="timeline-time">${spot.start_time || '09:00 AM'}</div>
+                    <div class="timeline-content">
+                        ${spot.category !== 'Food' ? `<img src="https://images.unsplash.com/photo-1520645521318-f0f1ce215c1e?w=200" class="timeline-img">` : ''}
                         <div>
-                            <i class="${iconClass} text-primary me-2"></i><strong>${operator}</strong>
-                            ${type ? `<span class="badge bg-light text-light ms-1 small">${type}</span>` : ''}
-                            <div class="small muted mt-1">${dep ? `🛫 ${dep}` : ''} ${arr ? `→ 🛬 ${arr}` : ''} ${dur ? `· ⏱ ${dur}` : ''}</div>
-                        </div>
-                        <div class="text-end">
-                            <span class="fw-bold" style="color: var(--green);">${inr(price)}</span>
-                            <div class="small muted">per person</div>
+                            <h5 class="Bricolage mb-1">${spot.name}</h5>
+                            <p class="text-secondary small mb-2"><i class="fas fa-map-marker-alt text-accent me-1"></i> ${spot.category || 'Attraction'}</p>
+                            <div class="d-flex gap-3 text-muted small">
+                                <span><i class="fas fa-clock me-1"></i> ${spot.estimated_duration}h</span>
+                            </div>
                         </div>
                     </div>
-                </div>`;
+                `;
+                tl.appendChild(item);
+                
+                if(mapTl && spot.category !== 'Food') {
+                    const mItem = item.cloneNode(true);
+                    mItem.querySelector('.timeline-img')?.remove();
+                    mItem.querySelector('.timeline-content').style.padding = '1rem';
+                    mapTl.appendChild(mItem);
+                }
             });
-            return html;
-        }
-        const f = document.getElementById('flights'), t = document.getElementById('trains'), b = document.getElementById('buses');
-        if (f) f.innerHTML = renderList(options.flights, 'fas fa-plane');
-        if (t) t.innerHTML = renderList(options.trains, 'fas fa-train');
-        if (b) b.innerHTML = renderList(options.buses, 'fas fa-bus');
+        });
     }
 
-    /* ----------------------------------------------------------------------
-       MAP HELPERS
-       ---------------------------------------------------------------------- */
-    function clearMarkers(arr) { if (arr) { arr.forEach(m => m.remove()); arr.length = 0; } }
-    function updateMap() { /* reserved — selection markers handle the real work */ }
+    function renderMap(itineraryData) {
+        if (!state.map) return;
+        
+        state.mapMarkers.forEach(m => state.map.removeLayer(m));
+        state.routePolylines.forEach(p => state.map.removeLayer(p));
+        state.mapMarkers = [];
+        state.routePolylines = [];
 
-    function addMarkerToMap(attraction) {
-        if (!map || !attraction || !attraction.location) return;
-        const idx = mapMarkers.findIndex(m => m.attractionId === attraction.id);
-        if (idx !== -1) { mapMarkers[idx].remove(); mapMarkers.splice(idx, 1); }
-        const marker = L.marker([attraction.location.lat, attraction.location.lng], { title: attraction.name }).addTo(map);
-        marker.bindPopup(`<strong>${attraction.name}</strong>`);
-        marker.attractionId = attraction.id;
-        mapMarkers.push(marker);
-        updateMapView();
-    }
+        let allPoints = [];
+        let pointsByDay = [];
 
-    function removeMarkerFromMap(id) {
-        const i = mapMarkers.findIndex(m => m.attractionId === id);
-        if (i !== -1) { mapMarkers[i].remove(); mapMarkers.splice(i, 1); }
-        const j = selectedMarkers.findIndex(m => m.attractionId === id);
-        if (j !== -1) { selectedMarkers[j].remove(); selectedMarkers.splice(j, 1); }
-    }
-
-    function updateMapView() {
-        if (!map || mapMarkers.length === 0) return;
-        map.fitBounds(L.latLngBounds(mapMarkers.map(m => m.getLatLng())), { maxZoom: 14, padding: [24, 24] });
-    }
-
-    function drawRoute(route) {
-        if (!map || !route || route.length < 2) return;
-        routePolylines.forEach(p => p.remove()); routePolylines = [];
-        routeMarkers.forEach(m => m.remove()); routeMarkers = [];
-        const path = [];
-        route.forEach((spot, index) => {
-            if (spot.location && typeof spot.location.lat === 'number' && typeof spot.location.lng === 'number') {
-                const pos = [spot.location.lat, spot.location.lng];
-                path.push(pos);
-                const icon = L.divIcon({
-                    className: 'route-marker-icon',
-                    html: `<div style="background:linear-gradient(135deg,#2DD4BF,#38BDF8); color:#06281f; border-radius:50%; width:26px; height:26px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:.8rem; border:2px solid #fff; box-shadow:0 0 12px rgba(45,212,191,.6);">${index + 1}</div>`,
-                    iconSize: [26, 26], iconAnchor: [13, 13]
-                });
-                routeMarkers.push(L.marker(pos, { icon, title: spot.name }).addTo(map));
+        itineraryData.forEach(day => {
+            let dayPoints = [];
+            day.spots.forEach(s => {
+                if (s.location && s.location.lat) {
+                    const pt = [s.location.lat, s.location.lng];
+                    dayPoints.push(pt);
+                    allPoints.push(pt);
+                    
+                    const m = L.circleMarker(pt, {
+                        radius: 8,
+                        fillColor: "#0284C7",
+                        color: "#fff",
+                        weight: 2,
+                        fillOpacity: 1
+                    }).addTo(state.map);
+                    
+                    m.on('click', () => {
+                        document.getElementById('map-timeline').classList.add('d-none');
+                        document.getElementById('map-location-details').classList.remove('d-none');
+                        document.getElementById('map-detail-title').innerText = s.name;
+                        document.getElementById('map-detail-desc').innerText = s.description || s.category || 'No details available for this location.';
+                        document.getElementById('map-detail-img').src = s.image_url || 'https://images.unsplash.com/photo-1520645521318-f0f1ce215c1e?w=800';
+                    });
+                    
+                    state.mapMarkers.push(m);
+                }
+            });
+            if (dayPoints.length > 1) {
+                const line = L.polyline(dayPoints, { color: '#0EA5E9', weight: 4, dashArray: '5, 10' }).addTo(state.map);
+                state.routePolylines.push(line);
             }
         });
-        if (path.length > 1) {
-            routePolylines.push(L.polyline(path, { color: '#2DD4BF', weight: 4, opacity: .85, dashArray: '2 6' }).addTo(map));
+
+        if (allPoints.length > 0) {
+            state.map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
         }
-        if (path.length > 0) map.fitBounds(L.latLngBounds(path), { padding: [34, 34] });
     }
 
-    /* ----------------------------------------------------------------------
-       RECOMMENDATIONS — compact rows; name click => FULLSCREEN detail
-       ---------------------------------------------------------------------- */
-    function updateAttractions(attractions, accommodations) {
-        currentAttractions = attractions || [];
-        selectedAttractions = state.selectedAttractions || [];
-        state.selectedAccommodation = state.selectedAccommodation || null;
-
-        const confirmFooter = document.getElementById('confirm-all-selections-footer');
-        const confirmFooter2 = document.getElementById('recs-card-footer');
-        const accCard = document.getElementById('accommodations-card');
-        const accContainer = document.getElementById('accommodations-container');
-        const staysEmpty = document.getElementById('stays-empty');
-        const interestArea = document.getElementById('interest-attractions-area');
-        const popularArea = document.getElementById('popular-attractions-area');
-
-        interestArea.innerHTML = ''; popularArea.innerHTML = ''; accContainer.innerHTML = '';
-
-        // ---- accommodations ----
-        if (accommodations && accommodations.length > 0) {
-            if (accCard) accCard.classList.remove('d-none');
-            if (staysEmpty) staysEmpty.classList.add('d-none');
-            accommodations.forEach(acc => {
-                const div = document.createElement('div');
-                div.className = 'acc-item';
-                const priceLevel = '💰'.repeat(acc.price_level || 1);
-                const rating = acc.rating ? `⭐ ${acc.rating} (${acc.user_ratings_total || 0})` : 'No rating';
-                const isSel = state.selectedAccommodation && state.selectedAccommodation.id === acc.id;
-                div.innerHTML = `
-                    <input class="form-check-input acc-radio" type="radio" name="accommodationOption" ${isSel ? 'checked' : ''}>
-                    <div class="flex-grow-1">
-                        <p class="acc-name">${acc.name || 'Unknown Stay'}</p>
-                        <p class="acc-addr">${acc.address || ''}</p>
-                        <span class="acc-badge badge" style="background:rgba(139,92,246,.18); color:#C4B5FD;">${priceLevel}</span>
-                        <span class="acc-badge badge" style="background:rgba(255,255,255,.08); color:var(--ink-medium);">${rating}</span>
-                    </div>`;
-                div.querySelector('.acc-radio').addEventListener('change', () => { state.selectedAccommodation = acc; });
-                accContainer.appendChild(div);
-            });
-        } else {
-            if (accCard) accCard.classList.add('d-none');
-            if (staysEmpty) staysEmpty.classList.remove('d-none');
-        }
-
-        // ---- attraction rows ----
-        if (!currentAttractions.length) {
-            interestArea.innerHTML = '<div class="empty-state"><p>No recommendations available right now.</p></div>';
-            popularArea.innerHTML = '<div class="empty-state"><p>No recommendations available right now.</p></div>';
-        } else {
-            let interestCount = 0, popularCount = 0;
-            currentAttractions.forEach(a => {
-                const row = createAttractionRow(a);
-                if (a.recommendation_type === 'interest_based') { interestArea.appendChild(row); interestCount++; }
-                else { popularArea.appendChild(row); popularCount++; }
-            });
-            if (!interestCount) interestArea.innerHTML = '<div class="empty-state"><p>No specific matches for your interests yet.</p></div>';
-            if (!popularCount) popularArea.innerHTML = '<div class="empty-state"><p>No other popular attractions to show.</p></div>';
-        }
-
-        if (confirmFooter) confirmFooter.classList.toggle('d-none', !(currentAttractions.length || (accommodations && accommodations.length)));
-        if (confirmFooter2) confirmFooter2.classList.toggle('d-none', !(currentAttractions.length || (accommodations && accommodations.length)));
-
-        // minimize the focus window so the recommendations shine
-        setTimeout(closeFocus, 400);
-    }
-
-    function createAttractionRow(a) {
-        const div = document.createElement('div');
-        div.className = 'attraction-row';
-        div.dataset.attrId = a.id;
-        const isSel = selectedAttractions.some(s => s.id === a.id);
-        if (isSel) div.classList.add('selected');
-        const rating = a.rating ? `⭐ ${a.rating}` : '☆ New';
-        const duration = a.estimated_duration ? `⏱ ${a.estimated_duration}h` : '';
-        div.innerHTML = `
-            <img class="attr-row-thumb" src="${a.image_url || 'https://via.placeholder.com/120?text=✦'}" onerror="this.onerror=null;this.src='https://via.placeholder.com/120?text=✦';" alt="">
-            <div class="attr-row-main">
-                <div class="attr-row-name">${a.name}</div>
-                <div class="attr-row-meta"><span class="cat">${a.category || 'Experience'}</span><span>${rating}</span><span>${duration}</span></div>
+    function renderBudget(budget) {
+        document.getElementById('total-budget-display').innerText = `₹${budget.total || 0}`;
+        const container = document.getElementById('budget-breakdown');
+        if (!container) return;
+        
+        const colors = {
+            'Accommodation': '#0284C7',
+            'Food': '#0EA5E9',
+            'Transport': '#38BDF8',
+            'Attractions': '#059669',
+            'Contingency': '#D97706'
+        };
+        
+        container.innerHTML = Object.entries(budget).filter(([k]) => k !== 'total').map(([k, v]) => `
+            <div class="legend-item">
+                <div><span class="legend-color" style="background: ${colors[k] || '#E2E8F0'}"></span> <span class="fw-bold">${k}</span></div>
+                <div class="text-secondary">₹${v}</div>
             </div>
-            <button class="btn-row-select ${isSel ? 'selected' : ''}"><i class="fas ${isSel ? 'fa-check' : 'fa-plus'}"></i> <span>${isSel ? 'Added' : 'Add'}</span></button>
-            <i class="fas fa-chevron-right attr-row-chevron"></i>`;
+        `).join('');
+    }
 
-        // name click => FULLSCREEN detail
-        div.querySelector('.attr-row-main').addEventListener('click', () => openAttractionDetail(a.id));
-        div.querySelector('.attr-row-thumb').addEventListener('click', () => openAttractionDetail(a.id));
-        div.querySelector('.attr-row-chevron').addEventListener('click', () => openAttractionDetail(a.id));
-        // quick add button
-        div.querySelector('.btn-row-select').addEventListener('click', ev => {
-            ev.stopPropagation();
-            toggleAttractionSelection(a);
+    function renderWeather(w) {}
+
+    // Gen Route button
+    document.getElementById('btn-generate-route')?.addEventListener('click', () => {
+        const ids = state.attractions.map(a => a.id);
+        triggerBackend('recommend', 'Here are my selected attractions', {
+            selected_attraction_ids: JSON.stringify(ids),
+            force_continue: true
         });
-        return div;
-    }
-
-    function openAttractionDetail(id) {
-        const a = currentAttractions.find(x => x.id === id);
-        if (!a) return;
-        const isSel = selectedAttractions.some(s => s.id === id);
-        const priceLevel = '💰'.repeat(a.price_level || 0) || 'Free / Unknown';
-        const rating = a.rating ? `⭐ ${a.rating} (${a.user_ratings_total || 0} reviews)` : 'Not yet rated';
-        const duration = a.estimated_duration ? `${a.estimated_duration} hrs` : 'Flexible';
-
-        const body = document.getElementById('attraction-modal-body');
-        body.innerHTML = `
-            <div class="attr-modal-hero">
-                <img src="${a.image_url || 'https://via.placeholder.com/1200x500?text=ExploreX'}" onerror="this.onerror=null;this.src='https://via.placeholder.com/1200x500?text=ExploreX';" alt="${a.name}">
-                <button class="attr-modal-close" data-bs-dismiss="modal" aria-label="Close"><i class="fas fa-xmark"></i></button>
-            </div>
-            <div class="attr-modal-body">
-                <h3 class="attr-modal-title">${a.name}</h3>
-                <div class="attr-modal-chips">
-                    <span class="attr-chip teal"><i class="fas fa-tag"></i> ${a.category || 'Experience'}</span>
-                    <span class="attr-chip gold">${priceLevel}</span>
-                    <span class="attr-chip">${rating}</span>
-                    <span class="attr-chip"><i class="far fa-clock"></i> ${duration}</span>
-                </div>
-                <p class="attr-modal-desc">${a.description || 'No description available yet — ask the assistant for more!'}</p>
-                <div class="attr-modal-actions">
-                    <button class="btn btn-primary" id="attr-modal-select"><i class="fas ${isSel ? 'fa-check' : 'fa-plus'} me-2"></i>${isSel ? 'In Your Backpack' : 'Add to Backpack'}</button>
-                    <button class="btn btn-ghost" id="attr-modal-nearby"><i class="fas fa-utensils me-2"></i>Nearby Eats</button>
-                </div>
-                <div id="attraction-nearby"></div>
-            </div>`;
-
-        body.querySelector('#attr-modal-select').addEventListener('click', function () {
-            toggleAttractionSelection(a);
-            const nowSel = selectedAttractions.some(s => s.id === id);
-            this.innerHTML = `<i class="fas ${nowSel ? 'fa-check' : 'fa-plus'} me-2"></i>${nowSel ? 'In Your Backpack' : 'Add to Backpack'}`;
-        });
-        body.querySelector('#attr-modal-nearby').addEventListener('click', () => fetchNearbyPlaces(a, 'attraction-nearby'));
-
-        if (!_attractionModal) _attractionModal = new bootstrap.Modal(document.getElementById('attractionModal'));
-        _attractionModal.show();
-    }
-
-    /* ----------------------------------------------------------------------
-       SELECTION STATE (single source of truth — updates row, modal, map, list)
-       ---------------------------------------------------------------------- */
-    function toggleAttractionSelection(a) {
-        if (!a.id) return;
-        const idx = selectedAttractions.findIndex(s => s.id === a.id);
-        if (idx > -1) {
-            selectedAttractions.splice(idx, 1);
-            removeMarkerFromMap(a.id);
-        } else {
-            selectedAttractions.push(a);
-            addMarkerToMap(a);
-        }
-        state.selectedAttractions = selectedAttractions;
-        syncSelectionUI(a.id);
-        updateSelectedAttractionsList();
-    }
-
-    function syncSelectionUI(id) {
-        const sel = selectedAttractions.some(s => s.id === id);
-        document.querySelectorAll(`.attraction-row[data-attr-id="${id}"]`).forEach(row => {
-            row.classList.toggle('selected', sel);
-            const btn = row.querySelector('.btn-row-select');
-            if (btn) {
-                btn.classList.toggle('selected', sel);
-                btn.innerHTML = `<i class="fas ${sel ? 'fa-check' : 'fa-plus'}"></i> <span>${sel ? 'Added' : 'Add'}</span>`;
-            }
-        });
-    }
-
-    // confirm buttons (both the backpack panel and the recommendations card)
-    function confirmSelections() {
-        if (selectedAttractions.length > 0) {
-            state.selectedAttractions = selectedAttractions;
-            updateSelectedAttractionsList();
-            addChatMessage('Here are my selected attractions', 'user');
-            processUserInput('Here are my selected attractions');
-        } else {
-            addChatMessage('Please select at least one attraction from the recommendations.', 'assistant');
-        }
-    }
-    ['confirm-selected-attractions-btn', 'confirm-selected-attractions-btn-2'].forEach(bid => {
-        const b = document.getElementById(bid);
-        if (b) b.addEventListener('click', confirmSelections);
+        setTimeout(() => triggerBackend('strategy', 'Plan my route'), 2000);
     });
 
-    function updateSelectedAttractionsList() {
-        const list = document.getElementById('selected-attractions');
-        if (!list) return;
-        list.innerHTML = '';
-        const countBadge = document.getElementById('selected-count');
-        if (countBadge) countBadge.textContent = selectedAttractions.length;
-        if (!selectedAttractions.length) {
-            list.innerHTML = '<div class="empty-state py-3"><p class="mb-0">Select places to add them to your trip.</p></div>';
+    document.getElementById('btn-send-itinerary-email')?.addEventListener('click', async () => {
+        const emailInput = document.getElementById('email-deliver-input');
+        const email = emailInput ? emailInput.value : '';
+        if (!email) {
+            alert('Please enter an email address.');
             return;
         }
-        selectedAttractions.forEach(a => {
-            const item = document.createElement('div');
-            item.className = 'selected-item';
-            item.innerHTML = `
-                <img src="${a.image_url || 'https://via.placeholder.com/100?text=✦'}" onerror="this.onerror=null;this.src='https://via.placeholder.com/100?text=✦';" class="selected-img" alt="">
-                <div class="selected-info">
-                    <p class="selected-title" title="${a.name}">${a.name}</p>
-                    <p class="selected-cat"><i class="fas fa-tag"></i> ${a.category || 'Location'} · ${a.estimated_duration || 2}h</p>
-                </div>
-                <button class="btn-remove" title="Remove"><i class="fas fa-times"></i></button>`;
-            item.querySelector('.btn-remove').addEventListener('click', () => removeAttraction(a.id));
-            list.appendChild(item);
-        });
-    }
-
-    function removeAttraction(id) {
-        selectedAttractions = selectedAttractions.filter(a => a.id !== id);
-        state.selectedAttractions = selectedAttractions;
-        removeMarkerFromMap(id);
-        syncSelectionUI(id);
-        updateSelectedAttractionsList();
-    }
-
-    /* result cache keyed by "lat,lng" to avoid repeat fetches */
-    const _nearbyFoodCache = {};
-
-    function fetchNearbyPlaces(attraction, containerId) {
-        const c = document.getElementById(containerId);
-        if (!c) return;
-
-        if (!attraction || !attraction.location || typeof attraction.location.lat !== 'number') {
-            c.innerHTML = '<p class="text-danger mt-3">Location data not available for this attraction.</p>';
-            return;
-        }
-
-        const cacheKey = `${attraction.location.lat.toFixed(5)},${attraction.location.lng.toFixed(5)}`;
-
-        // Reuse cached result if available
-        if (_nearbyFoodCache[cacheKey]) {
-            renderNearbyFood(c, _nearbyFoodCache[cacheKey], attraction.name);
-            return;
-        }
-
-        c.innerHTML = '<p class="muted mt-3"><i class="fas fa-circle-notch fa-spin me-2"></i>Scouting nearby eats…</p>';
-
-        fetch(`/api/nearby/${cacheKey}`)
-            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-            .then(data => {
-                _nearbyFoodCache[cacheKey] = data;
-                renderNearbyFood(c, data, attraction.name);
-            })
-            .catch(() => {
-                c.innerHTML = '<p class="text-danger mt-3"><i class="fas fa-exclamation-circle me-2"></i>Unable to load nearby food options right now.</p>';
+        const btn = document.getElementById('btn-send-itinerary-email');
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+        btn.disabled = true;
+        
+        try {
+            const response = await fetch('/api/email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
             });
-    }
-
-    function renderNearbyFood(container, data, attractionName) {
-        const places = data.restaurants || [];
-        if (!places.length) {
-            container.innerHTML = `<div class="empty-state mt-3"><p class="mb-0">No food spots found within walking distance of <strong>${attractionName}</strong>.</p></div>`;
-            return;
-        }
-
-        let html = `<div class="nearby-food-list mt-3">
-            <p class="nearby-food-heading"><i class="fas fa-utensils me-2" style="color:var(--coral)"></i>Nearby Eats — <span style="opacity:.7">${attractionName}</span></p>`;
-
-        places.forEach(r => {
-            const distText = r.distance_m != null
-                ? (r.distance_m >= 1000
-                    ? `${(r.distance_m / 1000).toFixed(1)} km away`
-                    : `${r.distance_m} m away`)
-                : '';
-
-            html += `<div class="nearby-food-card">
-                <div class="nearby-food-icon"><i class="fas fa-utensils"></i></div>
-                <div class="nearby-food-info">
-                    <p class="nearby-food-name">${r.name}</p>
-                    <div class="nearby-food-meta">
-                        ${r.type ? `<span><i class="fas fa-tag me-1"></i>${r.type}</span>` : ''}
-                        ${r.cuisine ? `<span><i class="fas fa-bowl-food me-1"></i>${r.cuisine}</span>` : ''}
-                        ${distText ? `<span><i class="fas fa-location-dot me-1"></i>${distText}</span>` : ''}
-                    </div>
-                    ${r.address ? `<p class="nearby-food-address"><i class="fas fa-map-pin me-1"></i>${r.address}</p>` : ''}
-                    ${r.opening_hours ? `<p class="nearby-food-hours"><i class="far fa-clock me-1"></i>${r.opening_hours}</p>` : ''}
-                </div>
-            </div>`;
-        });
-
-        html += `</div>`;
-        container.innerHTML = html;
-    }
-
-
-    /* ----------------------------------------------------------------------
-       ITINERARY / BUDGET / CONFIRMATION (unchanged logic, midnight styling)
-       ---------------------------------------------------------------------- */
-    function updateWeather(summary) {
-        document.querySelectorAll('.weather-container').forEach(container => {
-            if (summary) {
-                container.innerHTML = `
-                    <div class="d-flex align-items-center gap-3">
-                        <i class="fas fa-cloud-sun fa-3x" style="color:var(--teal)"></i>
-                        <p class="mb-0" style="color:var(--ink-medium); font-size: 0.95rem;">${summary}</p>
-                    </div>`;
+            const data = await response.json();
+            
+            if (response.ok && data.status === 'success') {
+                btn.innerHTML = 'Sent Successfully';
+                document.getElementById('email-success-state').classList.remove('d-none');
+                document.getElementById('email-success-state').classList.replace('text-danger', 'text-success');
+                document.getElementById('email-success-state').innerHTML = '<i class="fas fa-check-circle me-1"></i> Sent successfully!';
             } else {
-                container.innerHTML = `<div class="empty-state py-2"><p class="mb-0">Weather information not available.</p></div>`;
+                throw new Error(data.message || 'Email delivery failed.');
             }
-        });
-    }
-
-    function updateItinerary(itinerary) {
-        const c = document.getElementById('itinerary-container');
-        if (!c) return;
-        c.innerHTML = '';
-        if (!Array.isArray(itinerary) || !itinerary.length) {
-            c.innerHTML = '<p class="text-center muted">No itinerary available yet.</p>'; return;
+        } catch (error) {
+            btn.innerHTML = 'Send Itinerary';
+            btn.disabled = false;
+            document.getElementById('email-success-state').classList.remove('d-none');
+            document.getElementById('email-success-state').classList.replace('text-success', 'text-danger');
+            document.getElementById('email-success-state').innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i> ${error.message}`;
         }
-        itinerary.forEach(day => {
-            const dayDiv = document.createElement('div');
-            dayDiv.className = 'itinerary-day';
-            dayDiv.innerHTML = `<div class="day-header"><i class="fas fa-sun"></i><div>Day ${day.day || ''} <span class="fw-normal ms-2" style="opacity:.8">${day.date || ''}</span></div></div>`;
-            const timeline = document.createElement('div');
-            timeline.className = 'timeline';
-            (day.spots || []).forEach(spot => {
-                const isAcc = spot.is_accommodation || (spot.category && spot.category.toLowerCase().includes('accommodation'));
-                const priceLevel = '💰'.repeat(spot.price_level || 0);
-                const ev = document.createElement('div');
-                ev.className = 'timeline-event';
-                ev.innerHTML = `
-                    <div class="timeline-dot ${isAcc ? 'accommodation' : ''}"></div>
-                    <div class="timeline-content">
-                        <div class="event-time"><i class="far fa-clock me-1"></i> ${spot.start_time || ''} – ${spot.end_time || ''}</div>
-                        <div class="event-title">${spot.name}</div>
-                        <div class="event-meta">
-                            <span><i class="fas ${isAcc ? 'fa-bed' : 'fa-map-marker-alt'} muted me-1"></i> ${spot.category || 'Location'}</span>
-                            ${priceLevel ? `<span>${priceLevel}</span>` : ''}
-                        </div>
-                    </div>`;
-                timeline.appendChild(ev);
-            });
-            dayDiv.appendChild(timeline);
-            c.appendChild(dayDiv);
-        });
-    }
-
-    function updateBudget(budget) {
-        const c = document.getElementById('budget-container');
-        if (!c) return;
-        if (!budget || budget.total == null) { c.innerHTML = '<p class="muted">No budget estimate available.</p>'; return; }
-
-        const misc = budget.miscellaneous || Math.round((budget.total || 0) * 0.10);
-        const grand = budget.total + (budget.miscellaneous ? 0 : misc);
-        const days = budget.days || 1, people = budget.people || 1;
-        const perPerson = grand > 0 ? Math.round(grand / people) : 0;
-        const numPlaces = state.selectedAttractions ? state.selectedAttractions.length
-            : (state.itinerary ? state.itinerary.reduce((acc, d) => acc + (d.spots ? d.spots.length : 0), 0) : 0);
-
-        let warn = '';
-        if (budget.budget_warning) {
-            warn = `<div class="alert ${budget.budget_infeasible ? 'alert-danger' : 'alert-warning'} small p-2 mb-3 d-flex align-items-start"><span class="me-2">⚠️</span><div>${budget.budget_warning}</div></div>`;
-        }
-        let target = '';
-        if (budget.budget_amount) {
-            const over = grand > budget.budget_amount;
-            target = `
-            <div class="d-flex justify-content-between align-items-center mb-2 mt-3 pt-2" style="border-top:1px solid var(--stroke);">
-                <div><div class="small muted">Target Budget</div><div class="fw-bold" style="color:#fff">${inr(budget.budget_amount)}</div></div>
-                <div class="text-end"><div class="small muted">${over ? 'Over Budget' : 'Remaining'}</div>
-                <div class="fw-bold ${over ? 'text-danger' : 'text-success'}">${inr(Math.abs(budget.budget_amount - grand))}</div></div>
-            </div>`;
-        }
-
-        const cell = (emoji, label, value, sub, extra) => `
-            <div class="col-6"><div class="border rounded p-2 h-100 budget-stat-card" ${extra || ''}>
-                <div class="muted small mb-1">${emoji} ${label}</div>
-                <div class="fw-bold" style="color:#fff">${value}</div>
-                <div class="muted" style="font-size:11px">${sub}</div>
-            </div></div>`;
-
-        c.innerHTML = `
-        ${warn}
-        <div class="row g-2 mb-3 text-center">
-            <div class="col-4"><div class="p-2 border rounded h-100 budget-stat-card">
-                <div class="fs-5 mb-1">🗓️</div><div class="fw-bold" style="color:#fff">${days} Days</div><div class="small muted">Duration</div></div></div>
-            <div class="col-4"><div class="p-2 border rounded h-100 budget-stat-card">
-                <div class="fs-5 mb-1">📍</div><div class="fw-bold" style="color:#fff">${numPlaces} Places</div><div class="small muted">Selected</div></div></div>
-            <div class="col-4"><div class="p-2 border rounded h-100 budget-total-card">
-                <div class="fs-5 mb-1">💰</div><div class="fw-bold" style="color:var(--coral)">${inr(grand)}</div><div class="small muted">Est. Total</div></div></div>
-        </div>
-        ${target}
-        <div class="d-flex justify-content-between align-items-center mb-2 px-1">
-            <span class="fw-bold muted small text-uppercase" style="letter-spacing:.5px;">Budget Breakdown</span>
-            <span class="small muted">${inr(perPerson)} / person</span>
-        </div>
-        <div class="row g-2">
-            ${cell('🏨', 'Accommodation', inr(budget.accommodation || 0), (budget.rooms || 1) + ' room(s)')}
-            ${cell('🍽️', 'Food & Dining', inr(budget.food || 0), 'All meals')}
-            ${cell('🚌', 'Local Transport', inr(budget.transport || 0), 'Autos, cabs, buses')}
-            ${cell('🎟️', 'Entry Tickets', inr(budget.attractions || 0), 'Attraction fees')}
-            ${budget.intercity_transport ? cell('✈️', 'Origin ↔ Dest', inr(budget.intercity_transport), 'Round trip est.') : ''}
-            ${budget.car_rental ? cell('🚗', 'Car Rental', inr(budget.car_rental), '') : ''}
-            ${budget.fuel_cost ? cell('⛽', 'Fuel', inr(budget.fuel_cost), '') : ''}
-            ${cell('🎲', 'Miscellaneous', inr(misc), 'Shopping, tips (~10%)')}
-        </div>
-        <div class="mt-2 muted small text-center">💡 Estimates in INR. Actual prices may vary.</div>`;
-    }
-
-    function updateConfirmation(response) {
-        const c = document.getElementById('confirmation-container');
-        if (!c) return;
-        c.innerHTML = response ? `<div class="message-content" style="max-width:100%">${marked.parse(response)}</div>`
-            : '<p class="text-center muted">Trip summary will appear here once generated.</p>';
-    }
-
-    /* ----------------------------------------------------------------------
-       RESET (backend contract preserved)
-       ---------------------------------------------------------------------- */
-    function resetConversation() {
-        fetch('/api/reset', { method: 'POST' })
-            .then(r => r.json())
-            .then(() => {
-                if (chatContainer) chatContainer.innerHTML = '';
-                const it = document.getElementById('itinerary-container');
-                if (it) it.innerHTML = '<div class="empty-state"><h5>Your travel plan will appear here once generated.</h5></div>';
-                const ia = document.getElementById('interest-attractions-area');
-                if (ia) ia.innerHTML = '<div class="empty-state"><i class="fas fa-search"></i><p>No interest-based attractions found.</p></div>';
-                const pa = document.getElementById('popular-attractions-area');
-                if (pa) pa.innerHTML = '<div class="empty-state"><p>No popular attractions found.</p></div>';
-                const bc = document.getElementById('budget-container');
-                if (bc) bc.innerHTML = '<div class="empty-state py-2"><p class="mb-0">Budget details will appear here once generated.</p></div>';
-
-                clearMarkers(mapMarkers); clearMarkers(selectedMarkers); clearMarkers(routeMarkers);
-                routePolylines.forEach(p => p.remove()); routePolylines = [];
-                _lastOptimalRoute = null;
-                if (map) map.setView(WORLD_DEFAULT_CENTER, WORLD_DEFAULT_ZOOM);
-
-                state = {
-                    step: 'chat', userInfo: {}, attractions: [], selectedAttractions: [], itinerary: null,
-                    budget: null, ai_recommendation_generated: false, user_input_processed: false,
-                    session_id: null, force_continue: false, selectedAccommodation: null
-                };
-                selectedAttractions = []; currentAttractions = [];
-
-                closeFocus();
-                updateStepNav('chat');
-                updateViewState('chat');
-                updateSelectedAttractionsList();
-
-                addChatMessage(
-                    `Welcome back! I'm your AI travel architect. Tell me where in India you'd like to visit, your budget, and what kind of vibe you're looking for!`, 'assistant');
-            })
-            .catch(e => console.error('Reset error:', e));
-    }
-
-    // expose for inline handlers & debugging
-    window.updateMap = updateMap;
-    window.removeAttraction = removeAttraction;
-
-    /* ----------------------------------------------------------------------
-       LANDING PROMPT → REAL CHAT
-       ---------------------------------------------------------------------- */
-    const initialPromptForm = document.getElementById('initial-prompt-form');
-    const initialUserInput = document.getElementById('initial-user-input');
-    const promptChips = document.querySelectorAll('.prompt-chip');
-
-    if (initialPromptForm) {
-        initialPromptForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const val = initialUserInput.value;
-            if (!val.trim()) return;
-            document.getElementById('initial-prompt-ui').classList.add('d-none');
-            document.getElementById('landing-hero-text').classList.add('d-none');
-            const col = document.getElementById('chat-column-landing');
-            if (col) col.classList.remove('d-none');
-            updateViewState('chat');
-            if (userInput && chatForm) {
-                userInput.value = val;
-                chatForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-            }
-        });
-    }
-    promptChips.forEach(chip => chip.addEventListener('click', function () {
-        if (!initialUserInput) return;
-        const text = Array.from(this.childNodes).filter(n => n.nodeType === Node.TEXT_NODE)
-            .map(n => n.textContent.trim()).join(' ').trim() || this.innerText.trim();
-        const cur = initialUserInput.value.trim();
-        initialUserInput.value = cur ? cur + ' ' + text : text;
-        initialUserInput.focus();
-    }));
+    });
 });

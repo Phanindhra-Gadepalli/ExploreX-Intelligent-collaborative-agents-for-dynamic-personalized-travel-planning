@@ -19,6 +19,7 @@ from workflows.travel_graph import TravelGraph
 import requests
 import time
 import warnings
+from services.email_service import send_trip_email
 
 # Suppress the harmless schema title warning from langchain-google-genai
 warnings.filterwarnings("ignore", message=".*Key 'title' is not supported in schema.*")
@@ -221,7 +222,43 @@ def get_attractions(city):
     attractions = info_agent.get_attractions(city)
     return jsonify(attractions)
 
-
+@app.route('/api/email', methods=['POST'])
+def send_email_api():
+    """Manually trigger itinerary email delivery"""
+    try:
+        data = request.json
+        email = data.get('email', '').strip()
+        if not email:
+            return jsonify({"status": "error", "message": "Email is required"}), 400
+            
+        session_id = session.get('session_id')
+        if not session_id or session_id not in workflows:
+            return jsonify({"status": "error", "message": "No active session"}), 400
+            
+        workflow = workflows[session_id]
+        state = workflow.get_current_state()
+        
+        itinerary = state.get("itinerary")
+        budget = state.get("budget_estimate", {})
+        
+        if not itinerary:
+            return jsonify({"status": "error", "message": "Itinerary not generated yet"}), 400
+            
+        from services.email_service import send_trip_email
+        user_name = state.get("user_info", {}).get("name", "Traveler")
+        city = state.get("user_info", {}).get("city", "your destination")
+        days = state.get("user_info", {}).get("days", "?")
+        confirmation = f"Your {days}-day trip to {city} has been planned, {user_name}! Check your itinerary below."
+        
+        success = send_trip_email(email, user_name, city, itinerary, budget, confirmation)
+        if success:
+            return jsonify({"status": "success"})
+        else:
+            return jsonify({"status": "error", "message": "Failed to send email. Check configuration."}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/stream')
 def stream():
@@ -352,7 +389,10 @@ def stream():
                    (current_step == 'strategy' and next_step == 'communication') or \
                    (current_step == 'communication' and next_step == 'route'):
                     current_step = next_step
-                    current_user_input = "continue"
+                    if current_step == 'recommend':
+                        current_user_input = ""
+                    else:
+                        current_user_input = "continue"
                     current_selected_attraction_ids = None  # Clear kwargs for auto transitions
                     print(f"[DIAGNOSTIC] Auto-transitioning loop to '{current_step}'")
                     continue
@@ -445,6 +485,80 @@ def get_nearby_places(attraction_id):
     except Exception as e:
         return jsonify({"error": f"Failed to get nearby places: {str(e)}"}), 500
     
+@app.route('/api/attraction-details', methods=['GET'])
+def get_attraction_details_endpoint():
+    """
+    Return enriched attraction details for a given POI name + coordinates.
+
+    Query params:
+        name  (str)  — attraction name, e.g. "Taj Mahal"
+        lat   (float) — latitude
+        lng   (float) — longitude
+
+    The endpoint:
+      1. Looks up the POI in the current session's attraction list (if any).
+      2. Calls the Wikipedia-backed attraction_details service.
+      3. Returns the merged enriched object — no hallucination.
+    """
+    from services.attraction_details import get_attraction_details
+
+    name = request.args.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'name parameter is required'}), 400
+
+    try:
+        lat = float(request.args.get('lat', 0) or 0)
+        lng = float(request.args.get('lng', 0) or 0)
+    except (ValueError, TypeError):
+        lat, lng = None, None
+
+    # Try to find the existing POI object from the active session
+    existing_data = None
+    session_id = session.get('session_id')
+    if session_id and session_id in workflows:
+        workflow = workflows[session_id]
+        state = workflow.get_current_state() if hasattr(workflow, 'get_current_state') else {}
+        all_attractions = state.get('recommended_attractions') or state.get('attractions') or []
+        # Search by name (case-insensitive) since IDs vary by provider
+        for a in all_attractions:
+            if a.get('name', '').strip().lower() == name.lower():
+                existing_data = a
+                break
+
+    try:
+        details = get_attraction_details(name=name, lat=lat or None, lng=lng or None, existing_data=existing_data)
+        return jsonify(details)
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] get_attraction_details_endpoint: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/email', methods=['POST'])
+def send_email():
+    """Send the itinerary to the user's email."""
+    data = request.json or {}
+    to_email = data.get('email')
+    
+    session_id = session.get('session_id')
+    if not session_id or session_id not in workflows:
+        return jsonify({"error": "Session not found"}), 404
+        
+    workflow = workflows[session_id]
+    state = workflow.get_current_state()
+    
+    user_name = session.get('user_name', 'Traveler')
+    city = state.get('user_info', {}).get('city', 'Your Destination')
+    itinerary = state.get('itinerary', [])
+    budget = state.get('budget', {})
+    
+    success = send_trip_email(to_email, user_name, city, itinerary, budget, "Here is your personalized ExploreX itinerary!")
+    if success:
+        return jsonify({"status": "success"})
+    else:
+        return jsonify({"status": "error", "message": "Email delivery failed."}), 500
+
+
 if __name__ == '__main__':
     # Create data directory if it doesn't exist
     os.makedirs('data', exist_ok=True)

@@ -1,0 +1,14 @@
+{
+  "data": {
+    "description": "The Louvre is a national art museum in Paris, France. It is located on the Right Bank of the Seine in the city's 1st arrondissement (district) and home to some of the most canonical works of Western art, including the Mona Lisa, Venus de Milo, and Winged Victory. The museum is housed in the Louvre Palace, originally built in the late 12th to 13th century under Philip II. Remnants of the Medieval Louvre fortress are visible in the basement of the museum.",
+    "description_source": "wikipedia",
+    "significance": "Art museum in Paris, France",
+    "wiki_url": "https://en.wikipedia.org/wiki/Louvre",
+    "wiki_thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/Louvre_Museum_Wikimedia_Commons.jpg/330px-Louvre_Museum_Wikimedia_Commons.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "wiki_location": {
+      "lat": 48.8611,
+      "lng": 2.3358
+    }
+  },
+  "ts": 1790755903.4367476
+}

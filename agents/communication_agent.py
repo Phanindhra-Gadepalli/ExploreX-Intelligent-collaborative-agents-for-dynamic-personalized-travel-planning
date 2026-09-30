@@ -105,7 +105,7 @@ class CommunicationAgent:
         
         Itinerary: {itinerary_summary}
         Number of attractions: {attractions_count}
-        Estimated budget: ₹{budget_estimate['total']}{car_rental_prompt}
+        Estimated budget: ₹{budget_estimate.get('total_cost', 0)}{car_rental_prompt}
         
         The message should:
         1. Confirm the booking is complete
@@ -135,7 +135,7 @@ class CommunicationAgent:
         name = user_prefs.get('name', 'Traveler')
         
         attractions_list = [a.get("name") for a in selected_attractions]
-        budget_total = budget_estimate.get('total', 0) if budget_estimate else 0
+        budget_total = budget_estimate.get('total_cost', 0) if budget_estimate else 0
         
         has_transit = transit_options and any(transit_options.values())
         

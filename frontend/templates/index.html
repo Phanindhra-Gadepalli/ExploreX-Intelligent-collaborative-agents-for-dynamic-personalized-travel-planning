@@ -1,631 +1,614 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ExploreX: AI Travel Architect | India Travel Planning</title>
-    <meta name="description"
-        content="ExploreX — Multi-agent AI travel architect for India. Personalized itineraries, optimized routes, curated attractions & budget intelligence.">
-    <link rel="icon"
-        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>"
-        type="image/svg+xml">
-
-    <!-- Bootstrap 5 -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- FontAwesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Leaflet -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <title>ExploreX: AI Travel Architect</title>
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Sora:wght@600;700;800&display=swap"
-        rel="stylesheet">
-
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <base target="_blank">
 </head>
-
 <body>
 
-    <!-- ================= NAVBAR ================= -->
-    <nav class="navbar navbar-expand-lg fixed-top">
-        <div class="container-fluid px-4 d-flex justify-content-between align-items-center">
-            <a class="navbar-brand d-flex align-items-center" href="#" aria-label="ExploreX Home" style="flex:1;">
-                <svg width="38" height="38" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"
-                    class="me-2 explorex-logo">
-                    <defs>
-                        <linearGradient id="explorexBg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-                            <stop stop-color="#1B2350" />
-                            <stop offset="1" stop-color="#0B1026" />
-                        </linearGradient>
-                    </defs>
-                    <rect width="40" height="40" rx="12" fill="url(#explorexBg)" stroke="rgba(255,255,255,0.18)" />
-                    <path d="M12 12L28 28" stroke="#7CF7D4" stroke-width="4" stroke-linecap="round" opacity="0.9" />
-                    <path d="M28 12L12 28" stroke="#FF6A3D" stroke-width="4" stroke-linecap="round" opacity="0.9" />
-                    <path d="M20 9L22.2 17.8L31 20L22.2 22.2L20 31L17.8 22.2L9 20L17.8 17.8L20 9Z" fill="#FBBF24" />
-                    <circle cx="20" cy="20" r="2.4" fill="#0B1026" />
-                </svg>
-                <span class="brand-text">ExploreX</span>
-                <span class="brand-tagline ms-2 d-none d-sm-inline">AI Travel Architect</span>
-            </a>
+    <!-- Sticky Navigation (Dashboard) -->
+    <nav class="navbar" id="main-nav" style="display: none;">
+        <a class="brand-text" href="#" data-testid="login-earth-logo">
+            Expl<span class="earth-o earth-logo-container"></span>reX
+        </a>
 
-            <div class="step-nav-wrapper d-none d-md-flex justify-content-center" style="flex:1;">
-                <div class="step-nav-container" id="step-nav">
-                    <div class="step-nav-item active" data-step="chat"><i class="fas fa-comment-dots"></i><span>1. Tell
-                            AI</span></div>
-                    <div class="step-nav-item" data-step="recommend"><i class="fas fa-suitcase"></i><span>2.
-                            Discover</span></div>
-                    <div class="step-nav-item" data-step="route"><i class="far fa-calendar-alt"></i><span>3.
-                            Itinerary</span></div>
-                </div>
-            </div>
+        <div class="nav-tabs-wrapper d-none d-md-flex">
+            <button class="nav-tab active" data-tab="chat" id="nav-tab-chat" data-testid="nav-tab-chat"><i class="fas fa-comment-dots"></i> Chat</button>
+            <button class="nav-tab" data-tab="explore" id="nav-tab-explore" data-testid="nav-tab-explore"><i class="fas fa-compass"></i> Explore</button>
+            <button class="nav-tab" data-tab="map" id="nav-tab-map" data-testid="nav-tab-map"><i class="fas fa-map"></i> Map</button>
+            <button class="nav-tab" data-tab="itinerary" id="nav-tab-itinerary" data-testid="nav-tab-itinerary"><i class="fas fa-calendar-alt"></i> Itinerary</button>
+            <button class="nav-tab" data-tab="weather" id="nav-tab-weather" data-testid="nav-tab-weather"><i class="fas fa-cloud-sun"></i> Weather</button>
+            <button class="nav-tab" data-tab="budget" id="nav-tab-budget" data-testid="nav-tab-budget"><i class="fas fa-wallet"></i> Budget</button>
+        </div>
 
-            <div class="d-flex align-items-center justify-content-end gap-3" style="flex:1;">
-                <div class="user-chip d-none d-sm-flex" id="user-chip" title="Signed-in traveller">
-                    <i class="fas fa-user-astronaut"></i><span id="user-chip-name">Traveller</span>
-                </div>
-                <button class="btn" id="reset-btn" aria-label="Start a new trip">
-                    <i class="fas fa-plus me-2"></i>New Trip
-                </button>
-            </div>
+        <div class="nav-actions">
+            <button class="btn btn-outline" id="reset-btn">New Trip</button>
+            <div class="user-profile"><img src="https://ui-avatars.com/api/?name=User&background=0284C7&color=fff" width="40" class="rounded-circle"></div>
         </div>
     </nav>
 
-    <!-- ================= APP SHELL ================= -->
-    <div class="container-fluid px-4 pb-5" id="app-container">
 
-        <!-- ============ PHASE 1 — TELL AI ============ -->
-        <div id="view-landing" class="view-section active">
-            <div class="landing-inner">
-
-                <div class="text-center" id="landing-hero-text">
-                    <div class="hero-eyebrow"><i class="fas fa-bolt me-1"></i>Powered by Multi-Agent GenAI + RAG</div>
-                    <h1 class="hero-title mb-3">Where will your next<br><span class="grad-text">adventure</span> be?
-                    </h1>
-                    <p class="hero-subtitle mb-0">A swarm of AI agents — Scout, Curator, Planner &amp; Budgeter —
-                        architects your perfect Indian journey in real time.</p>
+    <div class="app-container" id="app-container">
+        
+        <!-- 1. LANDING PAGE -->
+        <section id="view-landing" class="view-section active">
+            <div class="landing-content text-center pt-5">
+                <div class="d-flex justify-content-between px-5 py-3 fixed-top w-100 bg-white" style="background: rgba(255,255,255,0.9) !important; backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); z-index: 2000;">
+                    <div class="brand-text text-dark">Expl<span class="earth-o earth-logo-container"></span>reX</div>
+                    <div>
+                        <button class="btn text-dark fw-bold me-3">Features</button>
+                        <button class="btn text-dark fw-bold me-3">Destinations</button>
+                        <button class="btn text-dark fw-bold me-3">About</button>
+                        <button class="btn btn-primary" onclick="document.getElementById('view-landing').classList.remove('active'); document.getElementById('view-login').classList.add('active'); setTimeout(() => window.dispatchEvent(new Event('resize')), 100);">Get Started</button>
+                    </div>
+                </div>
+                
+                <div class="container" style="margin-top: 10vh;">
+                    <h1 class="hero-title Bricolage">Plan less.<br>Explore more.</h1>
+                    <p class="text-secondary mb-4 fs-5">Your AI travel companion for personalized itineraries,<br>real destinations and unforgettable experiences.</p>
+                    <button class="btn btn-primary btn-lg px-5 shadow-sm" onclick="document.getElementById('view-landing').classList.remove('active'); document.getElementById('view-login').classList.add('active'); setTimeout(() => window.dispatchEvent(new Event('resize')), 100);">Start Exploring <i class="fas fa-arrow-right ms-2"></i></button>
+                    
+                    <div class="mt-4">
+                        <span class="badge-tech"><i class="fas fa-wand-magic-sparkles"></i> Generative AI</span>
+                        <span class="badge-tech"><i class="fas fa-database"></i> RAG</span>
+                        <span class="badge-tech"><i class="fas fa-robot"></i> Multi-Agent System</span>
+                        <span class="badge-tech"><i class="fas fa-bolt"></i> Real-time Data</span>
+                    </div>
                 </div>
 
-                <div id="initial-prompt-ui" class="mt-4">
-                    <p class="text-center hero-step-label mb-3">✈️ Tell us about your trip</p>
-                    <form id="initial-prompt-form">
-                        <div class="prompt-input-wrapper">
-                            <input type="text" id="initial-user-input" class="prompt-input form-control"
-                                placeholder="e.g. 5 days in Jaipur for a family trip focusing on heritage..."
-                                autocomplete="off" aria-label="Describe your trip">
-                            <button type="submit" class="prompt-submit-btn" aria-label="Send trip request">
-                                Send <i class="fas fa-arrow-right"></i>
-                            </button>
+                <!-- 3D Earth Container -->
+                <div class="container-fluid position-relative d-flex justify-content-center" style="margin-top: -20px; z-index: -1;">
+                    <div id="landing-earth-container" style="width: 500px; height: 500px; max-width: 100%;">
+                        <canvas id="landing-earth-canvas" style="width: 100%; height: 100%;"></canvas>
+                    </div>
+                </div>
+
+                <div class="container pb-5" style="margin-top: -60px; position: relative; z-index: 10;">
+                    <div id="landing-destinations" class="row g-4 justify-content-center">
+                        <!-- Paris -->
+                        <div class="col-12 col-md-4 col-lg-3">
+                            <div class="bento-card h-100 d-flex flex-column" style="text-align: left; transition: transform 0.3s; cursor: pointer;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='translateY(0)'">
+                                <img src="https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=85&w=800" class="bento-img" style="height: 160px;">
+                                <div class="bento-content p-3 d-flex flex-column flex-grow-1">
+                                    <h5 class="Bricolage mb-0">Paris, France</h5>
+                                    <p class="text-secondary small mb-2">Romance & Art</p>
+                                    <div class="d-flex justify-content-between align-items-center mt-auto">
+                                        <div class="fw-bold"><i class="fas fa-star text-warning"></i> 4.90</div>
+                                        <button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="startApp()">Explore</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
+                        <!-- Agra -->
+                        <div class="col-12 col-md-4 col-lg-3">
+                            <div class="bento-card h-100 d-flex flex-column" style="text-align: left; transition: transform 0.3s; cursor: pointer;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='translateY(0)'">
+                                <img src="https://images.unsplash.com/photo-1564507592333-c60657eea523?q=85&w=800" class="bento-img" style="height: 160px;">
+                                <div class="bento-content p-3 d-flex flex-column flex-grow-1">
+                                    <h5 class="Bricolage mb-0">Agra, India</h5>
+                                    <p class="text-secondary small mb-2">Heritage & Architecture</p>
+                                    <div class="d-flex justify-content-between align-items-center mt-auto">
+                                        <div class="fw-bold"><i class="fas fa-star text-warning"></i> 4.95</div>
+                                        <button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="startApp()">Explore</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Tokyo -->
+                        <div class="col-12 col-md-4 col-lg-3">
+                            <div class="bento-card h-100 d-flex flex-column" style="text-align: left; transition: transform 0.3s; cursor: pointer;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='translateY(0)'">
+                                <img src="https://images.unsplash.com/photo-1513407030348-c983a97b98d8?q=85&w=800" class="bento-img" style="height: 160px;">
+                                <div class="bento-content p-3 d-flex flex-column flex-grow-1">
+                                    <h5 class="Bricolage mb-0">Tokyo, Japan</h5>
+                                    <p class="text-secondary small mb-2">Futuristic & Food</p>
+                                    <div class="d-flex justify-content-between align-items-center mt-auto">
+                                        <div class="fw-bold"><i class="fas fa-star text-warning"></i> 4.88</div>
+                                        <button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="startApp()">Explore</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Bali -->
+                        <div class="col-12 col-md-4 col-lg-3">
+                            <div class="bento-card h-100 d-flex flex-column" style="text-align: left; transition: transform 0.3s; cursor: pointer;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='translateY(0)'">
+                                <img src="https://images.unsplash.com/photo-1537996194471-e657df975ab4?q=85&w=800" class="bento-img" style="height: 160px;">
+                                <div class="bento-content p-3 d-flex flex-column flex-grow-1">
+                                    <h5 class="Bricolage mb-0">Bali, Indonesia</h5>
+                                    <p class="text-secondary small mb-2">Nature & Serenity</p>
+                                    <div class="d-flex justify-content-between align-items-center mt-auto">
+                                        <div class="fw-bold"><i class="fas fa-star text-warning"></i> 4.92</div>
+                                        <button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="startApp()">Explore</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Dubai -->
+                        <div class="col-12 col-md-4 col-lg-3">
+                            <div class="bento-card h-100 d-flex flex-column" style="text-align: left; transition: transform 0.3s; cursor: pointer;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='translateY(0)'">
+                                <img src="https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=85&w=800" class="bento-img" style="height: 160px;">
+                                <div class="bento-content p-3 d-flex flex-column flex-grow-1">
+                                    <h5 class="Bricolage mb-0">Dubai, UAE</h5>
+                                    <p class="text-secondary small mb-2">Luxury & Adventure</p>
+                                    <div class="d-flex justify-content-between align-items-center mt-auto">
+                                        <div class="fw-bold"><i class="fas fa-star text-warning"></i> 4.85</div>
+                                        <button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="startApp()">Explore</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- New York -->
+                        <div class="col-12 col-md-4 col-lg-3">
+                            <div class="bento-card h-100 d-flex flex-column" style="text-align: left; transition: transform 0.3s; cursor: pointer;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='translateY(0)'">
+                                <img src="https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=85&w=800" class="bento-img" style="height: 160px;">
+                                <div class="bento-content p-3 d-flex flex-column flex-grow-1">
+                                    <h5 class="Bricolage mb-0">New York, USA</h5>
+                                    <p class="text-secondary small mb-2">Culture & Skyline</p>
+                                    <div class="d-flex justify-content-between align-items-center mt-auto">
+                                        <div class="fw-bold"><i class="fas fa-star text-warning"></i> 4.87</div>
+                                        <button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="startApp()">Explore</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. LOGIN PAGE -->
+        <section id="view-login" class="view-section">
+            <div class="row w-100 h-100 align-items-center bg-white rounded-5 overflow-hidden shadow-lg" style="height: 80vh !important;">
+                <div class="col-md-6 p-5 text-center d-flex flex-column justify-content-center h-100">
+                    <h1 class="brand-text justify-content-center mb-1 text-dark" style="font-size: 3rem;">Expl<span class="earth-o earth-logo-container"></span>reX</h1>
+                    <p class="text-secondary mb-5">Plan less. Explore more.</p>
+                    
+                    <ul class="nav nav-pills w-75 mx-auto mb-4 border-bottom pb-2 gap-2" id="login-tabs">
+                        <li class="nav-item w-50 m-0"><a class="nav-link active fw-bold text-center" data-bs-toggle="pill" href="#tab-signin">Sign In</a></li>
+                        <li class="nav-item w-50 m-0"><a class="nav-link text-center text-muted" data-bs-toggle="pill" href="#tab-register">Create Account</a></li>
+                    </ul>
+                    
+                    <div class="tab-content w-75 mx-auto text-start">
+                        <!-- Sign In Tab -->
+                        <div class="tab-pane fade show active" id="tab-signin">
+                            <form onsubmit="event.preventDefault(); startApp();">
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted">Email address</label>
+                                    <input type="email" class="form-control rounded-pill py-2 px-3 bg-alt border-0" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted d-flex justify-content-between">Password <a href="#" class="text-decoration-none small text-primary">Forgot password?</a></label>
+                                    <input type="password" class="form-control rounded-pill py-2 px-3 bg-alt border-0" required>
+                                </div>
+                                <div class="mb-4 form-check ms-2">
+                                    <input type="checkbox" class="form-check-input" id="rememberMe">
+                                    <label class="form-check-label small text-muted" for="rememberMe">Remember me</label>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100 rounded-pill py-2 mb-3">Sign In</button>
+                            </form>
+                            
+                            <div class="text-center text-muted small my-3">or</div>
+                            
+                            <div class="d-flex flex-column gap-2">
+                                <button class="btn btn-outline py-2" onclick="startApp()"><img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" width="20" class="me-2"> Continue with Google</button>
+                                <button class="btn btn-outline py-2" onclick="startApp()"><i class="fab fa-apple fs-5 me-2"></i> Continue with Apple</button>
+                                <button class="btn btn-outline text-primary py-2" id="hero-explore-button" data-testid="hero-explore-button" onclick="startApp()">
+                                    <i class="fas fa-play-circle me-2"></i> Continue as Guest (Try Demo)
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Register Tab -->
+                        <div class="tab-pane fade" id="tab-register">
+                            <form onsubmit="event.preventDefault(); startApp();">
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted">Full Name</label>
+                                    <input type="text" class="form-control rounded-pill py-2 px-3 bg-alt border-0" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted">Email address</label>
+                                    <input type="email" class="form-control rounded-pill py-2 px-3 bg-alt border-0" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted">Password</label>
+                                    <input type="password" class="form-control rounded-pill py-2 px-3 bg-alt border-0" required>
+                                </div>
+                                <div class="mb-4">
+                                    <label class="form-label small text-muted">Confirm Password</label>
+                                    <input type="password" class="form-control rounded-pill py-2 px-3 bg-alt border-0" required>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100 rounded-pill py-2">Create Account</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 p-0 h-100 position-relative" style="background: var(--bg-primary);">
+                    <div id="login-earth-container" class="position-absolute top-50 start-50 translate-middle w-100 h-100" style="opacity: 0.8;">
+                        <canvas id="login-earth-canvas" style="width: 100%; height: 100%;"></canvas>
+                    </div>
+                    <div class="position-absolute top-0 start-0 w-100 h-100" style="background: linear-gradient(rgba(15, 23, 42, 0.1), rgba(15, 23, 42, 0.3)); pointer-events: none;"></div>
+                    <img src="https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?ixlib=rb-4.0.3&auto=format&fit=crop&w=1000&q=80" class="w-100 h-100 object-fit-cover" style="opacity: 0.2; mix-blend-mode: overlay;">
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. CHAT DASHBOARD -->
+        <section id="view-chat" class="view-section pt-4">
+            <div class="chat-wrapper mx-auto max-w-1000 d-flex flex-column h-100" style="min-height: 75vh;">
+                <div class="chat-history flex-grow-1 overflow-auto p-4" id="chat-container">
+                    <div class="ai-msg">
+                        <div class="avatar"><i class="fas fa-robot"></i></div>
+                        <div class="msg-content">
+                            <h5 class="Bricolage text-accent mb-2">Good morning, Traveler!</h5>
+                            <p class="mb-0 text-secondary">I am ExploreX, your AI travel companion. Where do you want to explore today?</p>
+                        </div>
+                    </div>
+                    <!-- Future Chat bubbles injected here -->
+                </div>
+                
+                <div class="chat-input-area mt-auto">
+                    <div id="rag-sources" class="rag-sources d-none">
+                        <span>Sources:</span>
+                        <!-- Injected sources -->
+                    </div>
+                    <form id="chat-form" class="position-relative">
+                        <input type="text" id="chat-input-field" data-testid="chat-input-field" class="form-control rounded-pill py-3 px-4 bg-alt border-0" placeholder="Ask anything... e.g. Plan a 5-day trip to Tokyo under $2500">
+                        <button type="submit" id="chat-send-button" data-testid="chat-send-button" class="btn btn-primary rounded-circle position-absolute" style="right: 8px; top: 8px; bottom: 8px; width: 40px; padding: 0;">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
                     </form>
+                    <div class="d-flex gap-2 mt-3 justify-content-center">
+                        <span class="badge bg-light text-secondary border rounded-pill py-2 px-3 cursor-pointer">5-day Tokyo luxury trip</span>
+                        <span class="badge bg-light text-secondary border rounded-pill py-2 px-3 cursor-pointer">Best places in Paris</span>
+                        <span class="badge bg-light text-secondary border rounded-pill py-2 px-3 cursor-pointer">Family trip to Bali</span>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-                    <div class="mt-3 text-center">
-                        <p class="try-label mb-2">Try asking about:</p>
-                        <div class="d-flex flex-wrap justify-content-center gap-2">
-                            <button type="button" class="prompt-chip"><i class="fas fa-map-pin"></i> 5 days in
-                                Jaipur</button>
-                            <button type="button" class="prompt-chip"><i class="fas fa-users"></i> Family trip to
-                                Kerala</button>
-                            <button type="button" class="prompt-chip"><i class="fas fa-rupee-sign"></i> ₹50,000
-                                budget</button>
-                            <button type="button" class="prompt-chip"><i class="fas fa-landmark"></i> Heritage &amp;
-                                culture</button>
+        <!-- 4. EXPLORE / PERSONALIZATION -->
+        <section id="view-explore" class="view-section">
+            <div class="row mb-5">
+                <div class="col-md-12 glass p-4 rounded-4">
+                    <h3 class="Bricolage mb-1">What are you interested in?</h3>
+                    <p class="text-secondary mb-4">Select your interests to get personalized recommendations</p>
+                    
+                    <div class="interest-grid" id="interest-chips">
+                        <div class="interest-chip" id="interest-chip-history" data-interest="History" data-testid="interest-chip-history"><i class="fas fa-landmark text-warning"></i> History</div>
+                        <div class="interest-chip" data-interest="Architecture"><i class="fas fa-building text-danger"></i> Architecture</div>
+                        <div class="interest-chip selected" data-interest="Food"><i class="fas fa-utensils text-primary"></i> Food</div>
+                        <div class="interest-chip selected" data-interest="Photography"><i class="fas fa-camera text-info"></i> Photography</div>
+                        <div class="interest-chip" data-interest="Nature"><i class="fas fa-leaf text-success"></i> Nature</div>
+                        <div class="interest-chip" data-interest="Adventure"><i class="fas fa-hiking text-danger"></i> Adventure</div>
+                        <div class="interest-chip" data-interest="Shopping"><i class="fas fa-shopping-bag text-warning"></i> Shopping</div>
+                        <div class="interest-chip" data-interest="Spiritual"><i class="fas fa-om text-secondary"></i> Spiritual</div>
+                        <div class="interest-chip" data-interest="Art & Culture"><i class="fas fa-palette text-warning"></i> Art & Culture</div>
+                        <div class="interest-chip" data-interest="Nightlife"><i class="fas fa-glass-martini-alt text-purple"></i> Nightlife</div>
+                        <div class="interest-chip" data-interest="Family Friendly"><i class="fas fa-child text-primary"></i> Family Friendly</div>
+                        <div class="interest-chip" data-interest="Offbeat"><i class="fas fa-map-signs text-success"></i> Offbeat</div>
+                    </div>
+                    
+                    <div class="slider-container mt-4">
+                        <label class="d-flex justify-content-between text-secondary small fw-bold mb-2">
+                            <span>Adjust your interest weight (optional)</span>
+                            <span id="weight-val">80%</span>
+                        </label>
+                        <input type="range" class="form-range" min="0" max="100" value="80" id="interest-weight">
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-end mb-4">
+                <div>
+                    <h3 class="Bricolage mb-1">Top Destinations For You</h3>
+                    <p class="text-secondary mb-0">Curated using AI based on your interests, budget and real-time data</p>
+                </div>
+            </div>
+
+            <div id="recommendations-container" class="bento-grid">
+                <div class="bento-card">
+                    <img src="https://images.unsplash.com/photo-1502602898657-3e91760cbb34?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTJ8MHwxfHNlYXJjaHwyfHxQYXJpcyUyMEVpZmZlbCUyMFRvd2VyJTIwdHJhdmVsJTIwZGVzdGluYXRpb258ZW58MHx8fHwxNzkwNjkzNDQzfDA&ixlib=rb-4.1.0&q=85" class="bento-img">
+                    <div class="bento-content">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h4 class="Bricolage mb-0">Paris</h4>
+                            <span class="match-badge">98% Match</span>
+                        </div>
+                        <p class="text-secondary small mb-3">France • Romance & Art</p>
+                        <div class="d-flex justify-content-between align-items-center mt-auto">
+                            <div><i class="fas fa-star text-warning"></i> 4.90</div>
+                            <button class="btn btn-sm btn-outline-primary rounded-pill">Explore Route</button>
                         </div>
                     </div>
                 </div>
 
-                <div id="chat-column-landing" class="d-none mt-3"><!-- chat master moves here --></div>
-            </div>
-        </div>
-
-        <!-- ============ PHASE 2 — DISCOVER ============ -->
-        <div id="view-recommendations" class="view-section">
-
-            <div class="phase-header">
-                <h2 class="phase-title">Discover <span class="grad-text">Your Trip</span></h2>
-                <p class="phase-sub">One workspace, every tool. Click a panel's name to expand it full-screen.</p>
-            </div>
-
-            <div class="row g-4">
-                <!-- LEFT : FOCUS WINDOW -->
-                <div class="col-lg-5">
-                    <div class="focus-window" id="focus-window-recs">
-
-                        <div class="focus-item open" data-focus="chat">
-                            <button class="focus-header" type="button">
-                                <span class="focus-icon" style="--fi:#FF6A3D;"><i
-                                        class="fas fa-comment-dots"></i></span>
-                                <span class="focus-meta"><span class="focus-name">Chat with ExploreX</span>
-                                    <span class="focus-desc">Negotiate the plan with your AI architect</span></span>
-                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                            </button>
-                            <div class="focus-body">
-                                <div id="chat-column-recs"></div>
-                            </div>
+                <div class="bento-card">
+                    <img src="https://images.unsplash.com/photo-1564507592333-c60657eea523?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxUYWolMjBNYWhhbCUyMEFncmElMjBJbmRpYSUyMGxhbmRtYXJrfGVufDB8fHx8MTc5MDY5MzQ0M3ww&ixlib=rb-4.1.0&q=85" class="bento-img">
+                    <div class="bento-content">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h4 class="Bricolage mb-0">Agra</h4>
+                            <span class="match-badge">96% Match</span>
                         </div>
-
-                        <div class="focus-item" data-focus="weather-recs">
-                            <button class="focus-header" type="button">
-                                <span class="focus-icon" style="--fi:#0EA5E9;"><i class="fas fa-cloud-sun"></i></span>
-                                <span class="focus-meta"><span class="focus-name">Weather Forecast</span>
-                                    <span class="focus-desc">Conditions for your trip</span></span>
-                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                            </button>
-                            <div class="focus-body">
-                                <div class="card glass-card border-0">
-                                    <div class="card-body p-3 weather-container">
-                                        <div class="empty-state py-2">
-                                            <p class="mb-0">Weather information will appear here once your trip dates are set.</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                        <p class="text-secondary small mb-3">India • Heritage & Architecture</p>
+                        <div class="d-flex justify-content-between align-items-center mt-auto">
+                            <div><i class="fas fa-star text-warning"></i> 4.95</div>
+                            <button class="btn btn-sm btn-outline-primary rounded-pill">Explore Route</button>
                         </div>
-
-                        <div class="focus-item" data-focus="map">
-                            <button class="focus-header" type="button">
-                                <span class="focus-icon" style="--fi:#2DD4BF;"><i
-                                        class="fas fa-map-marked-alt"></i></span>
-                                <span class="focus-meta"><span class="focus-name">Live Map</span>
-                                    <span class="focus-desc">Every selected place pinned in real time</span></span>
-                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                            </button>
-                            <div class="focus-body">
-                                <div id="map-container-recs"></div>
-                            </div>
-                        </div>
-
-                        <div class="focus-item" data-focus="stays">
-                            <button class="focus-header" type="button">
-                                <span class="focus-icon" style="--fi:#8B5CF6;"><i class="fas fa-bed"></i></span>
-                                <span class="focus-meta"><span class="focus-name">Where to Stay</span>
-                                    <span class="focus-desc">Curated stays matched to your budget</span></span>
-                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                            </button>
-                            <div class="focus-body">
-                                <div class="card glass-card d-none" id="accommodations-card">
-                                    <div class="card-header"><i class="fas fa-bed" style="color:#8B5CF6;"></i> Choose
-                                        Accommodation</div>
-                                    <div class="card-body p-2" id="accommodations-container"
-                                        style="max-height:60vh; overflow-y:auto;">
-                                        <div class="empty-state">
-                                            <div class="spinner-border text-primary spinner-border-sm mb-2"></div>
-                                            <p>Finding best stays...</p>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="empty-state py-4" id="stays-empty"><i class="fas fa-bed"></i>
-                                    <p>Stays will appear here once recommendations arrive.</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="focus-item" data-focus="backpack">
-                            <button class="focus-header" type="button">
-                                <span class="focus-icon" style="--fi:#FBBF24;"><i class="fas fa-suitcase"></i></span>
-                                <span class="focus-meta"><span class="focus-name">Travel Backpack <span
-                                            class="badge bg-primary rounded-pill ms-1"
-                                            id="selected-count">0</span></span>
-                                    <span class="focus-desc">Your hand-picked attractions</span></span>
-                                <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                            </button>
-                            <div class="focus-body">
-                                <div class="p-2 pb-3 d-none" id="confirm-all-selections-footer">
-                                    <button class="btn btn-primary w-100" id="confirm-selected-attractions-btn">
-                                        <i class="fas fa-magic me-2"></i>Build My Itinerary
-                                    </button>
-                                </div>
-                                <div id="selected-attractions">
-                                    <div class="empty-state py-3">
-                                        <p class="mb-0">Select places to add them to your trip.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
                     </div>
                 </div>
 
-                <!-- RIGHT : RECOMMENDATIONS -->
-                <div class="col-lg-7">
-                    <div class="card glass-card" id="recommendations-card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <div><i class="fas fa-sparkles" style="color:#FBBF24;"></i> AI Recommendations</div>
-                            <small class="text-muted d-none d-md-inline">Click any name for full-screen details</small>
+                <div class="bento-card">
+                    <img src="https://images.unsplash.com/photo-1513407030348-c983a97b98d8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxUb2t5byUyMHNreWxpbmUlMjBuaWdodCUyMGxpZ2h0cyUyMEphcGFufGVufDB8fHx8MTc5MDY5MzQ0M3ww&ixlib=rb-4.1.0&q=85" class="bento-img">
+                    <div class="bento-content">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h4 class="Bricolage mb-0">Tokyo</h4>
+                            <span class="match-badge">94% Match</span>
                         </div>
-                        <div class="card-body p-3" id="attractions-list-container">
-                            <h5 class="section-heading mb-3"><i class="fas fa-bullseye me-2"
-                                    style="color:#FF6A3D;"></i>Top Matches For You</h5>
-                            <div id="interest-attractions-area" class="attraction-list mb-4">
-                                <div class="empty-state"><i class="fas fa-search"></i>
-                                    <p>No interest-based attractions found.</p>
-                                </div>
-                            </div>
-                            <h5 class="section-heading mb-3"><i class="fas fa-fire me-2"
-                                    style="color:#FBBF24;"></i>Popular in the City</h5>
-                            <div id="popular-attractions-area" class="attraction-list">
-                                <div class="empty-state">
-                                    <p>No popular attractions found.</p>
-                                </div>
-                            </div>
+                        <p class="text-secondary small mb-3">Japan • Futuristic & Food</p>
+                        <div class="d-flex justify-content-between align-items-center mt-auto">
+                            <div><i class="fas fa-star text-warning"></i> 4.88</div>
+                            <button class="btn btn-sm btn-outline-primary rounded-pill">Explore Route</button>
                         </div>
-                        <div class="card-footer d-none" id="recs-card-footer">
-                            <button class="btn btn-primary w-100" id="confirm-selected-attractions-btn-2">
-                                <i class="fas fa-magic me-2"></i>Build My Itinerary
-                            </button>
+                    </div>
+                </div>
+
+                <div class="bento-card">
+                    <img src="https://images.unsplash.com/photo-1537996194471-e657df975ab4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxCYWxpJTIwdHJhdmVsJTIwbGFuZHNjYXBlfGVufDB8fHx8MTc5MDY5MzQ0M3ww&ixlib=rb-4.1.0&q=85" class="bento-img">
+                    <div class="bento-content">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h4 class="Bricolage mb-0">Bali</h4>
+                            <span class="match-badge">95% Match</span>
+                        </div>
+                        <p class="text-secondary small mb-3">Indonesia • Nature & Serenity</p>
+                        <div class="d-flex justify-content-between align-items-center mt-auto">
+                            <div><i class="fas fa-star text-warning"></i> 4.92</div>
+                            <button class="btn btn-sm btn-outline-primary rounded-pill">Explore Route</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bento-card">
+                    <img src="https://images.unsplash.com/photo-1512453979798-5ea266f8880c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxEdWJhaSUyMHNreWxpbmV8ZW58MHx8fHwxNzkwNjkzNDQzfDA&ixlib=rb-4.1.0&q=85" class="bento-img">
+                    <div class="bento-content">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h4 class="Bricolage mb-0">Dubai</h4>
+                            <span class="match-badge">92% Match</span>
+                        </div>
+                        <p class="text-secondary small mb-3">UAE • Luxury & Adventure</p>
+                        <div class="d-flex justify-content-between align-items-center mt-auto">
+                            <div><i class="fas fa-star text-warning"></i> 4.85</div>
+                            <button class="btn btn-sm btn-outline-primary rounded-pill">Explore Route</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bento-card">
+                    <img src="https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxOZXclMjBZb3JrJTIwY2l0eXxlbnwwfHx8fDE3OTA2OTM0NDN8MA&ixlib=rb-4.1.0&q=85" class="bento-img">
+                    <div class="bento-content">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h4 class="Bricolage mb-0">New York</h4>
+                            <span class="match-badge">90% Match</span>
+                        </div>
+                        <p class="text-secondary small mb-3">USA • Culture & Skyline</p>
+                        <div class="d-flex justify-content-between align-items-center mt-auto">
+                            <div><i class="fas fa-star text-warning"></i> 4.87</div>
+                            <button class="btn btn-sm btn-outline-primary rounded-pill">Explore Route</button>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
-
-        <!-- ============ PHASE 3 — ITINERARY ============ -->
-        <div id="view-plan" class="view-section">
-
-            <div class="plan-hero">
-                <div class="hero-eyebrow"><i class="fas fa-route me-1"></i>Route Optimized · Budget Balanced</div>
-                <h1>Your Journey <span class="grad-text">Awaits</span></h1>
-                <p>Minimized travel time. Maximized exploration. Click a panel name to view it full-screen.</p>
+            
+            <div class="text-center mt-5">
+                <button class="btn btn-primary btn-lg rounded-pill px-5" id="btn-generate-route">Generate Itinerary <i class="fas fa-magic ms-2"></i></button>
             </div>
+        </section>
 
-            <div class="focus-window plan-focus" id="focus-window-plan">
-
-                <div class="focus-item open" data-focus="itinerary">
-                    <button class="focus-header" type="button">
-                        <span class="focus-icon" style="--fi:#FF6A3D;"><i class="fas fa-calendar-alt"></i></span>
-                        <span class="focus-meta"><span class="focus-name">Day-by-Day Itinerary</span>
-                            <span class="focus-desc">Chronological plan with timings</span></span>
-                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                    </button>
-                    <div class="focus-body">
-                        <div class="card glass-card border-0">
-                            <div class="card-body px-3 pb-4 pt-2" id="itinerary-container">
-                                <div class="empty-state">
-                                    <div class="spinner-border text-primary mb-3"></div>
-                                    <h5>Optimizing Routes...</h5>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+        <!-- 5. MAP & ROUTE -->
+        <section id="view-map" class="view-section">
+            <div class="map-container">
+                <div class="map-view">
+                    <div id="map" class="w-100 h-100"></div>
                 </div>
-
-                <div class="focus-item" data-focus="weather-plan">
-                    <button class="focus-header" type="button">
-                        <span class="focus-icon" style="--fi:#0EA5E9;"><i class="fas fa-cloud-sun"></i></span>
-                        <span class="focus-meta"><span class="focus-name">Weather Forecast</span>
-                            <span class="focus-desc">Conditions for your trip</span></span>
-                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                    </button>
-                    <div class="focus-body">
-                        <div class="card glass-card border-0">
-                            <div class="card-body p-3 weather-container">
-                                <div class="empty-state py-2">
-                                    <p class="mb-0">Weather information will appear here once your trip dates are set.</p>
-                                </div>
-                            </div>
-                        </div>
+                <div class="map-sidebar" id="map-right-panel">
+                    <h4 class="Bricolage mb-4">Itinerary <i class="fas fa-chevron-down ms-2 fs-6 text-muted"></i></h4>
+                    
+                    <div id="map-location-details" class="d-none mb-4 pb-4 border-bottom">
+                        <img src="" id="map-detail-img" class="w-100 rounded mb-3" style="height: 150px; object-fit: cover;">
+                        <h5 class="Bricolage" id="map-detail-title">Location Name</h5>
+                        <p class="text-secondary small" id="map-detail-desc">Description goes here.</p>
+                        <button class="btn btn-sm btn-outline-primary w-100" onclick="document.getElementById('map-location-details').classList.add('d-none'); document.getElementById('map-timeline').classList.remove('d-none');">Back to Route</button>
                     </div>
-                </div>
 
-                <div class="focus-item" data-focus="map">
-                    <button class="focus-header" type="button">
-                        <span class="focus-icon" style="--fi:#2DD4BF;"><i class="fas fa-map"></i></span>
-                        <span class="focus-meta"><span class="focus-name">Journey Map</span>
-                            <span class="focus-desc">Optimized route drawn step-by-step</span></span>
-                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                    </button>
-                    <div class="focus-body">
-                        <div id="map-container-plan"></div>
+                    <div class="timeline mt-0" id="map-timeline">
+                        <!-- Injected -->
                     </div>
-                </div>
-
-                <div class="focus-item" data-focus="transit">
-                    <button class="focus-header" type="button">
-                        <span class="focus-icon" style="--fi:#38BDF8;"><i class="fas fa-plane"></i></span>
-                        <span class="focus-meta"><span class="focus-name">Transit Options</span>
-                            <span class="focus-desc">Flights, trains &amp; buses compared</span></span>
-                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                    </button>
-                    <div class="focus-body">
-                        <div class="card glass-card border-0" id="transit-card">
-                            <ul class="nav nav-tabs nav-fill custom-tabs" id="transitTabs" role="tablist">
-                                <li class="nav-item"><button class="nav-link active" id="flights-tab"
-                                        data-bs-toggle="tab" data-bs-target="#flights" type="button" role="tab"><i
-                                            class="fas fa-plane me-1"></i> Flights</button></li>
-                                <li class="nav-item"><button class="nav-link" id="trains-tab" data-bs-toggle="tab"
-                                        data-bs-target="#trains" type="button" role="tab"><i
-                                            class="fas fa-train me-1"></i> Trains</button></li>
-                                <li class="nav-item"><button class="nav-link" id="buses-tab" data-bs-toggle="tab"
-                                        data-bs-target="#buses" type="button" role="tab"><i class="fas fa-bus me-1"></i>
-                                        Buses</button></li>
-                            </ul>
-                            <div class="card-body p-0 border-top">
-                                <div class="tab-content p-3" id="transitTabsContent">
-                                    <div class="tab-pane fade show active" id="flights" role="tabpanel">
-                                        <p class="text-center muted mb-0 small">No flight data available.</p>
-                                    </div>
-                                    <div class="tab-pane fade" id="trains" role="tabpanel">
-                                        <p class="text-center muted mb-0 small">No train data available.</p>
-                                    </div>
-                                    <div class="tab-pane fade" id="buses" role="tabpanel">
-                                        <p class="text-center muted mb-0 small">No bus data available.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                    <div class="border-top pt-3 mt-3 d-flex justify-content-between text-secondary small fw-bold">
+                        <span>Total Distance: <span class="text-dark">18.4 km</span></span>
+                        <span>Travel Time: <span class="text-dark">56 mins</span></span>
                     </div>
-                </div>
-
-                <div class="focus-item" data-focus="budget">
-                    <button class="focus-header" type="button">
-                        <span class="focus-icon" style="--fi:#34D399;"><i class="fas fa-wallet"></i></span>
-                        <span class="focus-meta"><span class="focus-name">Trip Budget</span>
-                            <span class="focus-desc">Full breakdown against your target</span></span>
-                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                    </button>
-                    <div class="focus-body">
-                        <div class="card glass-card border-0" id="budget-card">
-                            <div class="card-body p-0">
-                                <div id="budget-container" class="p-3">
-                                    <div class="empty-state py-2">
-                                        <p class="mb-0">Calculating...</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="focus-item" data-focus="summary">
-                    <button class="focus-header" type="button">
-                        <span class="focus-icon" style="--fi:#F472B6;"><i class="fas fa-flag-checkered"></i></span>
-                        <span class="focus-meta"><span class="focus-name">Final Trip Summary</span>
-                            <span class="focus-desc">Your AI-generated trip brief</span></span>
-                        <span class="focus-open-hint"><i class="fas fa-expand"></i></span>
-                    </button>
-                    <div class="focus-body">
-                        <div class="card glass-card border-0" id="final-summary-card">
-                            <div class="card-body p-3">
-                                <div id="confirmation-container">
-                                    <p class="text-center muted">Summary details will appear here once generated.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-
-        <!-- ============ HIDDEN DOM STORAGE ============ -->
-        <div id="dom-storage" class="d-none">
-
-            <!-- MASTER CHAT CARD -->
-            <div class="card chat-card-master" id="chat-card-master">
-                <div class="card-header chat-header">
-                    <div class="d-flex justify-content-between align-items-center w-100">
-                        <div class="d-flex align-items-center gap-3">
-                            <div class="ai-avatar"><i class="fas fa-wand-magic-sparkles"></i></div>
-                            <div>
-                                <h5 class="mb-0 ai-name">ExploreX Assistant</h5>
-                                <small class="ai-status"><i class="fas fa-circle me-1"></i>Online · Multi-Agent
-                                    Active</small>
-                            </div>
-                        </div>
-                        <div class="agent-dots" title="Agent swarm online">
-                            <span style="--c:#FF6A3D"></span><span style="--c:#2DD4BF"></span>
-                            <span style="--c:#8B5CF6"></span><span style="--c:#FBBF24"></span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card-body p-0 chat-body">
-                    <div id="chat-container" class="chat-messages">
-                        <div class="chat-message assistant">
-                            <div class="message-content">
-                                <strong style="display:block; margin-bottom:.3rem;">👋 Welcome to ExploreX!</strong>
-                                I'm your AI travel architect. Tell me where in India you'd like to visit, your budget,
-                                and what vibe you're after!
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card-footer chat-composer">
-                    <div id="missing-fields-container" class="d-none mb-2">
-                        <div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
-                            <span class="badge rounded-pill miss-badge">✨ Almost there</span>
-                            <small id="missing-fields-text" class="miss-text">Just a few more details to personalize
-                                your trip.</small>
-                        </div>
-                    </div>
-                    <form id="chat-form">
-                        <div class="input-group chat-composer-group">
-                            <input type="text" class="form-control" id="user-input" placeholder="Reply to ExploreX..."
-                                required autocomplete="off" aria-label="Your message">
-                            <button class="btn btn-primary" type="submit" aria-label="Send message"><i
-                                    class="fas fa-paper-plane"></i></button>
-                        </div>
-                    </form>
                 </div>
             </div>
+        </section>
 
-            <!-- MASTER MAP CARD -->
-            <div class="card" id="map-card-master">
-                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                    <div><i class="fas fa-map text-teal"></i><span class="ms-1 map-title">Interactive Map</span></div>
-                    <div class="map-legend d-none d-md-flex">
-                        <span><i class="dot" style="background:#2DD4BF"></i>Selected</span>
-                        <span><i class="dot" style="background:#38BDF8"></i>Route</span>
+        <!-- 6. ACCOMMODATION, FOOD, TRANSPORT (Tabs inside Itinerary view) -->
+        <section id="view-itinerary" class="view-section max-w-1000">
+            <ul class="nav nav-pills mb-4 gap-2" id="itinerary-tabs">
+                <li class="nav-item"><a class="nav-link active rounded-pill px-4" data-bs-toggle="pill" href="#tab-timeline">Timeline</a></li>
+                <li class="nav-item"><a class="nav-link rounded-pill px-4" data-bs-toggle="pill" href="#tab-hotels">Accommodations</a></li>
+                <li class="nav-item"><a class="nav-link rounded-pill px-4" data-bs-toggle="pill" href="#tab-food">Food</a></li>
+                <li class="nav-item"><a class="nav-link rounded-pill px-4" data-bs-toggle="pill" href="#tab-transport">Transport</a></li>
+            </ul>
+            
+            <div class="tab-content">
+                <!-- TIMELINE -->
+                <div class="tab-pane fade show active" id="tab-timeline">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h3 class="Bricolage">5-Day Itinerary</h3>
+                        <button class="btn btn-outline rounded-pill" data-bs-toggle="modal" data-bs-target="#emailModal" id="send-email-button" data-testid="send-email-button"><i class="fas fa-paper-plane me-2"></i> Send Itinerary</button>
+                    </div>
+                    <div class="d-flex gap-2 mb-4">
+                        <span class="badge bg-primary rounded-pill py-2 px-3">Day 1</span>
+                        <span class="badge bg-light text-dark border rounded-pill py-2 px-3">Day 2</span>
+                        <span class="badge bg-light text-dark border rounded-pill py-2 px-3">Day 3</span>
+                    </div>
+                    <div id="itinerary-timeline" class="timeline">
+                        <!-- Injected -->
                     </div>
                 </div>
-                <div class="card-body p-0 map-body">
-                    <div id="map"></div>
+                
+                <!-- HOTELS -->
+                <div class="tab-pane fade" id="tab-hotels">
+                    <h3 class="Bricolage mb-1">Stay Your Way</h3>
+                    <p class="text-secondary mb-4">Authentic curated stays for the perfect experience</p>
+                    <div class="options-grid" id="accommodation-options">
+                        <div class="bento-card" id="hotel-card-luxury" data-testid="hotel-card-luxury">
+                            <img src="https://images.unsplash.com/photo-1566073771259-6a8506099945" class="bento-img">
+                            <div class="bento-content">
+                                <h5>Luxury Resort</h5>
+                                <p class="text-muted small">5-Star premium stay</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- FOOD -->
+                <div class="tab-pane fade" id="tab-food">
+                    <h3 class="Bricolage mb-1">Local Flavors You'll Love</h3>
+                    <p class="text-secondary mb-4">Authentic cuisine curated for your trip</p>
+                    <div class="d-flex gap-2 mb-4">
+                        <button class="btn btn-primary rounded-pill px-4">Breakfast</button>
+                        <button class="btn btn-outline rounded-pill px-4">Lunch</button>
+                        <button class="btn btn-outline rounded-pill px-4">Dinner</button>
+                        <button class="btn btn-outline rounded-pill px-4">Street Food & Cafes</button>
+                    </div>
+                    <div class="options-grid" id="food-options">
+                        <!-- Injected -->
+                    </div>
+                </div>
+
+                <!-- TRANSPORT -->
+                <div class="tab-pane fade" id="tab-transport">
+                    <h3 class="Bricolage mb-1">How do you want to travel?</h3>
+                    <div class="d-flex flex-column gap-3 mt-4" id="transport-options">
+                        <!-- Injected -->
+                    </div>
                 </div>
             </div>
+        </section>
 
-        </div>
+        <!-- 7. WEATHER -->
+        <section id="view-weather" class="view-section max-w-1000">
+            <h3 class="Bricolage mb-1">5-Day Weather Forecast</h3>
+            <p class="text-secondary mb-4">Plan better with real-time weather insights</p>
+            <div class="weather-strip" id="weather-container">
+                <!-- Injected -->
+            </div>
+        </section>
+
+        <!-- 8. BUDGET -->
+        <section id="view-budget" class="view-section max-w-1000">
+            <h3 class="Bricolage mb-1">Your Trip Budget</h3>
+            <p class="text-secondary mb-4">Estimated cost breakdown for your trip</p>
+            
+            <div class="budget-container glass p-4 rounded-4">
+                <div class="donut-chart" id="budget-donut-chart" data-testid="budget-donut-chart">
+                    <div class="donut-hole">
+                        <div class="fs-2 fw-bold text-main" id="total-budget-display">$2,500</div>
+                        <div class="text-secondary small">Total Budget</div>
+                    </div>
+                </div>
+                <div class="budget-legend w-100" id="budget-breakdown">
+                    <!-- Injected -->
+                </div>
+            </div>
+        </section>
+
     </div>
 
-    <!-- ============ LOADING OVERLAY : MAP + TRAVELING LIGHT ============ -->
-    <div id="loading-spinner" class="d-none">
-        <div class="loader-stars"></div>
-        <div class="loader-map-wrap">
-            <svg class="loader-map" viewBox="0 0 800 440" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <defs>
-                    <filter id="lglow" x="-200%" y="-200%" width="500%" height="500%">
-                        <feGaussianBlur stdDeviation="5" result="b" />
-                        <feMerge>
-                            <feMergeNode in="b" />
-                            <feMergeNode in="SourceGraphic" />
-                        </feMerge>
-                    </filter>
-                    <linearGradient id="routeGrad" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0" stop-color="#2DD4BF" />
-                        <stop offset=".5" stop-color="#FBBF24" />
-                        <stop offset="1" stop-color="#FF6A3D" />
-                    </linearGradient>
-                    <radialGradient id="landGrad" cx=".5" cy=".4" r=".8">
-                        <stop offset="0" stop-color="#1B2350" />
-                        <stop offset="1" stop-color="#111736" />
-                    </radialGradient>
-                </defs>
-
-                <!-- grid -->
-                <g stroke="rgba(124,247,212,0.07)" stroke-width="1">
-                    <path d="M0 110H800M0 220H800M0 330H800M133 0V440M266 0V440M400 0V440M533 0V440M666 0V440" />
-                </g>
-
-                <!-- stylized India landmass -->
-                <path fill="url(#landGrad)" stroke="rgba(124,247,212,0.25)" stroke-width="1.5" d="M330 60 L385 52 L428 66 L455 58 L492 78 L520 96 L540 128 L560 150 L585 158 L610 180
-                       L636 196 L648 222 L640 250 L655 268 L662 296 L648 322 L655 350 L640 372 L618 366
-                       L598 380 L572 372 L548 388 L520 378 L492 392 L462 380 L432 392 L404 378 L376 388
-                       L352 372 L330 378 L312 358 L296 340 L286 312 L268 292 L262 264 L246 244 L240 216
-                       L252 192 L244 168 L262 148 L258 122 L282 104 L288 82 L310 74 Z" />
-                <!-- glowing city nodes -->
-                <g filter="url(#lglow)">
-                    <circle cx="340" cy="120" r="4" fill="#2DD4BF" />
-                    <circle cx="430" cy="150" r="4" fill="#FBBF24" />
-                    <circle cx="500" cy="230" r="4" fill="#8B5CF6" />
-                    <circle cx="420" cy="300" r="4" fill="#38BDF8" />
-                    <circle cx="540" cy="320" r="4" fill="#F472B6" />
-                </g>
-
-                <!-- lightning route -->
-                <path id="loaderRoute" d="M340 120 L430 150 L500 230 L420 300 L540 320" fill="none"
-                    stroke="url(#routeGrad)" stroke-width="2" stroke-dasharray="6 8" opacity="0.85" />
-                <path id="loaderRoute2" d="M430 150 L340 120 L500 230 L540 320 L420 300" fill="none" stroke="none" />
-
-                <!-- traveling light point + trail -->
-                <circle r="14" fill="rgba(251,191,36,0.18)" filter="url(#lglow)">
-                    <animateMotion dur="4.5s" repeatCount="indefinite" rotate="auto">
-                        <mpath href="#loaderRoute" />
-                    </animateMotion>
-                </circle>
-                <circle r="6" fill="#FFE9A8" filter="url(#lglow)">
-                    <animateMotion dur="4.5s" repeatCount="indefinite" rotate="auto">
-                        <mpath href="#loaderRoute" />
-                    </animateMotion>
-                </circle>
-                <circle r="3.2" fill="#fff" filter="url(#lglow)">
-                    <animateMotion dur="4.5s" repeatCount="indefinite" rotate="auto">
-                        <mpath href="#loaderRoute" />
-                    </animateMotion>
-                </circle>
-                <!-- second counter-traveling spark -->
-                <circle r="4" fill="#7CF7D4" filter="url(#lglow)">
-                    <animateMotion dur="6s" repeatCount="indefinite" rotate="auto" keyPoints="1;0" keyTimes="0;1"
-                        calcMode="linear">
-                        <mpath href="#loaderRoute2" />
-                    </animateMotion>
-                </circle>
-            </svg>
-
-            <h4 class="loading-text">AI is architecting your journey…</h4>
-            <p class="loading-sub">Scout · Curator · Planner · Budgeter — agents collaborating in real time</p>
-            <div class="loading-agents">
-                <span style="--c:#FF6A3D"><i class="fas fa-satellite-dish"></i>Scout</span>
-                <span style="--c:#2DD4BF"><i class="fas fa-compass"></i>Curator</span>
-                <span style="--c:#8B5CF6"><i class="fas fa-route"></i>Planner</span>
-                <span style="--c:#FBBF24"><i class="fas fa-calculator"></i>Budgeter</span>
+    <!-- ATTRACTION MODAL -->
+    <div class="modal fade" id="attractionModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content" data-testid="attraction-card-taj-mahal">
+                <div class="modal-header border-0 pb-0 pt-4 px-4 position-relative">
+                    <button type="button" class="btn-close position-absolute" style="right: 1.5rem; top: 1.5rem;" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4 d-flex gap-4">
+                    <div class="w-50">
+                        <img src="" id="modal-image" class="w-100 h-100 object-fit-cover rounded-4" style="min-height: 300px;">
+                    </div>
+                    <div class="w-50 d-flex flex-column justify-content-center">
+                        <h3 class="Bricolage mb-1" id="modal-title">Taj Mahal</h3>
+                        <p class="text-muted small mb-3"><i class="fas fa-map-marker-alt text-accent me-1"></i> <span id="modal-location">Agra, India</span></p>
+                        
+                        <div class="d-flex align-items-center mb-3">
+                            <i class="fas fa-star text-warning fs-5 me-2"></i>
+                            <span class="fw-bold fs-5 me-2" id="modal-rating">4.95</span>
+                            <span class="text-muted small">(12.4K reviews)</span>
+                        </div>
+                        
+                        <div class="d-flex gap-3 flex-wrap mb-4">
+                            <div class="d-flex align-items-center gap-2 w-100">
+                                <div class="bg-alt p-2 rounded-circle text-accent"><i class="fas fa-clock"></i></div>
+                                <div><div class="fw-bold">3-4 Hours</div><div class="text-muted small" style="font-size: 0.75rem;">Average visit duration</div></div>
+                            </div>
+                            <div class="d-flex align-items-center gap-2 w-100">
+                                <div class="bg-alt p-2 rounded-circle text-accent"><i class="fas fa-ticket-alt"></i></div>
+                                <div><div class="fw-bold">₹50 - ₹200</div><div class="text-muted small" style="font-size: 0.75rem;">Entry fee</div></div>
+                            </div>
+                            <div class="d-flex align-items-center gap-2 w-100">
+                                <div class="bg-alt p-2 rounded-circle text-accent"><i class="fas fa-headphones"></i></div>
+                                <div><div class="fw-bold">Audio Guide</div><div class="text-muted small" style="font-size: 0.75rem;">Available in multiple languages</div></div>
+                            </div>
+                        </div>
+                        
+                        <p class="text-secondary small mb-4" id="modal-desc">Description</p>
+                        
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-primary flex-grow-1 rounded-pill" id="modal-add-btn">Add to Itinerary</button>
+                            <button class="btn btn-outline rounded-pill"><i class="fas fa-map me-2"></i> View on Map</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- ============ MODALS ============ -->
-    <div class="modal fade" id="validationModal" tabindex="-1" aria-hidden="true">
+    <!-- EMAIL MODAL -->
+    <div class="modal fade" id="emailModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content glass-modal">
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold"><i class="fas fa-exclamation-circle text-warning me-2"></i>Recommend
-                        More Items</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
-                        aria-label="Close"></button>
+            <div class="modal-content p-2">
+                <div class="modal-header border-0">
+                    <h5 class="modal-title Bricolage"><i class="fas fa-paper-plane text-accent me-2"></i> Send Your Itinerary</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body py-4">
-                    <p id="validation-message">You have selected a limited number of attractions.</p>
-                    <p class="mb-0 fw-medium">Would you like to add more attractions, or proceed anyway?</p>
-                </div>
-                <div class="modal-footer border-0 pt-0">
-                    <button type="button" class="btn btn-ghost px-4" data-bs-dismiss="modal">Add More</button>
-                    <button type="button" class="btn btn-primary px-4" id="force-proceed-btn">Proceed Anyway</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal fade" id="confirmationModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content glass-modal">
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold"><i class="fas fa-check-circle text-teal me-2"></i>Great Choices!
-                    </h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
-                        aria-label="Close"></button>
-                </div>
-                <div class="modal-body py-3">
-                    <p class="mb-0">Your selected attractions are ready. Hit <strong>Send</strong> in the chat to build
-                        your personalized itinerary!</p>
-                </div>
-                <div class="modal-footer border-0 pt-0">
-                    <button type="button" class="btn btn-primary px-4" data-bs-dismiss="modal">Got it!</button>
+                <div class="modal-body text-center">
+                    <p class="text-muted mb-4">Get a complete copy of your trip plan in your inbox.</p>
+                    <input type="email" class="form-control bg-alt border-0 py-3 rounded-3 mb-3 text-center" id="email-deliver-input" placeholder="you@example.com">
+                    <textarea class="form-control bg-alt border-0 py-3 rounded-3 mb-4" rows="2" placeholder="Add a personal note (optional)"></textarea>
+                    
+                    <div class="d-flex justify-content-between mt-4">
+                        <button class="btn btn-outline rounded-pill px-4" data-bs-dismiss="modal">Cancel</button>
+                        <button class="btn btn-primary rounded-pill px-4" id="btn-send-itinerary-email">Send Itinerary</button>
+                    </div>
+                    <div id="email-success-state" class="text-success mt-3 d-none fw-bold"><i class="fas fa-check-circle me-1"></i> Sent successfully!</div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Attraction full-screen detail -->
-    <div class="modal fade" id="attractionModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-fullscreen-lg-down modal-xl modal-dialog-centered">
-            <div class="modal-content attr-modal-content">
-                <div class="modal-body p-0" id="attraction-modal-body"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-        // Login gate — set explorex_user in sessionStorage from login.html
-        (function () {
-            try {
-                if (!sessionStorage.getItem('explorex_user')) {
-                    // Change '/login' to your Flask login route if different
-                    window.location.replace('/login');
-                    return;
-                }
-                var n = sessionStorage.getItem('explorex_user');
-                var chip = document.getElementById('user-chip-name');
-                if (chip) chip.textContent = n;
-            } catch (e) { /* file:// mode — ignore */ }
-        })();
-    </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
-
 </html>

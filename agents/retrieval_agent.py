@@ -149,10 +149,14 @@ class RetrievalAgent:
 
         # Step 1: Determine routing
         if self._is_indian_destination(city_clean, user_prefs):
-            print(f"[RETRIEVAL AGENT] 🇮🇳 Indian destination detected: '{city_clean}' → Using RAG retrieval")
-            return self._retrieve_from_rag(city_clean, user_prefs, k)
+            print(f"[RETRIEVAL AGENT] Indian destination detected: '{city_clean}' -> Using RAG retrieval")
+            rag_context = self._retrieve_from_rag(city_clean, user_prefs, k)
+            if rag_context and "No additional background knowledge found" not in rag_context:
+                return rag_context
+            print(f"[RETRIEVAL AGENT] RAG returned no results for '{city_clean}'. Falling back to web retrieval.")
+            return self._retrieve_from_web(city_clean, user_prefs)
         else:
-            print(f"[RETRIEVAL AGENT] 🌍 International destination detected: '{city_clean}' → Using web retrieval")
+            print(f"[RETRIEVAL AGENT] International destination detected: '{city_clean}' -> Using web retrieval")
             return self._retrieve_from_web(city_clean, user_prefs)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -337,7 +341,7 @@ class RetrievalAgent:
         Falls back gracefully if the library is unavailable.
         """
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             results = []
             with DDGS() as ddgs:
                 for r in ddgs.text(query, max_results=max_results):
@@ -348,7 +352,7 @@ class RetrievalAgent:
                     })
             return results
         except ImportError:
-            print("[WARN] duckduckgo_search library not available. Install it with: pip install duckduckgo-search")
+            print("[WARN] ddgs library not available. Install it with: pip install ddgs")
             return []
         except Exception as e:
             print(f"[WARN] DuckDuckGo search failed for query '{query}': {e}")

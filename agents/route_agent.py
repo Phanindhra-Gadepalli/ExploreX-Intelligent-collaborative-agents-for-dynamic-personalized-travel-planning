@@ -297,28 +297,24 @@ class RouteAgent:
     # Itinerary formatting
     # ─────────────────────────────────────────────────────────────────────────
 
-    def format_daily_plan_to_itinerary(self, daily_plan_name_dict, all_spots_object_map, start_date_str, retrieved_knowledge=None):
-        """Generate daily itinerary based on a pre-defined daily plan of attraction names."""
+    def _parse_opening_hours(self, opening_hours_str):
+        # Very simple check for common patterns, fallback to 09:00-18:00
+        if not opening_hours_str: return (9, 18)
+        if "24/7" in opening_hours_str: return (0, 24)
+        return (9, 18) # Stub for advanced parsing
+
+    def format_daily_plan_to_itinerary(self, daily_plan_name_dict, all_spots_object_map, start_date_str, retrieved_knowledge=None, accommodation=None):
+        """Generate daily itinerary with TSP routing, meal breaks, and realistic timing."""
         itinerary = []
         try:
             current_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         except ValueError:
             print(f"[ERROR] Invalid start_date_str format: {start_date_str}. Expected YYYY-MM-DD.")
             current_date = datetime.now()
-            print(f"[WARN] Using current date {current_date.strftime('%Y-%m-%d')} as fallback.")
 
-        # Sort day keys numerically (e.g., "day1", "day2", ...)
-        day_keys = []
-        for key in daily_plan_name_dict.keys():
-            if key.lower().startswith("day"):
-                match = re.search(r"\d+", key)
-                if match:
-                    day_keys.append(key)
-
-        sorted_day_keys = sorted(
-            day_keys,
-            key=lambda x: int(re.search(r"\d+", x).group()),
-        )
+        # Sort day keys numerically
+        day_keys = [k for k in daily_plan_name_dict.keys() if k.lower().startswith("day") and re.search(r"\d+", k)]
+        sorted_day_keys = sorted(day_keys, key=lambda x: int(re.search(r"\d+", x).group()))
 
         for day_key in sorted_day_keys:
             day_number = int(re.search(r"\d+", day_key).group())
@@ -329,49 +325,113 @@ class RouteAgent:
                 if name in all_spots_object_map:
                     current_day_spot_objects_raw.append(all_spots_object_map[name])
                 else:
-                    print(f"[WARN] Attraction name '{name}' from daily plan (day {day_number}) not found in all_spots_object_map. Treating as semantic activity.")
-                    # Treat non-POI activities as semantic rest/leisure time
                     current_day_spot_objects_raw.append({
-                        "id": f"semantic_activity_{name.replace(' ', '_').lower()}",
+                        "id": f"semantic_{name.replace(' ', '_').lower()}",
                         "name": name,
                         "description": "Leisure or semantic activity suggested by AI.",
-                        "estimated_duration": 3,
+                        "estimated_duration": 2,
                         "location": None
                     })
 
-            # Optimise the route for this day's attractions
+            # TSP Optimization
             if current_day_spot_objects_raw and len(current_day_spot_objects_raw) > 1:
-                print(f"Optimising route for day {day_number} with {len(current_day_spot_objects_raw)} attractions...")
                 optimized_day_attractions = self.optimize_daily_route(current_day_spot_objects_raw)
-                print(f"Route optimisation complete for day {day_number}")
                 current_day_spot_objects_raw = optimized_day_attractions
 
             current_day_spots_timed = []
-            # Use 8 hours as a guideline for sequential timing within the day
-            start_offset_hours = 0  # Hours from 9 AM, e.g., 0 means 9 AM
+            
+            # Start day at 9 AM
+            current_time = datetime.strptime("09:00", "%H:%M")
+            lunch_added = False
+            dinner_added = False
 
             for spot_obj in current_day_spot_objects_raw:
-                spot_duration = spot_obj.get("estimated_duration", 2)  # Default to 2 hours
+                # Add Lunch Break if it's past 12:30 and not yet added
+                if not lunch_added and current_time.hour >= 12 and current_time.hour <= 15:
+                    lunch_end = current_time + timedelta(hours=1.5)
+                    rest_name, rest_desc = "Lunch Break", "Time for lunch at a local restaurant or cafe."
+                    if hasattr(self.info_agent, 'poi_manager') and spot_obj.get("location"):
+                        try:
+                            rests = self.info_agent.poi_manager.get_restaurants(spot_obj["location"].get("lat", 0), spot_obj["location"].get("lng", 0), radius=2000, number=1)
+                            if rests:
+                                rest_name = rests[0].get("name", "Lunch Break")
+                                rest_desc = rests[0].get("description", "Time for lunch at a local restaurant or cafe.")
+                        except Exception:
+                            pass
+                    current_day_spots_timed.append({
+                        "id": f"lunch_day_{day_number}",
+                        "name": rest_name,
+                        "category": "Food",
+                        "description": rest_desc,
+                        "start_time": current_time.strftime("%H:%M"),
+                        "end_time": lunch_end.strftime("%H:%M"),
+                        "estimated_duration": 1.5,
+                        "is_meal": True
+                    })
+                    current_time = lunch_end
+                    lunch_added = True
 
+                # Add Dinner Break if it's past 19:00 and not yet added
+                if not dinner_added and current_time.hour >= 19:
+                    dinner_end = current_time + timedelta(hours=1.5)
+                    rest_name, rest_desc = "Dinner", "Evening dinner to wrap up the day."
+                    if hasattr(self.info_agent, 'poi_manager') and spot_obj.get("location"):
+                        try:
+                            rests = self.info_agent.poi_manager.get_restaurants(spot_obj["location"].get("lat", 0), spot_obj["location"].get("lng", 0), radius=2000, number=1)
+                            if rests:
+                                rest_name = rests[0].get("name", "Dinner")
+                                rest_desc = rests[0].get("description", "Evening dinner to wrap up the day.")
+                        except Exception:
+                            pass
+                    current_day_spots_timed.append({
+                        "id": f"dinner_day_{day_number}",
+                        "name": rest_name,
+                        "category": "Food",
+                        "description": rest_desc,
+                        "start_time": current_time.strftime("%H:%M"),
+                        "end_time": dinner_end.strftime("%H:%M"),
+                        "estimated_duration": 1.5,
+                        "is_meal": True
+                    })
+                    current_time = dinner_end
+                    dinner_added = True
+
+                spot_duration = spot_obj.get("estimated_duration", 2)
+                if spot_duration <= 0: spot_duration = 2
+                
+                # Assume 30 mins travel time between spots roughly
+                if current_day_spots_timed and not current_day_spots_timed[-1].get("is_meal"):
+                    current_time += timedelta(minutes=30)
+                
+                # Check opening hours roughly
+                open_hour, close_hour = self._parse_opening_hours(spot_obj.get("opening_hours"))
+                if current_time.hour < open_hour:
+                    current_time = current_time.replace(hour=open_hour, minute=0)
+                
+                # Validation: Prevent scheduling past 22:00
+                if current_time.hour >= 22:
+                    print(f"[WARN] Skipping {spot_obj.get('name')} to prevent over-scheduling (time: {current_time.strftime('%H:%M')}).")
+                    continue
+                
                 spot_with_time = spot_obj.copy()
+                activity_end = current_time + timedelta(hours=spot_duration)
+                
+                # Hard limit at midnight
+                if activity_end.day != current_time.day:
+                    activity_end = current_time.replace(hour=23, minute=59)
+                
+                spot_with_time["start_time"] = current_time.strftime("%H:%M")
+                spot_with_time["end_time"] = activity_end.strftime("%H:%M")
+                
+                # Validation: Ensure start_time < end_time
+                if current_time < activity_end:
+                    current_day_spots_timed.append(spot_with_time)
+                else:
+                    print(f"[WARN] Invalid time generated for {spot_obj.get('name')}. Skipping.")
+                
+                current_time = activity_end
 
-                # Calculate start and end times for the activity (from 9:00)
-                activity_start_hour = 9 + start_offset_hours
-                activity_end_hour = activity_start_hour + spot_duration
-
-                spot_with_time["start_time"] = f"{int(activity_start_hour):02d}:00"
-                spot_with_time["end_time"] = f"{int(activity_end_hour):02d}:00"
-                current_day_spots_timed.append(spot_with_time)
-
-                start_offset_hours += spot_duration  # Next spot starts after this one
-
-            # ── CHRONOLOGICAL SORT ──────────────────────────────────────────
-            # Sort the day's spots by start_time ascending so the displayed
-            # order is always chronological regardless of TSP output order or
-            # LLM suggestion order.  Accommodation events added later will be
-            # re-sorted at the call site before the itinerary is finalised.
             current_day_spots_timed = self._sort_spots_by_time(current_day_spots_timed)
-            # ────────────────────────────────────────────────────────────────
 
             itinerary.append({
                 "day": day_number,

@@ -226,13 +226,11 @@ class ChatAgent:
         Missing fields: {json.dumps(missing, ensure_ascii=False)}
         
         IMPORTANT RULES:
-        1. This assistant ONLY plans trips within India. If the city provided is NOT in India, 
-           ask the user to choose an Indian city instead.
-        2. Strictly ask ONLY about the fields explicitly listed in `Missing fields`. Do not ask about food preferences, accommodation, or transportation unless they are missing.
-        3. Remember to acknowledge information that has already been provided.
-        4. Tell the user they can write "not decided" for the start date if flexible.
-        5. For budget, accept EITHER a category (low/medium/high) OR a specific INR amount (e.g. ₹50,000). Both are valid.
-        6. Keep your response concise and friendly (1-2 sentences max).
+        1. Strictly ask ONLY about the fields explicitly listed in `Missing fields`. Do not ask about food preferences, accommodation, or transportation unless they are missing.
+        2. Remember to acknowledge information that has already been provided.
+        3. Tell the user they can write "not decided" for the start date if flexible.
+        4. For budget, accept EITHER a category (low/medium/high) OR a specific INR amount (e.g. ₹50,000). Both are valid.
+        5. Keep your response concise and friendly (1-2 sentences max).
         '''))
 
         print(f"[DEBUG] Calling LLM (model.stream)...")

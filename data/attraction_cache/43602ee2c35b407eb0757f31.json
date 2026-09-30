@@ -1,0 +1,14 @@
+{
+  "data": {
+    "description": "The Jaswant Thada is a cenotaph located in Jodhpur, in the Indian state of Rajasthan. It was built by Maharaja Sardar Singh of Jodhpur State in 1899 in memory of his father, Maharaja Jaswant Singh II, and serves as the cremation ground for the royal Rajput family of Marwar. The cenotaph is built out of intricately carved sheets of Makrana marble. These sheets are extremely thin and polished so that they emit a warm glow when illuminated by the Sun.",
+    "description_source": "wikipedia",
+    "significance": "Cenotaph in Jodhpur, Rajasthan, India",
+    "wiki_url": "https://en.wikipedia.org/wiki/Jaswant_Thada",
+    "wiki_thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ad/Jaswant_Thada_Dawn.jpg/330px-Jaswant_Thada_Dawn.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "wiki_location": {
+      "lat": 26.30388889,
+      "lng": 73.02527778
+    }
+  },
+  "ts": 1790755982.657351
+}

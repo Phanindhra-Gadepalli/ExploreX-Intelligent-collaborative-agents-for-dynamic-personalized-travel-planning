@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import hashlib
+import googlemaps
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from datetime import datetime
@@ -544,6 +545,32 @@ class InformationAgent:
                     deduped.append(p)
             initial_pois = deduped
             
+            # Geographic Validation: Enforce backend-side geographic validation to prevent invalid POI results
+            if initial_pois and city and self.llm:
+                poi_names = [p.get('name') for p in initial_pois if p.get('source') in ('rag_fallback', 'llm_fallback', 'rag')]
+                if poi_names:
+                    print(f"[INFO_AGENT] Validating {len(poi_names)} LLM/RAG POIs geographically for '{city}'.")
+                    val_prompt = f"""
+                    You are a strict geographic validator. The target city is {city}.
+                    Review the following list of tourist attractions. Identify any attractions that are definitely NOT located in or near {city} (e.g., they belong to a different city like Hyderabad, Delhi, etc.).
+                    
+                    Attractions: {json.dumps(poi_names)}
+                    
+                    Return a JSON array containing ONLY the names of the invalid attractions. If all are valid, return []. Do not output markdown or any other text.
+                    """
+                    try:
+                        val_res = self.llm.invoke([HumanMessage(content=val_prompt)])
+                        val_content = val_res.content.strip()
+                        if val_content.startswith("```json"): val_content = val_content[7:-3].strip()
+                        elif val_content.startswith("```"): val_content = val_content[3:-3].strip()
+                        invalid_names = json.loads(val_content)
+                        if invalid_names and isinstance(invalid_names, list):
+                            invalid_lower = [str(n).lower() for n in invalid_names]
+                            initial_pois = [p for p in initial_pois if p.get('name', '').lower() not in invalid_lower]
+                            print(f"[INFO_AGENT] Geographic validation removed {len(invalid_names)} invalid POIs: {invalid_names}")
+                    except Exception as e:
+                        print(f"[INFO_AGENT] Geographic validation failed: {e}")
+            
             # Absolute worst-case scenario static fallback (if LLM is down)
             if not initial_pois:
                 print(f"[INFO_AGENT] All fallbacks failed for '{city}'. Triggering Static Fallback.")
@@ -567,7 +594,7 @@ class InformationAgent:
             
             img_url = poi.get("image_url")
             if not img_url or not str(img_url).startswith("http"):
-                poi["image_url"] = self.poi_manager._fetch_pexels_image(poi.get("name", ""))
+                poi["image_url"] = None
                 
         print(f"[INFO_AGENT] Processed details for {len(initial_pois)} POIs.")
         if not initial_pois:

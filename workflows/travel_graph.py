@@ -96,6 +96,27 @@ _INDIA_LOCAL_CITY_SET = frozenset(
     c.lower() for v in INDIA_STATES_MAP.values() for c in v.get("cities", [])
 )
 
+
+def normalize_poi(poi):
+    """Guarantee id is a string and location is {lat, lng} when coordinates exist."""
+    if not isinstance(poi, dict):
+        return poi
+    if poi.get('id') is not None:
+        poi['id'] = str(poi['id'])
+    loc = poi.get('location') if isinstance(poi.get('location'), dict) else {}
+    lat = loc.get('lat', loc.get('latitude', poi.get('latitude', poi.get('lat'))))
+    lng = loc.get('lng', loc.get('longitude', poi.get('longitude', poi.get('lng', poi.get('lon')))))
+    try:
+        if lat is not None and lng is not None:
+            lat_f, lng_f = float(lat), float(lng)
+            poi['location'] = {'lat': lat_f, 'lng': lng_f}
+            poi['latitude'] = lat_f
+            poi['longitude'] = lng_f
+    except (TypeError, ValueError):
+        pass
+    return poi
+
+
 # ---------------------------------------------------------------------------
 
 # This is a simplified state graph manager since we're not using the actual langgraph library
@@ -433,6 +454,7 @@ class TravelGraph:
                     elif isinstance(summary_val, str):
                         weather_summary_str = summary_val
                     self.state["weather_summary"] = weather_summary_str
+                    self.state["weather_forecast"] = weather_data_result.get('detailed_forecast')
                     print(f"[DEBUG] Weather summary set: '{weather_summary_str}'")
             except ValueError:
                 print(f"[ERROR] Invalid 'days' for weather: {user_days_str}")
@@ -469,7 +491,7 @@ class TravelGraph:
                     poi_type="tourist_attraction"
                 )
             
-            self.state["attractions"] = attractions_from_info_agent if attractions_from_info_agent else []
+            self.state["attractions"] = [normalize_poi(p) for p in (attractions_from_info_agent or [])]
             self.state["information_processed"] = True
             print(f"[ATTRACTION_PIPELINE] completed total_pois={len(self.state['attractions'])}")
 
@@ -483,11 +505,24 @@ class TravelGraph:
                 budget=budget,
                 number=4
             )
-            self.state["accommodations"] = accommodations
+            self.state["accommodations"] = [normalize_poi(a) for a in (accommodations or [])]
             print(f"[DEBUG] Accommodations updated: {len(self.state.get('accommodations', []))} items.")
         except Exception as e:
             print(f"[ERROR] Failed to fetch accommodations: {e}")
             self.state["accommodations"] = []
+
+        try:
+            restaurants = self.info_agent.poi_manager.get_restaurants(
+                lat=city_coordinates["lat"],
+                lng=city_coordinates["lng"],
+                radius=4000,
+                number=8,
+            )
+            self.state["restaurants"] = [normalize_poi(r) for r in (restaurants or [])]
+            print(f"[DEBUG] Restaurants updated: {len(self.state.get('restaurants', []))} items.")
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch restaurants: {e}")
+            self.state["restaurants"] = []
 
         # ---- User-facing response message ----
         def info_gen_message():
@@ -563,10 +598,9 @@ class TravelGraph:
                         break
                         
                 if not is_duplicate:
-                    # Ensure valid image_url for RAG POIs
                     img_url = rp.get("image_url")
                     if not img_url or not str(img_url).startswith("http"):
-                        rp["image_url"] = self.info_agent.poi_manager._fetch_pexels_image(rp.get("name", ""))
+                        rp["image_url"] = None
                     
                     new_rag_pois.append(rp)
                     existing_names.add(name_lower)
@@ -622,15 +656,21 @@ class TravelGraph:
                 # Fetch accommodation if selected
                 if 'selected_accommodation_id' in kwargs and kwargs['selected_accommodation_id']:
                     accs = self.state.get("accommodations", [])
-                    acc = next((a for a in accs if a["id"] == kwargs['selected_accommodation_id']), None)
+                    wanted = str(kwargs['selected_accommodation_id'])
+                    acc = next((a for a in accs if str(a.get("id")) == wanted), None)
                     if acc:
                         self.state["selected_accommodation"] = acc
 
-                # User has selected specific attractions
-                selected_attractions = [
-                    a for a in attractions 
-                    if a and a.get("id") and a["id"] in selected_attraction_ids
-                ] if selected_attraction_ids else []
+                wanted_ids = {str(i) for i in (selected_attraction_ids or []) if i is not None and str(i) != ''}
+                selected_attractions = []
+                if wanted_ids:
+                    for a in attractions or []:
+                        if not a:
+                            continue
+                        aid = str(a.get("id") or '')
+                        aname = (a.get("name") or '').strip().lower()
+                        if aid in wanted_ids or aname in {w.lower() for w in wanted_ids}:
+                            selected_attractions.append(a)
                 self.state["selected_attractions"] = selected_attractions
                 
                 # Validation check
@@ -713,6 +753,7 @@ class TravelGraph:
                     "stream": recommendation_generator(),
                     "recommended_attractions": recommended,
                     "accommodations": self.state.get("accommodations", []),
+                    "restaurants": self.state.get("restaurants", []),
                     "map_data": self.recommend_agent.generate_map_data(recommended)
                 }
         except Exception as e:
@@ -728,7 +769,8 @@ class TravelGraph:
         """Process strategy agent step"""
         # Check if this is a confirm selection request or a satisfaction confirmation
         user_input_lower = kwargs.get('user_input', '').lower()
-        is_confirm_selection = user_input_lower in ['here are my selected attractions', 'please plan the route for me', 'continue']
+        confirm_phrases = ['here are my selected attractions', 'plan my route', 'plan the route', 'continue']
+        is_confirm_selection = any(phrase in user_input_lower for phrase in confirm_phrases)
         is_satisfaction_confirmation = 'satisfied with your recommendation' in user_input_lower
         
         # Log what type of confirmation message we received

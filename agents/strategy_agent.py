@@ -32,12 +32,21 @@ class StrategyAgent:
             """Calculate remaining time and suggest additional attractions"""
             total_available_hours = int(total_days) * 8 # This seems to be unused if we get a full plan
             selected_data = []
-            for spot in selected_spots:
+            for spot in selected_spots or []:
+                loc = spot.get("location") if isinstance(spot.get("location"), dict) else {}
+                lat = loc.get("lat", loc.get("latitude", spot.get("latitude", spot.get("lat"))))
+                lng = loc.get("lng", loc.get("longitude", spot.get("longitude", spot.get("lng", spot.get("lon")))))
+                location = None
+                try:
+                    if lat is not None and lng is not None:
+                        location = {"lat": float(lat), "lng": float(lng)}
+                except (TypeError, ValueError):
+                    location = None
                 selected_data.append({
-                    "id": spot["id"],
-                    "name": spot["name"],
+                    "id": spot.get("id"),
+                    "name": spot.get("name"),
                     "estimated_duration": spot.get("estimated_duration", 2),
-                    "location": spot["location"]
+                    "location": location
                 })
             
             all_attractions_data = []

@@ -36,13 +36,30 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation):
         text += f"Your Trip to {city}\n\n"
         
         # Add Budget Info
+        # BudgetAgent returns top-level numeric keys (total, accommodation, food,
+        # transport, attractions). Older/alternate shapes used total_cost + a
+        # breakdown dict, so fall back gracefully to keep the email populated.
+        breakdown = budget.get('breakdown', {}) if isinstance(budget, dict) else {}
+
+        def _money(value):
+            if value is None:
+                return "0"
+            if isinstance(value, (int, float)):
+                return f"{value:,.0f}"
+            return str(value)
+
+        total_val = budget.get('total', budget.get('total_cost'))
+        accom_val = budget.get('accommodation', breakdown.get('accommodation'))
+        food_val = budget.get('food', breakdown.get('food'))
+        transport_val = budget.get('transport', breakdown.get('local_transport'))
+        attractions_val = budget.get('attractions', breakdown.get('attractions'))
+
         text += f"Estimated Budget:\n"
-        breakdown = budget.get('breakdown', {})
-        text += f"Total: ₹{budget.get('total_cost', '0')}\n"
-        text += f"Accommodation: {breakdown.get('accommodation', '0')}\n"
-        text += f"Food: {breakdown.get('food', '0')}\n"
-        text += f"Transport: {breakdown.get('local_transport', '0')}\n"
-        text += f"Activities: {breakdown.get('attractions', '0')}\n\n"
+        text += f"Total: ₹{_money(total_val)}\n"
+        text += f"Accommodation: ₹{_money(accom_val)}\n"
+        text += f"Food: ₹{_money(food_val)}\n"
+        text += f"Transport: ₹{_money(transport_val)}\n"
+        text += f"Activities: ₹{_money(attractions_val)}\n\n"
         
         # Add Itinerary
         text += "Itinerary:\n"
@@ -68,11 +85,11 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation):
             <div style="background: #f4f4f4; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                 <h4>Estimated Budget Summary</h4>
                 <ul style="list-style-type: none; padding-left: 0;">
-                    <li><strong>Total:</strong> ₹{budget.get('total_cost', '0')}</li>
-                    <li><strong>Accommodation:</strong> {breakdown.get('accommodation', '0')}</li>
-                    <li><strong>Food:</strong> {breakdown.get('food', '0')}</li>
-                    <li><strong>Transport:</strong> {breakdown.get('local_transport', '0')}</li>
-                    <li><strong>Activities:</strong> {breakdown.get('attractions', '0')}</li>
+                    <li><strong>Total:</strong> ₹{_money(total_val)}</li>
+                    <li><strong>Accommodation:</strong> ₹{_money(accom_val)}</li>
+                    <li><strong>Food:</strong> ₹{_money(food_val)}</li>
+                    <li><strong>Transport:</strong> ₹{_money(transport_val)}</li>
+                    <li><strong>Activities:</strong> ₹{_money(attractions_val)}</li>
                 </ul>
             </div>
             

@@ -326,7 +326,7 @@ class POIManager:
                     'osm_tags': {k: v for k, v in tags.items() if k not in ['name', 'name:en']}
                 },
                 'verified': True,
-                'image_url': self._fetch_pexels_image(name, fallback_query=el_type)
+                'image_url': None
             }
             poi = {k: v for k, v in poi.items() if v is not None}
             normalized.append(poi)
@@ -363,8 +363,10 @@ class POIManager:
                 'image_url': self._fetch_pexels_image(name),
                 'verified': True
             })
+            if len(accommodations) >= number:
+                break
             
-        return accommodations[:number]
+        return accommodations
 
     # -------------------------------------------------------------------------
     # GEOAPIFY API
@@ -414,7 +416,7 @@ class POIManager:
                 'duration': 2,
                 'metadata': {},
                 'verified': True,
-                'image_url': self._fetch_pexels_image(props.get('name'), fallback_query=primary_cat.replace('_', ' ')),
+                'image_url': None,
             }
             
             wikidata_id = None
@@ -470,8 +472,10 @@ class POIManager:
                 'image_url': self._fetch_pexels_image(props.get('name')),
                 'verified': True
             })
+            if len(accommodations) >= number:
+                break
             
-        return accommodations[:number]
+        return accommodations
 
     def _fetch_osm_restaurants(self, lat, lng, radius, number):
         query = f'[out:json][timeout:15];nwr["amenity"~"restaurant|cafe|fast_food|food_court"](around:{radius},{lat},{lng});out {number * 3} tags center;'

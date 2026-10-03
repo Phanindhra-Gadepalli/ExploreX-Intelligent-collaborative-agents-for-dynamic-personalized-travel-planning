@@ -10,7 +10,7 @@ if sys.stderr.encoding != 'utf-8':
 from unittest.mock import MagicMock
 sys.modules['posthog'] = MagicMock()
 
-from flask import Flask, render_template, request, jsonify, session, send_from_directory, send_file, Response
+from flask import Flask, render_template, request, jsonify, session, send_from_directory, send_file, Response, redirect
 from flask_session import Session
 import os
 import json
@@ -20,6 +20,8 @@ import requests
 import time
 import warnings
 from services.email_service import send_trip_email
+from services import user_store
+from services.user_store import AuthError
 
 # Suppress the harmless schema title warning from langchain-google-genai
 warnings.filterwarnings("ignore", message=".*Key 'title' is not supported in schema.*")
@@ -87,30 +89,131 @@ def test_image():
 def serve_image(filename):
     return send_from_directory('frontend/static/images', filename)
 
-@app.route('/api/reset', methods=['POST'])
-def reset_session():
-    """Fully reset the user's session and workflow state"""
+
+
+def _attach_user_to_workflow(name, email):
+    """Personalize the active workflow (if one exists) with the signed-in user."""
     session_id = session.get('session_id')
     if session_id and session_id in workflows:
-        del workflows[session_id]
-        print(f"[DEBUG] Removed workflow for session: {session_id}")
-    session.clear() # Clear all Flask session data (including cookies and filesystem)
-    return jsonify({"status": "success", "message": "Session reset completely."})
+        wf = workflows[session_id]
+        try:
+            wf.user_name = name
+            wf.user_email = email
+            if hasattr(wf, 'state') and isinstance(wf.state, dict):
+                wf.state.setdefault('user_info', {})
+                wf.state['user_info']['name'] = name
+                wf.state['user_info']['email'] = email
+        except Exception as e:
+            print(f"[WARN] Could not attach user to workflow: {e}")
+
+
+def _start_session(identity, is_guest=False):
+    session['authenticated'] = True
+    session['user_name'] = identity['name']
+    session['user_email'] = identity['email']
+    session['auth_provider'] = identity.get('provider', 'email')
+    session['is_guest'] = bool(is_guest)
+    _attach_user_to_workflow(identity['name'], identity['email'])
+    return {
+        "status": "success",
+        "provider": identity.get('provider', 'email'),
+        "name": identity['name'],
+        "email": identity['email'],
+        "is_guest": bool(is_guest),
+    }
+
+
+def _verify_google_id_token(id_token):
+    """Verify a Google Identity Services id_token against Google's tokeninfo endpoint."""
+    client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+    if not client_id:
+        raise AuthError('Google sign-in is not configured in this deployment.', status=503)
+    resp = requests.get('https://oauth2.googleapis.com/tokeninfo', params={'id_token': id_token}, timeout=10)
+    if resp.status_code != 200:
+        raise AuthError('Google could not verify this sign-in attempt. Please try again.', status=502)
+    info = resp.json()
+    if info.get('aud') != client_id:
+        raise AuthError('Google token audience mismatch.', status=401)
+    return user_store.find_or_create_oauth_user(info.get('name'), info.get('email'), 'google')
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Render the login page or handle login submission"""
+    """Render the login page or handle login submission (email / guest / OAuth)."""
     if request.method == 'POST':
-        data = request.json or {}
-        name = data.get('name', '').strip()
-        email = data.get('email', '').strip()
-        if name and email:
-            session['authenticated'] = True
-            session['user_name'] = name
-            session['user_email'] = email
-            return jsonify({"status": "success"})
-        return jsonify({"status": "error", "message": "Invalid credentials"}), 400
-    return render_template('login.html')
+        data = request.get_json(silent=True) or {}
+        if not data and request.form:
+            data = request.form.to_dict()
+        provider = (data.get('provider') or 'email').strip().lower()
+        try:
+            if provider == 'guest':
+                identity = {'name': (data.get('name') or '').strip() or 'Guest Traveler',
+                            'email': (data.get('email') or '').strip() or 'guest@explorex.local',
+                            'provider': 'guest'}
+                return jsonify(_start_session(identity, is_guest=True))
+
+            if provider == 'email':
+                action = (data.get('action') or 'signin').strip().lower()
+                if action in ('signup', 'register', 'create'):
+                    if (data.get('password') or '') != (data.get('confirm_password') or ''):
+                        raise AuthError('Passwords do not match.', field='confirm_password')
+                    identity = user_store.create_user(
+                        data.get('name'), data.get('email'), data.get('password'), provider='email')
+                    return jsonify(_start_session(identity)), 201
+                identity = user_store.verify_credentials(data.get('email'), data.get('password'))
+                return jsonify(_start_session(identity))
+
+            if provider == 'google':
+                credential = (data.get('credential') or data.get('id_token') or '').strip()
+                if not credential:
+                    raise AuthError('Google did not return a credential. Try again or use email / guest.', status=400)
+                return jsonify(_start_session(_verify_google_id_token(credential)))
+
+            if provider == 'apple':
+                raise AuthError(
+                    'Apple sign-in requires APPLE_CLIENT_ID and a registered Return URL on this host. '
+                    'Use email or continue as Guest.',
+                    status=503,
+                )
+
+            raise AuthError(f'Unsupported sign-in provider: {provider}', status=400)
+        except AuthError as e:
+            return jsonify({"status": "error", "message": e.message, "field": e.field}), e.status
+        except requests.RequestException:
+            return jsonify({"status": "error", "message": "Could not reach the sign-in provider. Please try again."}), 502
+
+    if session.get('authenticated'):
+        return redirect('/')
+
+    return render_template(
+        'login.html',
+        google_client_id=os.environ.get('GOOGLE_CLIENT_ID', ''),
+        apple_client_id=os.environ.get('APPLE_CLIENT_ID', ''),
+    )
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """Create an email account and sign the new user in."""
+    data = request.json or {}
+    try:
+        if (data.get('password') or '') != (data.get('confirm_password') or ''):
+            raise AuthError('Passwords do not match.', field='confirm_password')
+        identity = user_store.create_user(
+            data.get('name'), data.get('email'), data.get('password'), provider='email')
+        return jsonify(_start_session(identity)), 201
+    except AuthError as e:
+        return jsonify({"status": "error", "message": e.message, "field": e.field}), e.status
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """Drop the workflow and wipe the entire session, including the cookie payload."""
+    session_id = session.get('session_id')
+    if session_id and session_id in workflows:
+        del workflows[session_id]
+    session.clear()
+    response = jsonify({"status": "success", "message": "Signed out"})
+    response.delete_cookie(app.config.get('SESSION_COOKIE_NAME', 'session'))
+    return response
 
 @app.route('/')
 def index():
@@ -123,11 +226,10 @@ def index():
     u_name = session.get('user_name')
     u_email = session.get('user_email')
     
-    if session_id and session_id in workflows:
-        del workflows[session_id]
-        print(f"[DEBUG] Removed old workflow on page reload: {session_id}")
-    
-    session.clear()
+    if session_id and session_id not in workflows:
+        # Recreate workflow if it was lost from memory but session exists
+        workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
+        print(f"[DEBUG] Restored workflow on page reload: {session_id}")
     
     # Restore auth data
     if is_auth:
@@ -135,16 +237,16 @@ def index():
         session['user_name'] = u_name
         session['user_email'] = u_email
         
-    session_id = os.urandom(16).hex()
-    session['session_id'] = session_id
-    
-    try:
-        workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
-        print(f"[DEBUG] Created fresh session on page load: {session_id}")
-    except Exception as e:
-        print(f"[ERROR] Failed to create TravelGraph: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    if not session_id:
+        session_id = os.urandom(16).hex()
+        session['session_id'] = session_id
+        try:
+            workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
+            print(f"[DEBUG] Created fresh session on page load: {session_id}")
+        except Exception as e:
+            print(f"[ERROR] Failed to create TravelGraph: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     # Load popular attractions
     try:
@@ -153,7 +255,74 @@ def index():
     except FileNotFoundError:
         popular_attractions = []
     
-    return render_template('index.html', popular_attractions=popular_attractions)
+    return render_template(
+        'index.html',
+        popular_attractions=popular_attractions,
+        authenticated=bool(is_auth),
+        user_name=u_name or '',
+        user_email=u_email or '',
+        is_guest=bool(session.get('is_guest', False)),
+    )
+
+@app.route('/api/reset', methods=['POST'])
+def reset_session():
+    """Clear the current session to start a new trip"""
+    session_id = session.get('session_id')
+    if session_id and session_id in workflows:
+        del workflows[session_id]
+        print(f"[DEBUG] Reset workflow for session: {session_id}")
+    
+    # Save auth data
+    is_auth = session.get('authenticated', False)
+    u_name = session.get('user_name')
+    u_email = session.get('user_email')
+    is_guest = session.get('is_guest', False)
+    
+    session.clear()
+    
+    # Restore auth data
+    if is_auth:
+        session['authenticated'] = True
+        session['user_name'] = u_name
+        session['user_email'] = u_email
+        session['is_guest'] = bool(is_guest)
+        
+    return jsonify({"status": "success", "message": "Session reset"})
+
+@app.route('/api/state', methods=['GET'])
+def get_state():
+    """Return the current trip state so the SPA can restore it after a refresh.
+
+    Read-only: never mutates the workflow. Returns trip=None when there is no
+    active session/workflow yet (e.g. immediately after New Trip)."""
+    session_id = session.get('session_id')
+    if not session_id or session_id not in workflows:
+        return jsonify({"status": "success", "session_id": session_id, "trip": None})
+
+    state = workflows[session_id].get_current_state() or {}
+    info = state.get("user_info", {}) or {}
+
+    def _clean(v):
+        return v if v is not None else None
+
+    trip = {
+        "destination": _clean(info.get("city")),
+        "origin": _clean(info.get("origin_city")),
+        "days": _clean(info.get("days")),
+        "start_date": _clean(info.get("start_date")),
+        "budget_level": _clean(info.get("budget")),
+        "people": _clean(info.get("people")),
+        "kids": _clean(info.get("kids")),
+        "interests": _clean(info.get("hobbies")),
+        "attractions": state.get("attractions") or [],
+        "selected_attractions": state.get("selected_attractions") or [],
+        "accommodations": state.get("accommodations") or [],
+        "weather": state.get("weather_forecast") or [],
+        "itinerary": state.get("itinerary") or [],
+        "budget": state.get("budget") or {},
+        "transit_options": state.get("transit_options"),
+    }
+    return jsonify({"status": "success", "session_id": session_id, "trip": trip})
 
 @app.route('/api/process', methods=['POST'])
 def process():
@@ -230,7 +399,13 @@ def send_email_api():
         email = data.get('email', '').strip()
         if not email:
             return jsonify({"status": "error", "message": "Email is required"}), 400
-            
+
+        if session.get('is_guest'):
+            return jsonify({
+                "status": "error",
+                "message": "Email delivery is available to signed-in accounts only. Create a free account or sign in to send your itinerary by email — everything else works in guest mode."
+            }), 403
+
         session_id = session.get('session_id')
         if not session_id or session_id not in workflows:
             return jsonify({"status": "error", "message": "No active session"}), 400
@@ -239,7 +414,7 @@ def send_email_api():
         state = workflow.get_current_state()
         
         itinerary = state.get("itinerary")
-        budget = state.get("budget_estimate", {})
+        budget = state.get("budget") or state.get("budget_estimate") or {}
         
         if not itinerary:
             return jsonify({"status": "error", "message": "Itinerary not generated yet"}), 400
@@ -420,6 +595,7 @@ def stream():
                 'rental_post': result.get('rental_post'),
                 'transit_options': result.get('transit_options'),
                 'accommodations': result.get('accommodations'),
+                'restaurants': result.get('restaurants'),
                 'recommended_attractions': result.get('recommended_attractions')
             }
             
@@ -533,30 +709,6 @@ def get_attraction_details_endpoint():
         print(f"[ERROR] get_attraction_details_endpoint: {e}")
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/email', methods=['POST'])
-def send_email():
-    """Send the itinerary to the user's email."""
-    data = request.json or {}
-    to_email = data.get('email')
-    
-    session_id = session.get('session_id')
-    if not session_id or session_id not in workflows:
-        return jsonify({"error": "Session not found"}), 404
-        
-    workflow = workflows[session_id]
-    state = workflow.get_current_state()
-    
-    user_name = session.get('user_name', 'Traveler')
-    city = state.get('user_info', {}).get('city', 'Your Destination')
-    itinerary = state.get('itinerary', [])
-    budget = state.get('budget', {})
-    
-    success = send_trip_email(to_email, user_name, city, itinerary, budget, "Here is your personalized ExploreX itinerary!")
-    if success:
-        return jsonify({"status": "success"})
-    else:
-        return jsonify({"status": "error", "message": "Email delivery failed."}), 500
 
 
 if __name__ == '__main__':

@@ -588,14 +588,8 @@ class InformationAgent:
                 ]
         
         # Add estimated_duration if missing and validate image_url
-        for poi in initial_pois:
-            if 'estimated_duration' not in poi:
-                poi['estimated_duration'] = self.estimate_duration(poi.get('category', 'tourist_attraction'), {})
-            
-            img_url = poi.get("image_url")
-            if not img_url or not str(img_url).startswith("http"):
-                poi["image_url"] = None
-                
+        initial_pois = self.enrich_attractions(initial_pois, city)
+        
         print(f"[INFO_AGENT] Processed details for {len(initial_pois)} POIs.")
         if not initial_pois:
             return []
@@ -617,66 +611,92 @@ class InformationAgent:
                                   weather_summary: str = None, total_number: int = 20):
         """
         Fetch and rank attractions across an entire Indian state using POIManager.
+
+        Latency strategy: cities are geocoded SEQUENTIALLY (fast, cached, and it
+        respects Nominatim's 1 req/s policy which is enforced via a shared
+        timestamp), while the expensive per-city POI fetches (Overpass/Geoapify,
+        which can each burn tens of seconds on 504 backoffs) run CONCURRENTLY.
+        This makes a multi-city state search cost roughly its slowest city rather
+        than the sum of every city, so it finishes well within the frontend's
+        idle watchdog instead of stalling for minutes.
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         all_pois = []
         seen_ids = set()
 
         hobbies = user_prefs.get('hobbies') if user_prefs else None
-        
-        success_count = 0
-        failed_count = 0
+
+        # 1. Sequential geocode pass — preserves Nominatim rate-limit compliance
+        #    and warms the shared geocoder cache. Cheap relative to POI fetches.
+        geocoded = []  # [(city_name, coords)] in state_cities order
         for city_name in state_cities:
             city_query = f"{city_name}, {state_name}, India"
-            coords = self.city2geocode(city_query, expected_country="in")
+            try:
+                coords = self.city2geocode(city_query, expected_country="in")
+            except Exception as e:
+                print(f"[STATE_SEARCH] Geocoding failed for '{city_query}': {e}")
+                coords = None
             if coords:
-                print(f"[STATE_SEARCH] Fetching attractions for {city_query}")
-                try:
-                    pois = self.poi_manager.get_attractions(
-                        lat=coords['lat'], lng=coords['lng'], 
-                        radius=15000, hobbies=hobbies, poi_type="tourist_attraction"
-                    )
-                    if pois:
-                        success_count += 1
-                        print(f"[ATTRACTION_PIPELINE] city={city_name} status=success poi_count={len(pois)}")
-                    else:
-                        failed_count += 1
-                        print(f"[ATTRACTION_PIPELINE] city={city_name} status=failed")
+                geocoded.append((city_name, coords))
+            else:
+                print(f"[ATTRACTION_PIPELINE] city={city_name} status=geocode_failed")
 
-                    for poi in pois:
-                        pid = poi.get('id')
-                        if pid and pid not in seen_ids:
-                            poi['state_city'] = state_name
-                            all_pois.append(poi)
-                            seen_ids.add(pid)
-                except Exception as e:
-                    failed_count += 1
-                    print(f"[ATTRACTION_PIPELINE] city={city_name} status=provider_failure error={e}")
+        # 2. Concurrent POI fetch — the slow network step, parallelised per city.
+        def _fetch_city(city_name, coords):
+            try:
+                pois = self.poi_manager.get_attractions(
+                    lat=coords['lat'], lng=coords['lng'],
+                    radius=15000, hobbies=hobbies, poi_type="tourist_attraction"
+                )
+                return city_name, (pois or [])
+            except Exception as e:
+                print(f"[ATTRACTION_PIPELINE] city={city_name} status=provider_failure error={e}")
+                return city_name, []
+
+        results_by_city = {}
+        if geocoded:
+            max_workers = min(5, len(geocoded))
+            print(f"[STATE_SEARCH] Fetching POIs for {len(geocoded)} cities concurrently (max_workers={max_workers}).")
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(_fetch_city, cn, co) for cn, co in geocoded]
+                for fut in as_completed(futures):
+                    try:
+                        city_name, pois = fut.result()
+                        results_by_city[city_name] = pois
+                    except Exception as e:
+                        print(f"[STATE_SEARCH] POI worker error: {e}")
+
+        # 3. Merge deterministically in original city order, de-duplicating by id.
+        success_count = 0
+        failed_count = 0
+        for city_name, _coords in geocoded:
+            pois = results_by_city.get(city_name, [])
+            if pois:
+                success_count += 1
+                print(f"[ATTRACTION_PIPELINE] city={city_name} status=success poi_count={len(pois)}")
+            else:
+                failed_count += 1
+                print(f"[ATTRACTION_PIPELINE] city={city_name} status=failed")
+            for poi in pois:
+                pid = poi.get('id')
+                if pid and pid not in seen_ids:
+                    poi['state_city'] = state_name
+                    all_pois.append(poi)
+                    seen_ids.add(pid)
 
         print(f"[ATTRACTION_PIPELINE] State search completed. Total cities attempted: {len(state_cities)}. Successful: {success_count}. Failed: {failed_count}. Raw POIs deduplicated: {len(all_pois)}")
-                        
+
         if not all_pois:
             return []
-            
-        # Add basic info to POIs from their first search result structure
-        for poi in all_pois:
-            raw_id = poi.get('place_id') or poi.get('id')
-            if raw_id:
-                poi['id'] = str(raw_id)
-            if 'geometry' in poi and 'location' in poi['geometry']:
-                poi['location'] = poi['geometry']['location']
-                
-            if 'estimated_duration' not in poi:
-                poi['estimated_duration'] = self.estimate_duration(poi.get('category', 'tourist_attraction'), {})
-                
-            img_url = poi.get("image_url")
-            if not img_url or not str(img_url).startswith("http"):
-                poi["image_url"] = self.poi_manager._fetch_pexels_image(poi.get("name", ""))
 
-        # Sort combined pool by rating before LLM rerank
+        # Enforce cap BEFORE enrichment to save time
         all_pois.sort(key=lambda x: (x.get('rating') is None, -(float(x.get('rating', 0) or 0))))
-        
-        # Take top 40 for LLM to rank
         all_pois = all_pois[:40]
+
+        # Use centralized enrichment
+        if all_pois:
+            all_pois = self.enrich_attractions(all_pois, state_name)
 
         # Single LLM rerank across the entire state pool
         if user_prefs and self.llm and len(all_pois) > 0:
@@ -722,116 +742,71 @@ class InformationAgent:
         
         return duration
 
+    def _parse_location_for_osrm(self, location: str):
+        if not isinstance(location, str):
+            return None
+        try:
+            lat_str, lng_str = location.split(',')
+            lat = float(lat_str.strip())
+            lng = float(lng_str.strip())
+            return f"{lng},{lat}"
+        except ValueError:
+            res = self.geocoder.geocode(location)
+            if res:
+                return f"{res.lng},{res.lat}"
+            return None
+
     def plan_routes(self, origin: str, destination: str):
         """
-        Route Planning (Simple A to B for multiple modes).
-
-        Args:
-            origin: Starting point (address, place name, or lat/lng tuple/dict)
-            destination: End point (address, place name, or lat/lng tuple/dict)
-
-        Returns:
-            List of dictionaries, each representing a travel mode, or an empty list.
-            Example format:
-            [
-                {
-                    'mode': str,                # e.g., 'driving', 'transit'
-                    'distance': str,            # Formatted distance text (e.g., "10.2 miles")
-                    'duration': str,            # Formatted duration text (e.g., "25 mins")
-                    'distance_meters': int,     # Raw distance in meters
-                    'duration_seconds': int,    # Raw duration in seconds
-                    'fare': str | None          # Estimated fare text (mostly for transit)
-                },
-                ...
-            ]
+        Route Planning (Simple A to B) using OSRM.
         """
-        modes = ['driving', 'walking', 'bicycling', 'transit']
         routes = []
-        for mode in modes:
-            try:
-                # Using 'en' for consistent address resolution and international compatibility
-                directions = self.gmaps.directions(
-                    origin, destination, mode=mode, language='en'
-                )
-                if not directions:
-                    continue
-
-                # Ensure legs exist and are not empty
-                if not directions[0].get('legs'):
-                    print(f"Warning: Route for mode '{mode}' from '{origin}' to '{destination}' lacks 'legs' data.")
-                    continue
-                leg = directions[0]['legs'][0]
-
-                # Ensure distance and duration exist in the leg
-                if 'distance' not in leg or 'duration' not in leg:
-                     print(f"Warning: Leg for mode '{mode}' from '{origin}' to '{destination}' lacks distance or duration data.")
-                     continue
-
-                info = {
-                    'mode': mode,
-                    'distance': leg['distance']['text'],
-                    'duration': leg['duration']['text'],
-                    'distance_meters': leg['distance']['value'], # Raw distance in meters
-                    'duration_seconds': leg['duration']['value']  # Raw duration in seconds
-                }
-                # Add fare info if available
-                if 'fare' in directions[0]:
-                    info['fare'] = directions[0]['fare'].get('text')
-                routes.append(info)
-            except googlemaps.exceptions.ApiError as e:
-                 print(f"Error planning route for mode '{mode}' from '{origin}' to '{destination}': {e}")
-            except IndexError:
-                 print(f"Index error processing route result for mode '{mode}' from '{origin}' to '{destination}' (likely missing 'legs').")
-            except KeyError as e:
-                 print(f"Key error processing route result for mode '{mode}' from '{origin}' to '{destination}': {e} (likely missing 'distance' or 'duration').")
-            except Exception as e:
-                 print(f"An unexpected error occurred during route planning for mode '{mode}': {e}")
+        origin_coords = self._parse_location_for_osrm(origin)
+        dest_coords = self._parse_location_for_osrm(destination)
+        if not origin_coords or not dest_coords:
+            return routes
+            
+        url = f"http://router.project-osrm.org/route/v1/driving/{origin_coords};{dest_coords}?overview=false"
+        try:
+            import urllib.request, json
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req) as res:
+                data = json.loads(res.read())
+                if data.get('code') == 'Ok':
+                    route = data['routes'][0]
+                    dist_m = route['distance']
+                    dur_s = route['duration']
+                    routes.append({
+                        'mode': 'driving',
+                        'distance': format_distance(dist_m),
+                        'duration': format_duration(dur_s),
+                        'distance_meters': dist_m,
+                        'duration_seconds': dur_s,
+                        'fare': None
+                    })
+        except Exception as e:
+            print(f"OSRM plan_routes error: {e}")
+            
         return routes
 
     def plan_with_waypoints(self, origin: str, destination: str, waypoints: list,
-                                            mode: str = 'driving', departure_time: datetime = None):
+                                            mode: str = 'driving', departure_time=None):
         """
-        Plans an optimized route visiting a list of waypoints between an origin and destination.
-        Uses the Google Maps Directions API with waypoint optimization (`optimize_waypoints=True`).
-
-        Args:
-            origin: Starting point (address, place name, or lat/lng tuple/dict)
-            destination: End point (address, place name, or lat/lng tuple/dict)
-            waypoints: List of intermediate points (list of strings, lat/lng tuples/dicts)
-            mode: Travel mode (default: 'driving'). Optimization works best for 'driving'.
-            departure_time: Optional datetime object (default: now) for traffic estimation.
-
-        Returns:
-            Dictionary with optimized route details, or None if no route is found.
-            Example format:
-            {
-                'path_sequence': List[str],         # List of addresses in optimized order (Origin, WptX, WptY,..., Dest)
-                'waypoint_original_indices': List[int], # Order original waypoints were visited (0-based index)
-                'total_duration_text': str,         # Formatted total duration (e.g., "2 hours 30 mins")
-                'total_duration_seconds': int,      # Raw total duration in seconds
-                'total_duration_in_traffic_text': str | None, # Formatted duration with traffic (if available)
-                'total_duration_in_traffic_seconds': int | None, # Raw duration with traffic (if available)
-                'total_distance_text': str,         # Formatted total distance (e.g., "150.5 km / 93.5 miles")
-                'total_distance_meters': int,       # Raw total distance in meters
-                'fare': str | None                  # Estimated fare text (rare for driving)
-            }
+        Plans an optimized route visiting a list of waypoints using OSRM Trip API.
         """
-        # Handle empty waypoints list by falling back to simple A-B route planning
         if not waypoints:
             print("Warning: No waypoints provided. Calling standard plan_routes for A-B.")
             simple_route_options = self.plan_routes(origin, destination)
-            # Find the driving route from the simple options
             driving_route = next((r for r in simple_route_options if r['mode'] == 'driving'), None)
             if driving_route:
-                 # Addresses from API are resolved; use original input if unavailable in fallback
                  start_addr = origin if isinstance(origin, str) else f"Coord: {origin}"
                  end_addr = destination if isinstance(destination, str) else f"Coord: {destination}"
                  return {
-                    'path_sequence': [start_addr, end_addr], # Simplified path
+                    'path_sequence': [start_addr, end_addr],
                     'waypoint_original_indices': [],
                     'total_duration_text': driving_route['duration'],
                     'total_duration_seconds': driving_route['duration_seconds'],
-                    'total_duration_in_traffic_text': None, # Not available from simple plan_routes call here
+                    'total_duration_in_traffic_text': None,
                     'total_duration_in_traffic_seconds': None,
                     'total_distance_text': driving_route['distance'],
                     'total_distance_meters': driving_route['distance_meters'],
@@ -841,82 +816,65 @@ class InformationAgent:
                 print(f"Could not find a driving route from {origin} to {destination} in fallback.")
                 return None
 
-        # Set departure time to now if not specified
-        if departure_time is None:
-            departure_time = datetime.now()
+        print(f"Planning optimized route: {origin} -> Waypoints -> {destination} using OSRM")
 
-        print(f"Planning optimized route: {origin} -> Waypoints -> {destination} for mode '{mode}'")
-
-        try:
-            # Call Google Maps Directions API
-            # language='en' affects instruction text, addresses usually resolve globally
-            directions_result = self.gmaps.directions(
-                origin,
-                destination,
-                waypoints=waypoints,
-                optimize_waypoints=True, # Key parameter for optimization
-                mode=mode,
-                departure_time=departure_time,
-                language='en'
-            )
-
-            # Check if API returned a valid result
-            if not directions_result:
-                print("No route found for the given points and mode.")
-                return None
-
-            # Get the first recommended route
-            route = directions_result[0]
-            # 'legs' are the segments between points (origin->wpt1, wpt1->wpt2, ..., wptN->dest)
-            legs = route['legs']
-
-            # Calculate total duration and distance by summing up values from each leg
-            total_duration_sec = sum(leg['duration']['value'] for leg in legs)
-            total_distance_m = sum(leg['distance']['value'] for leg in legs)
-
-            # Calculate duration with traffic if available for all legs
-            total_duration_traffic_sec = None
-            if all('duration_in_traffic' in leg for leg in legs):
-                 total_duration_traffic_sec = sum(leg['duration_in_traffic']['value'] for leg in legs)
-
-            # Reconstruct the path sequence using resolved addresses from the API response
-            # Start address is from the first leg; end addresses are from each leg
-            path_sequence = [legs[0]['start_address']] + [leg['end_address'] for leg in legs]
-
-            # Get the optimized order of the *original* waypoints list (0-based indices)
-            optimized_indices = route.get('waypoint_order', [])
-
-            # Prepare the result dictionary
-            result = {
-                'path_sequence': path_sequence,
-                'waypoint_original_indices': optimized_indices,
-                'total_duration_text': format_duration(total_duration_sec),
-                'total_duration_seconds': total_duration_sec,
-                'total_distance_text': format_distance(total_distance_m),
-                'total_distance_meters': total_distance_m,
-                'fare': route.get('fare', {}).get('text') # Extract fare text if present
-            }
-
-            # Add traffic duration details if calculated
-            if total_duration_traffic_sec is not None:
-                result['total_duration_in_traffic_text'] = format_duration(total_duration_traffic_sec)
-                result['total_duration_in_traffic_seconds'] = total_duration_traffic_sec
+        all_coords = []
+        parsed_origin = self._parse_location_for_osrm(origin)
+        parsed_dest = self._parse_location_for_osrm(destination)
+        if not parsed_origin or not parsed_dest:
+            return None
+        all_coords.append(parsed_origin)
+        
+        for wp in waypoints:
+            p = self._parse_location_for_osrm(wp)
+            if p:
+                all_coords.append(p)
             else:
-                 result['total_duration_in_traffic_text'] = None
-                 result['total_duration_in_traffic_seconds'] = None
-
-            return result
-
-        # Handle potential API errors or other exceptions
-        except googlemaps.exceptions.ApiError as e:
-            print(f"Error planning optimized route: {e}")
-            return None
+                return None
+            
+        all_coords.append(parsed_dest)
+        
+        coords_str = ";".join(all_coords)
+        url = f"http://router.project-osrm.org/trip/v1/driving/{coords_str}?source=first&destination=last&roundtrip=false"
+        try:
+            import urllib.request, json
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req) as res:
+                data = json.loads(res.read())
+                if data.get('code') == 'Ok':
+                    trip = data['trips'][0]
+                    waypoints_res = data['waypoints']
+                    
+                    intermediate_wps = []
+                    for i, wp in enumerate(waypoints_res[1:-1]):
+                        intermediate_wps.append({
+                            'original_idx': i,
+                            'trip_idx': wp['waypoint_index']
+                        })
+                    
+                    intermediate_wps.sort(key=lambda x: x['trip_idx'])
+                    optimized_indices = [x['original_idx'] for x in intermediate_wps]
+                    
+                    dist_m = trip['distance']
+                    dur_s = trip['duration']
+                    
+                    path_sequence = [origin] + [waypoints[i] for i in optimized_indices] + [destination]
+                    
+                    return {
+                        'path_sequence': path_sequence,
+                        'waypoint_original_indices': optimized_indices,
+                        'total_duration_text': format_duration(dur_s),
+                        'total_duration_seconds': dur_s,
+                        'total_duration_in_traffic_text': None,
+                        'total_duration_in_traffic_seconds': None,
+                        'total_distance_text': format_distance(dist_m),
+                        'total_distance_meters': dist_m,
+                        'fare': None
+                    }
         except Exception as e:
-            print(f"An unexpected error occurred during optimized route planning: {e}")
-            # Optionally re-raise or log the full traceback for debugging
-            # import traceback
-            # traceback.print_exc()
-            return None
+            print(f"An unexpected error occurred during OSRM optimized route planning: {e}")
+            
+        return None
 
     def get_weather(self, lat: float, lng: float, start_date: str, duration: int, summary: bool = True):
         """
@@ -957,8 +915,13 @@ class InformationAgent:
         
         # Create result dictionary with detailed forecast
         result = {
-            'detailed_forecast': weather_data,
-            'summary': None
+            'summary': 'Weather overview unavailable.',
+            'temperature_summary': '',
+            'precipitation_summary': '',
+            'wind_summary': '',
+            'uv_summary': '',
+            'recommendation': '',
+            'daily_forecast': weather_data
         }
         
         # Generate summary if requested
@@ -966,22 +929,39 @@ class InformationAgent:
             # Create a prompt for the summary writer
             weather_info = json.dumps(weather_data, indent=2)
             prompt = f"""
-            Summarize the following weather forecast in a concise paragraph (max 100 words).
-            Include key information about temperature ranges, precipitation, and any notable weather conditions.
-            Also mention any precautions travelers should take based on the forecast.
-            
-            Weather data:
-            {weather_info}
+Analyze the following weather forecast and generate a comprehensive travel-oriented weather summary.
+Output your response STRICTLY as a JSON object with the following keys:
+- "summary": 2-4 sentences overviewing the weather conditions for the trip
+- "temperature_summary": 1 sentence summarizing temperatures
+- "precipitation_summary": 1 sentence summarizing rain/snow
+- "wind_summary": 1 sentence summarizing wind conditions
+- "uv_summary": 1 sentence summarizing UV index
+- "recommendation": 1-2 sentences of packing/travel advice based on weather
+
+Weather data:
+{weather_info}
             """
             
             # Generate the summary
             messages = [
-                SystemMessage(content="You are a helpful weather assistant that provides concise summaries of weather forecasts for travelers."),
+                SystemMessage(content="You are a helpful weather assistant that outputs strictly in JSON format without markdown code blocks."),
                 HumanMessage(content=prompt)
             ]
             
-            # Add the summary to the result
-            result['summary'] = self.weather_summary_writer.invoke(messages)
+            try:
+                response = self.weather_summary_writer.invoke(messages)
+                content = response.content if hasattr(response, 'content') else str(response)
+                content = content.replace("```json", "").replace("```", "").strip()
+                summary_json = json.loads(content)
+                
+                result['summary'] = summary_json.get('summary', result['summary'])
+                result['temperature_summary'] = summary_json.get('temperature_summary', '')
+                result['precipitation_summary'] = summary_json.get('precipitation_summary', '')
+                result['wind_summary'] = summary_json.get('wind_summary', '')
+                result['uv_summary'] = summary_json.get('uv_summary', '')
+                result['recommendation'] = summary_json.get('recommendation', '')
+            except Exception as e:
+                print(f"[WARN] Failed to parse structured weather summary: {e}")
         
         return result
             
@@ -1022,7 +1002,7 @@ class InformationAgent:
             # Get location coordinates
             location_data = self.city2geocode(location)
             if not location_data:
-                return self._get_mock_car_data(top_n)
+                return []
             
             # Parse dates
             pickup_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
@@ -1055,11 +1035,12 @@ class InformationAgent:
                 cars = [c for c in cars if c.get('price', 0) <= max_price]
                 
             # Return top N results or mock data if API returned nothing
-            return cars[:top_n] if cars else self._get_mock_car_data(top_n)
+            return cars[:top_n] if cars else []
             
         except Exception as e:
             print(f"Error in search_car_rentals: {str(e)}")
-            return self._get_mock_car_data()
+            # Mark car rental unavailable on API error (e.g., 403)
+            return []
             
             
     def _get_mock_car_data(self, top_n: int = 5):
@@ -1239,8 +1220,84 @@ out 15 tags center;
         except Exception as e:
             print(f"Error getting fuel prices: {str(e)}")
             return None
+    def enrich_attractions(self, pois, city_name):
+        """ONE centralized attraction enrichment function."""
+        from concurrent.futures import ThreadPoolExecutor
+        import hashlib
         
+        # We need a global image cache to persist across instances but keyed safely
+        global _GLOBAL_IMAGE_CACHE
+        if '_GLOBAL_IMAGE_CACHE' not in globals():
+            globals()['_GLOBAL_IMAGE_CACHE'] = {}
 
+        def _enrich_single(poi):
+            raw_id = poi.get('place_id') or poi.get('id')
+            name = poi.get('name', 'Unknown Attraction')
+            poi_id = str(raw_id) if raw_id else hashlib.md5(name.encode()).hexdigest()
+            
+            lat = float(poi.get('latitude') or poi.get('location', {}).get('lat', 0))
+            lng = float(poi.get('longitude') or poi.get('location', {}).get('lng', 0))
+            rating = poi.get('rating')
+            if rating is None: rating = 4.0
+            else: rating = float(rating)
+            
+            # Fetch Image
+            cache_key = f"{city_name.lower().strip()}_{name.lower().strip()}"
+            img_url = poi.get('image_url')
+            if not img_url or not str(img_url).startswith("http"):
+                if cache_key in globals()['_GLOBAL_IMAGE_CACHE']:
+                    img_url = globals()['_GLOBAL_IMAGE_CACHE'][cache_key]
+                else:
+                    try:
+                        img_url = self.poi_manager._fetch_pexels_image(name)
+                        if not img_url:
+                            img_url = self.poi_manager._fetch_pexels_image(f"{name} {city_name}")
+                    except Exception:
+                        img_url = None
+                    
+                    if not img_url:
+                        hash_val = int(hashlib.md5(name.encode()).hexdigest(), 16)
+                        placeholders = [
+                            "https://images.unsplash.com/photo-1502602898657-3e9076113801",
+                            "https://images.unsplash.com/photo-1564507592333-c60657eea523",
+                            "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf",
+                            "https://images.unsplash.com/photo-1537996194471-e657df975ab4",
+                            "https://images.unsplash.com/photo-1512453979798-5ea266f8880c",
+                            "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9"
+                        ]
+                        img_url = placeholders[hash_val % len(placeholders)] + "?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"
+                    
+                    globals()['_GLOBAL_IMAGE_CACHE'][cache_key] = img_url
 
+            # Description Generation
+            desc = poi.get('description', '').strip()
+            if not desc or len(desc) < 20:
+                cat = str(poi.get('category', 'tourist attraction')).replace('_', ' ')
+                desc = f"A popular {cat} located in {city_name}, highly rated by visitors for its experience and atmosphere."
+                
+            duration = poi.get('estimated_duration')
+            if not duration:
+                duration = self.estimate_duration(poi.get('category', 'tourist_attraction'), {})
 
+            return {
+                "id": poi_id,
+                "name": name,
+                "description": desc,
+                "address": poi.get('address') or f"{name}, {city_name}",
+                "latitude": lat,
+                "longitude": lng,
+                "rating": rating,
+                "review_count": int(poi.get('review_count') or poi.get('user_ratings_total', 0)),
+                "price": poi.get('price_level', 0),
+                "duration": duration,
+                "category": poi.get('category', 'tourist_attraction'),
+                "image_url": img_url,
+                "source": poi.get('source', 'unknown'),
+                "match_percentage": poi.get('match_percentage', 100)
+            }
+            
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(pois)))) as executor:
+            enriched = list(executor.map(_enrich_single, pois))
+            
+        return enriched
 

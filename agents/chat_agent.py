@@ -127,19 +127,20 @@ class ChatAgent:
 
         # Extract structured data using LLM
         if user_input and user_input.strip():
-            # Budget is special: either budget (category) OR budget_amount (numeric) satisfies the requirement
-            missing_budget = not self._has_budget(state)
+            # Always attempt to extract the full mutable field set (not just the
+            # missing ones). This lets the user MODIFY an already-captured value
+            # later in the conversation — e.g. "change my destination to Paris",
+            # "make it 7 days", "increase my budget" — instead of the first value
+            # being frozen forever. The extractor is instructed to return a value
+            # ONLY when the user explicitly states/changes it, so unchanged fields
+            # come back as None and are left untouched.
             missing_current = [f for f in self.required_fields if state.get(f) in (None, "")]
-            # Always try to extract budget fields if budget is not yet fully resolved
-            extra_extract = []
-            if missing_budget:
-                for f in ["budget", "budget_amount", "budget_strictness"]:
-                    if f not in missing_current:
-                        extra_extract.append(f)
-            fields_to_extract = missing_current + extra_extract
-            
+            fields_to_extract = list(dict.fromkeys(
+                self.required_fields + ["budget_amount", "budget_strictness"]
+            ))
+
             if fields_to_extract:
-                # Formulate extraction prompt with context of missing fields and their descriptions
+                # Formulate extraction prompt with context of the fields and their descriptions
                 field_descriptions = []
                 for field_name, field_info in TravelState.model_json_schema().get("properties", {}).items():
                     if field_name in fields_to_extract:
@@ -157,14 +158,19 @@ class ChatAgent:
                 context_str = "\n".join(history_texts)
                 
                 extraction_prompt = (
-                    f"Carefully extract the following travel details from the user's input: {', '.join(fields_to_extract)}.\n\n"
+                    f"Carefully extract the following travel details from the user's LATEST input: {', '.join(fields_to_extract)}.\n\n"
                     f"Definitions:\n{desc_str}\n\n"
                     f"IMPORTANT BUDGET RULES:\n"
                     f"- If user says 'low/medium/high/budget/luxury' → fill 'budget' field only.\n"
                     f"- If user states a specific INR number (e.g. ₹50000, 50 thousand, 1 lakh) → fill 'budget_amount' with the integer, leave 'budget' empty.\n"
                     f"- 1 lakh = 100000, 50 thousand = 50000.\n"
                     f"- Detect strictness from phrases: 'strictly/must not exceed/keep below/no more than' → 'strict'; 'around/approximately/up to/roughly' → 'flexible'.\n\n"
-                    f"CRITICAL: Extract ONLY information explicitly stated by the user. Do not infer, guess, or use default values for ANY missing fields.\n\n"
+                    f"UPDATE / CHANGE RULE: If the user explicitly changes or updates a value "
+                    f"(e.g. 'change my destination to Paris', 'make it 7 days', 'increase my budget to 150000', "
+                    f"'actually 3 people'), return the NEW value for that field so it overrides the previous one. "
+                    f"The user's LATEST message always wins over earlier context.\n\n"
+                    f"CRITICAL: Extract ONLY information explicitly stated by the user. Do not infer, guess, or use default values for ANY field. "
+                    f"If a field is not mentioned or changed in the latest input, leave it as None.\n\n"
                     f"Do NOT confuse health status with destination, or budget amount with number of people.\n\n"
                     f"Conversation Context:\n{context_str}"
                 )
@@ -185,13 +191,16 @@ class ChatAgent:
                         extracted_dict = extracted_data.model_dump(exclude_none=True)
                         print(f"[DEBUG] extracted_dict: {extracted_dict}")
                         for field, value in extracted_dict.items():
-                            # Only update fields that are genuinely missing or budget extras
-                            if value is not None and (field in missing_current or field in extra_extract):
+                            # Update any field the user explicitly stated or changed
+                            # this turn (extracted_dict already excludes None values).
+                            if field in fields_to_extract:
                                 state[field] = value
                                 print(f"Updated state: {field} = {value}")
-                                
-                        # Normalize budget if budget_amount is present but budget is not
-                        if state.get("budget_amount") and not state.get("budget"):
+
+                        # Normalize the budget category from a numeric amount, unless
+                        # the user explicitly gave a category (low/medium/high/luxury)
+                        # in this same turn — in which case their wording wins.
+                        if state.get("budget_amount") and "budget" not in extracted_dict:
                             try:
                                 amt = int(state["budget_amount"])
                                 if amt <= 30000:
@@ -237,8 +246,18 @@ class ChatAgent:
         try:
             response = self.model.stream(messages)
             print(f"[DEBUG] LLM stream object created (lazy, not yet consumed): {type(response)}")
+            
+            def response_generator():
+                full_content = ""
+                for chunk in response:
+                    text_chunk = self._extract_text(chunk.content)
+                    if text_chunk:
+                        full_content += text_chunk
+                    yield chunk
+                self.conversation_history.append(AIMessage(content=full_content))
+                
             return {
-                "stream": response,
+                "stream": response_generator(),
                 "missing_fields": missing,
                 "complete": complete,
                 "state": state.copy()

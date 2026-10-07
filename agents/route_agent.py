@@ -308,9 +308,11 @@ class RouteAgent:
         itinerary = []
         try:
             current_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-        except ValueError:
-            print(f"[ERROR] Invalid start_date_str format: {start_date_str}. Expected YYYY-MM-DD.")
+            is_suggested = False
+        except (ValueError, TypeError):
+            print(f"[WARN] Invalid or flexible start_date_str: {start_date_str}. Using current date as a suggestion.")
             current_date = datetime.now()
+            is_suggested = True
 
         # Sort day keys numerically
         day_keys = [k for k in daily_plan_name_dict.keys() if k.lower().startswith("day") and re.search(r"\d+", k)]
@@ -423,6 +425,12 @@ class RouteAgent:
                 spot_with_time["start_time"] = current_time.strftime("%H:%M")
                 spot_with_time["end_time"] = activity_end.strftime("%H:%M")
                 
+                spot_with_time["time"] = f"{spot_with_time['start_time']} - {spot_with_time['end_time']}"
+                if "location" in spot_with_time:
+                    loc = spot_with_time["location"]
+                    spot_with_time["latitude"] = loc.get("lat") or loc.get("latitude")
+                    spot_with_time["longitude"] = loc.get("lng") or loc.get("longitude")
+
                 # Validation: Ensure start_time < end_time
                 if current_time < activity_end:
                     current_day_spots_timed.append(spot_with_time)
@@ -436,7 +444,12 @@ class RouteAgent:
             itinerary.append({
                 "day": day_number,
                 "date": current_date.strftime("%Y-%m-%d"),
-                "spots": current_day_spots_timed,
+                "is_suggested_date": is_suggested,
+                "activities": current_day_spots_timed,
+                "transport": None,
+                "food": None,
+                "accommodation": None,
+                "cost": None
             })
             current_date += timedelta(days=1)
 

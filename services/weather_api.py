@@ -76,7 +76,7 @@ class WeatherService:
             "longitude": lng,
             "start_date": start.strftime("%Y-%m-%d"),
             "end_date": end.strftime("%Y-%m-%d"),
-            "daily": ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "wind_speed_10m_max", "precipitation_probability_mean", "uv_index_max"],
+            "daily": ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "wind_speed_10m_max", "precipitation_probability_mean", "uv_index_max", "weather_code", "relative_humidity_2m_mean"],
             "timezone": "auto"
         }
         try:
@@ -106,7 +106,7 @@ class WeatherService:
                 "longitude": lng,
                 "start_date": past_start.strftime("%Y-%m-%d"),
                 "end_date": past_end.strftime("%Y-%m-%d"),
-                "daily": ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "wind_speed_10m_max"],
+                "daily": ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "wind_speed_10m_max", "weather_code", "relative_humidity_2m_mean"],
                 "timezone": "auto"
             }
             try:
@@ -123,6 +123,33 @@ class WeatherService:
 
         return self._average_historical_data(historical_data)
 
+    def _map_weather_code(self, code):
+        if code is None: return "Unknown"
+        mapping = {
+            0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+            45: "Fog", 48: "Depositing rime fog", 51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
+            56: "Light freezing drizzle", 57: "Dense freezing drizzle", 61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
+            66: "Light freezing rain", 67: "Heavy freezing rain", 71: "Slight snow fall", 73: "Moderate snow fall", 75: "Heavy snow fall",
+            77: "Snow grains", 80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
+            85: "Slight snow showers", 86: "Heavy snow showers", 95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail"
+        }
+        return mapping.get(code, "Unknown")
+
+    def _generate_packing_advice(self, max_temp, rain, uv, condition):
+        advice = []
+        if rain and rain > 1.0 or "rain" in condition.lower() or "drizzle" in condition.lower():
+            advice.append("Umbrella")
+        if uv and uv > 5.0:
+            advice.append("Sunscreen")
+        if "snow" in condition.lower():
+            advice.append("Winter coat")
+        elif max_temp:
+            if max_temp > 25: advice.append("Light clothing")
+            elif max_temp < 15: advice.append("Jacket")
+        if not advice:
+            advice.append("Comfortable shoes")
+        return ", ".join(advice)
+
     def _format_weather_data(self, data):
         """Format weather data into a user-friendly structure"""
         formatted_data = []
@@ -134,16 +161,27 @@ class WeatherService:
         wind_speeds = daily.get("wind_speed_10m_max", [])
         precip_probabilities = daily.get("precipitation_probability_mean", [])
         uv_indices = daily.get("uv_index_max", [])
+        weather_codes = daily.get("weather_code", [])
+        humidities = daily.get("relative_humidity_2m_mean", [])
 
         for i in range(len(dates)):
+            wcode = weather_codes[i] if i < len(weather_codes) else None
+            cond = self._map_weather_code(wcode)
+            uv = uv_indices[i] if i < len(uv_indices) and uv_indices[i] is not None else 0
+            max_t = max_temps[i] if i < len(max_temps) else None
+            precip = precipitations[i] if i < len(precipitations) else 0
+
             formatted_data.append({
                 "date": dates[i],
-                "max_temp": f"{max_temps[i]} °C",
-                "min_temp": f"{min_temps[i]} °C",
-                "precipitation": f"{precipitations[i]} mm",
+                "max_temp": f"{max_temps[i]} °C" if max_t is not None else None,
+                "min_temp": f"{min_temps[i]} °C" if i < len(min_temps) else None,
+                "precipitation": f"{precipitations[i]} mm" if precip is not None else None,
                 "wind_speed": f"{wind_speeds[i]} km/h" if i < len(wind_speeds) else None,
                 "precipitation_probability": f"{precip_probabilities[i]}%" if i < len(precip_probabilities) else None,
-                "uv_index": f"{uv_indices[i]}" if i < len(uv_indices) else None
+                "uv_index": f"{uv}" if uv else "0",
+                "condition": cond,
+                "humidity": f"{humidities[i]}%" if i < len(humidities) else None,
+                "packing_advice": self._generate_packing_advice(max_t, precip, uv, cond)
             })
 
         return formatted_data

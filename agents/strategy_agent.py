@@ -87,7 +87,47 @@ class StrategyAgent:
                 """
 
             for i in range(max_try):
-                prompt = f"""
+                is_international = user_prefs.get('is_international', False)
+                destination_city = user_prefs.get('city', 'the destination')
+                
+                if is_international:
+                    prompt = f"""
+            You are a travel advisor helping with trip logistics for {destination_city}.
+            The user is planning a {total_days}-day trip to {destination_city}.
+
+            User Preferences:
+            {user_prefs_str}
+            
+            {specific_requirements_section}
+
+            Weather Summary for the trip period:
+            {weather_str}
+            
+            {rag_context_section}
+
+            Here are the attractions they have pre-selected:
+            {selected_data}
+
+            Please create an optimized daily itinerary for the {total_days} days using ONLY the pre-selected attractions.
+            - Distribute ONLY the selected attractions across the days to minimize travel time.
+            - Do NOT include any other attractions. Do NOT invent new attractions.
+            - Consider estimated duration. Assume a travel day is about 8 hours.
+            - Group nearby attractions on the same day.
+            - Consider local factors for {destination_city}: midday weather, local transport availability, and cultural timings.
+            - IMPORTANT: Do NOT duplicate the same attractions across multiple days just to fill the itinerary.
+            - IMPORTANT: If the selected attractions do not fill all the days, leave some days empty or allocate them to "Relaxation" or "Leisure".
+            
+            User preference considerations:
+            - Adjust for mobility/health conditions, families with children.
+            - Match attraction types with hobbies (temples, museums, beaches, nature, food markets, etc.)
+            - Consider budget (budget: street food/local transport; medium: mid-range; high: luxury experiences)
+                
+                Do not use bold font or any markdown.
+                Return ONLY a valid JSON object where keys are "day1", "day2", ..., "dayN" and values are lists of attraction names.
+                Example: {{"day1": ["Attraction A", "Attraction B"], "day2": ["Attraction C"]}}
+                """
+                else:
+                    prompt = f"""
             You are an India travel advisor helping with trip logistics within India.
             The user is planning a {total_days}-day trip to an Indian destination.
 
@@ -383,7 +423,43 @@ class StrategyAgent:
         {specific_requirements}
             """
         
-        prompt = f"""
+        is_international = user_prefs.get('is_international', False)
+        destination_city = user_prefs.get('city', 'the destination')
+        
+        if is_international:
+            prompt = f"""
+        You are providing travel recommendations to {name} who is planning a {days}-day trip to {destination_city} with these attractions:
+        {', '.join(spot_names)}
+        
+        Their specific preferences are:
+        - Number of people: {people}
+        - Traveling with children: {'Yes' if has_kids else 'No'}
+        - Health/Dietary requirements: {health_prefs}
+        - Budget level: {budget}
+        - Interests/Hobbies: {hobbies}
+        {specific_requirements_section}
+        
+        Based on these preferences, provide recommendations in the following format:
+
+        ## Car Rental Recommendation:
+        [car_rental:YES/NO] (Use YES or NO only)
+
+        Provide your explanation for the car rental recommendation. In the context of {destination_city}, consider local transport options.
+        Be decisive and clear about YES or NO.
+
+        ## Trip Adjustments:
+        Provide 2-3 specific suggestions to make the trip to {destination_city} more enjoyable based on the traveler's preferences.
+        Mention things like best time to visit sites, local cuisine to try, etc.
+        
+        IMPORTANT: 
+        1. Always use SECOND PERSON - speak directly TO {name}.
+        2. Include the [car_rental:YES] or [car_rental:NO] marker (it will be hidden from user).
+        3. Be clear: "I recommend you rent a car" or "I do not recommend you rent a car".
+        4. Don't mention car rental if you don't recommend it.
+        5. Keep language friendly and helpful.
+        """
+        else:
+            prompt = f"""
         You are providing India travel recommendations to {name} who is planning a {days}-day trip within India with these attractions:
         {', '.join(spot_names)}
         

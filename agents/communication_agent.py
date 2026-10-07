@@ -94,7 +94,7 @@ class CommunicationAgent:
     def generate_booking_confirmation(self, itinerary, budget_estimate, car_rental=None, user_name=None):
         """Generate booking confirmation message."""
         itinerary_summary = f"{len(itinerary)} days, starting on {itinerary[0]['date'] if itinerary else 'N/A'}"
-        attractions_count = sum(len(day['spots']) for day in itinerary) if itinerary else 0
+        attractions_count = sum(len(day.get('activities', [])) for day in itinerary) if itinerary else 0
         name = user_name if user_name else "Traveler"
         
         # Only include car rental information if it's recommended
@@ -105,7 +105,7 @@ class CommunicationAgent:
         
         Itinerary: {itinerary_summary}
         Number of attractions: {attractions_count}
-        Estimated budget: ₹{budget_estimate.get('total_cost', 0)}{car_rental_prompt}
+        Estimated budget: ₹{budget_estimate.get('total', 0)}{car_rental_prompt}
         
         The message should:
         1. Confirm the booking is complete
@@ -135,8 +135,20 @@ class CommunicationAgent:
         name = user_prefs.get('name', 'Traveler')
         
         attractions_list = [a.get("name") for a in selected_attractions]
-        budget_total = budget_estimate.get('total_cost', 0) if budget_estimate else 0
+        budget_total = budget_estimate.get('total', 0) if budget_estimate else 0
+        budget_amount = budget_estimate.get('budget_amount') if budget_estimate else None
+        budget_strictness = budget_estimate.get('budget_strictness') if budget_estimate else None
         
+        budget_status_str = ""
+        if budget_amount:
+            remaining = budget_amount - budget_total
+            if remaining >= 0:
+                budget_status_str = f"Target Budget: ₹{budget_amount:,}\n        Estimated: ₹{int(budget_total):,}\n        Remaining: ₹{int(remaining):,}"
+            else:
+                budget_status_str = f"Target Budget: ₹{budget_amount:,}\n        Estimated: ₹{int(budget_total):,}\n        Exceeded by: ₹{int(abs(remaining)):,}"
+        else:
+            budget_status_str = f"Estimated Budget: ₹{int(budget_total):,}"
+
         has_transit = transit_options and any(transit_options.values())
         
         prompt = f"""
@@ -144,12 +156,12 @@ class CommunicationAgent:
         Before we generate the final route itinerary, you must provide a comprehensive pre-itinerary summary.
         
         Selected Attractions: {', '.join(attractions_list)}
-        Estimated Budget: ₹{budget_total}
+        {budget_status_str}
         Transit Options Available: {'Yes' if has_transit else 'No'}
         
         Please generate a beautifully formatted Markdown response containing:
         1. **Recommendation Summary**: A brief, exciting summary of the selected attractions and overall trip vibe.
-        2. **Budget Summary**: A high-level overview of the estimated budget (mentioning it's around ₹{budget_total}).
+        2. **Budget Summary**: A high-level overview of the estimated budget, clearly showing the estimated total, and if a target budget was provided, showing the remaining or exceeded amount. Do not ignore the budget limit.
         3. **Transit Summary**: A brief mention of travel options to {city}.
         4. **Local Travel Tips & Advice**: 3-4 important tips specific to {city} (e.g., local customs, weather advice, safety, local transport like autos/metros).
         

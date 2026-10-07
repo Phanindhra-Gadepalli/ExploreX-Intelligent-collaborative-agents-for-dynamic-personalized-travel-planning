@@ -2,8 +2,8 @@ import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import json
 import sys
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from chromadb.config import Settings
 
@@ -1069,7 +1069,12 @@ class DocumentIngestor:
             self.vector_db.add_documents(batch)
             print(f"  Ingested documents {i+1}–{min(i+batch_size, total)} of {total}")
 
-        self.vector_db.persist()
+        # langchain_chroma + chromadb>=0.6 persist automatically via the
+        # PersistentClient; .persist() is a deprecated no-op on newer versions.
+        try:
+            self.vector_db.persist()
+        except Exception:
+            pass
         print(f"[SUCCESS] Ingested {total} India knowledge documents into {self.persist_directory}")
 
     # Keep backward-compatible alias

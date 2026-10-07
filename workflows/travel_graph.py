@@ -178,7 +178,8 @@ class TravelGraph:
             self.state = self.get_session_state(session_id)
             # print(f"[DEBUG] Retrieved session state: {self.state}")
         else:
-            session_id = str(id(self)) # Fallback if no session_id, though it should be provided
+            import os
+            session_id = os.urandom(16).hex()
             self.state = self.get_session_state(session_id)
             print(f"[WARN] No session_id provided, created fallback session: {session_id}")
         
@@ -240,8 +241,25 @@ class TravelGraph:
         print(f"[DEBUG] Updating state")
         try:
             if chat_result.get("state"):
-                self.state["user_info"].update(chat_result["state"])
-                print(f"Extracted Entities / New State: {json.dumps(chat_result.get('state', {}))}")
+                new_state = chat_result["state"]
+                old_city = current_user_info.get("city")
+                new_city = new_state.get("city")
+                
+                # Invalidate destination-dependent data if the user changed the city mid-chat
+                if old_city and new_city and old_city.strip().lower() != new_city.strip().lower():
+                    print(f"[INFO] Destination changed from {old_city} to {new_city}. Invalidating dependent data.")
+                    self.state["attractions"] = []
+                    self.state["selected_attractions"] = []
+                    self.state["additional_attractions"] = []
+                    self.state["itinerary"] = []
+                    self.state["retrieved_knowledge"] = None
+                    self.state["weather_summary"] = None
+                    self.state["transit_options"] = None
+                    self.state["ai_recommendation_generated"] = False
+                    new_state["city_validated"] = False
+                    
+                self.state["user_info"].update(new_state)
+                print(f"Extracted Entities / New State: {json.dumps(new_state)}")
         except Exception:
             import traceback
             traceback.print_exc()
@@ -448,13 +466,9 @@ class TravelGraph:
                     user_start_date, num_days, summary=True
                 )
                 if weather_data_result and 'summary' in weather_data_result:
-                    summary_val = weather_data_result['summary']
-                    if hasattr(summary_val, 'content'):
-                        weather_summary_str = summary_val.content
-                    elif isinstance(summary_val, str):
-                        weather_summary_str = summary_val
+                    weather_summary_str = weather_data_result['summary']
                     self.state["weather_summary"] = weather_summary_str
-                    self.state["weather_forecast"] = weather_data_result.get('detailed_forecast')
+                    self.state["weather_forecast"] = weather_data_result
                     print(f"[DEBUG] Weather summary set: '{weather_summary_str}'")
             except ValueError:
                 print(f"[ERROR] Invalid 'days' for weather: {user_days_str}")
@@ -497,26 +511,41 @@ class TravelGraph:
 
         print(f"[DEBUG] Attractions updated: {len(self.state['attractions'])} items.")
         # ---- Accommodations ----
-        budget = user_prefs.get("budget", "medium")
+        import concurrent.futures
+        all_accommodations = []
         try:
-            accommodations = self.info_agent.get_accommodations(
-                lat=city_coordinates["lat"],
-                lng=city_coordinates["lng"],
-                budget=budget,
-                number=4
-            )
-            self.state["accommodations"] = [normalize_poi(a) for a in (accommodations or [])]
-            print(f"[DEBUG] Accommodations updated: {len(self.state.get('accommodations', []))} items.")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                future_to_tier = {
+                    executor.submit(
+                        self.info_agent.get_accommodations,
+                        lat=city_coordinates["lat"],
+                        lng=city_coordinates["lng"],
+                        budget=tier,
+                        number=4
+                    ): tier for tier in ["budget", "medium", "luxury"]
+                }
+                for future in concurrent.futures.as_completed(future_to_tier):
+                    tier = future_to_tier[future]
+                    try:
+                        accs = future.result()
+                        if accs:
+                            all_accommodations.extend(accs)
+                    except Exception as exc:
+                        print(f"[ERROR] Failed to fetch {tier} accommodations: {exc}")
+                        
+            self.state["accommodations"] = [normalize_poi(a) for a in all_accommodations]
+            print(f"[DEBUG] Accommodations updated: {len(self.state.get('accommodations', []))} items across 3 tiers.")
         except Exception as e:
-            print(f"[ERROR] Failed to fetch accommodations: {e}")
+            print(f"[ERROR] ThreadPoolExecutor failed for accommodations: {e}")
             self.state["accommodations"] = []
+
 
         try:
             restaurants = self.info_agent.poi_manager.get_restaurants(
                 lat=city_coordinates["lat"],
                 lng=city_coordinates["lng"],
                 radius=4000,
-                number=8,
+                number=30,
             )
             self.state["restaurants"] = [normalize_poi(r) for r in (restaurants or [])]
             print(f"[DEBUG] Restaurants updated: {len(self.state.get('restaurants', []))} items.")
@@ -558,6 +587,7 @@ class TravelGraph:
             "stream": info_gen_message(),
             "attractions": self.state["attractions"],
             "accommodations": self.state.get("accommodations", []),
+            "restaurants": self.state.get("restaurants", []),
             "map_data": self.recommend_agent.generate_map_data(self.state["attractions"]),
             "state": self.state.copy()
         }
@@ -570,6 +600,9 @@ class TravelGraph:
         # Retrieve contextual knowledge
         retrieved_knowledge = self.retrieval_agent.retrieve_context(user_prefs, city)
         self.state["retrieved_knowledge"] = retrieved_knowledge
+        # Real provenance captured by the retrieval agent (ChromaDB metadata or
+        # live web results). Empty when nothing was actually retrieved.
+        self.state["rag_sources"] = getattr(self.retrieval_agent, "last_sources", []) or []
         
         # Attempt to extract POIs from RAG knowledge
         rag_pois = []
@@ -612,6 +645,7 @@ class TravelGraph:
         return {
             "next_step": "recommend",
             "retrieved_knowledge": retrieved_knowledge,
+            "rag_sources": self.state.get("rag_sources", []),
             "state": self.state.copy()
         }
         
@@ -863,7 +897,7 @@ class TravelGraph:
                 if next_step == "route":
                     yield AIMessage(content="Moving to route planning...")
                 else:
-                    yield AIMessage(content="Moving to car rental options...")
+                    yield AIMessage(content="Planning your final itinerary...")
             
             # Create a copy of the state to return
             state_copy = self.state.copy()
@@ -939,7 +973,8 @@ class TravelGraph:
                     origin=origin,
                     destination=destination,
                     start_date=start_date,
-                    budget_level=budget_level
+                    budget_level=budget_level,
+                    is_international=self.state["user_info"].get("is_international", False)
                 )
             except Exception as te:
                 print(f"[WARN] Failed to get transit options: {te}")
@@ -950,6 +985,7 @@ class TravelGraph:
 
         if self.state.get("should_rent_car", False):
             try:
+                print(f"[DEBUG] Fetching local car rental options in {destination}...")
                 car_info = self.info_agent.search_car_rentals(
                     self.state["user_info"].get("city", ""),
                     start_date,
@@ -979,14 +1015,28 @@ class TravelGraph:
                 budget["total"] = (
                     budget.get("attractions", 0) + 
                     budget.get("food", 0) + 
-                    budget.get("transport", 0) + 
+                    budget.get("local_transport", 0) + 
                     budget["accommodation"] +
                     budget.get("car_rental", 0) +
-                    budget.get("fuel_cost", 0) +
+                    budget.get("fuel", 0) +
                     budget.get("intercity_transport", 0)
                 )
                 budget["miscellaneous"] = round(budget["total"] * 0.10, 2)
                 budget["total"] += budget["miscellaneous"]
+                
+                # Recalculate normalized fields
+                if budget.get("budget_amount"):
+                    budget["remaining"] = round(budget["budget_amount"] - budget["total"], 2)
+                    budget["utilization_percentage"] = round((budget["total"] / budget["budget_amount"] * 100), 1)
+                    budget["within_budget"] = budget["total"] <= budget["budget_amount"]
+                    
+                    if not budget["within_budget"] and budget.get("budget_strictness") == "strict":
+                        budget["budget_warning"] = (
+                            f"Your requested trip cannot currently fit within ₹{budget['budget_amount']:,}. "
+                            f"The closest feasible configuration is ₹{int(budget['total']):,}. "
+                            "Consider reducing travel days, choosing fewer paid attractions, or selecting cheaper intercity transport to fit within your strict budget."
+                        )
+                        budget["budget_infeasible"] = True
 
         # Store in state so route doesn't have to re-fetch
         self.state["budget"] = budget
@@ -1062,7 +1112,7 @@ class TravelGraph:
             if itinerary:
                 for day_plan_item in itinerary: # Iterate through list of day plans
                     day_number = day_plan_item.get("day")
-                    for spot in day_plan_item.get("spots", []):
+                    for spot in day_plan_item.get("activities", []):
                         spot_with_day = spot.copy() # Avoid modifying original spot in itinerary
                         spot_with_day["day"] = day_number
                         optimal_route.append(spot_with_day)
@@ -1087,11 +1137,13 @@ class TravelGraph:
                 # Insert accommodation then re-sort the whole day by start_time
                 # so the displayed order is always chronological (e.g. 14:00
                 # check-in appears after the 09:00–13:00 morning attractions).
-                if "spots" in itinerary[0]:
-                    itinerary[0]["spots"].append(acc_spot)
-                    itinerary[0]["spots"] = self.route_agent._sort_spots_by_time(
-                        itinerary[0]["spots"]
+                if "activities" in itinerary[0]:
+                    itinerary[0]["activities"].append(acc_spot)
+                    itinerary[0]["activities"] = self.route_agent._sort_spots_by_time(
+                        itinerary[0]["activities"]
                     )
+                # Assign to top-level canonical key
+                itinerary[0]["accommodation"] = selected_acc
                     
             # Store in state
             self.state["itinerary"] = itinerary
@@ -1120,13 +1172,26 @@ class TravelGraph:
                 user_email = self.state["user_info"].get("email")
                 if user_email:
                     try:
+                        accs = self.state.get("accommodations") or []
+                        auto_ctx = {
+                            "origin": self.state["user_info"].get("origin_city"),
+                            "days": self.state["user_info"].get("days"),
+                            "people": self.state["user_info"].get("people"),
+                            "kids": self.state["user_info"].get("kids"),
+                            "start_date": self.state["user_info"].get("start_date"),
+                            "accommodation": self.state.get("selected_accommodation") or (accs[0] if accs else None),
+                            "food": self.state.get("restaurants") or [],
+                            "transport": self.state.get("transit_options") or transit_options,
+                            "tips": self.state.get("travel_tips") or self.state.get("tips"),
+                        }
                         email_status = send_trip_email(
                             user_email,
                             self.state["user_info"].get("name", "Traveler"),
                             self.state["user_info"].get("city", "your destination"),
                             itinerary,
                             budget,
-                            confirmation
+                            confirmation,
+                            trip_context=auto_ctx,
                         )
                         if email_status:
                             self.state["email_sent"] = True
@@ -1135,7 +1200,8 @@ class TravelGraph:
                         print(f"[ERROR] Failed to send trip email to {user_email}: {e}")
                         # Don't break the trip if email fails!
                 else:
-                    print(f"[WARN] No user email found in state. Skipping email delivery.")
+                    print("[EMAIL] No user email in state; skipping auto-send. "
+                          "The traveler can send it on demand via the Email modal (/api/email).")
 
             return {
                 "next_step": "complete",

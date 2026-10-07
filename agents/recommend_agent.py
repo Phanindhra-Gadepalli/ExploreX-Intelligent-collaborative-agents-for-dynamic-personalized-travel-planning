@@ -25,6 +25,98 @@ class RecommendAgent:
             'adventure': 'trekking, hiking, water sports, camping, thrill, adventurous activities',
             'culture': 'museums, art galleries, local markets, cultural centers, traditional, performing arts'
         }
+
+    def recommend_destinations(self, interests, weight=80):
+        """Recommend global destinations based on user interests"""
+        import random
+        base_destinations = [
+            {
+                "id": "paris_fr",
+                "name": "Paris",
+                "country": "France",
+                "image": "https://images.unsplash.com/photo-1502602898657-3e9076113801?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+                "tags": ["History", "Architecture", "Art & Culture", "Photography"],
+                "base_cost": 1850,
+                "rating": 4.8,
+                "weather_snippet": "18°C, Partly Cloudy"
+            },
+            {
+                "id": "agra_in",
+                "name": "Agra",
+                "country": "India",
+                "image": "https://images.unsplash.com/photo-1564507592333-c60657eea523?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+                "tags": ["History", "Architecture", "Spiritual"],
+                "base_cost": 950,
+                "rating": 4.7,
+                "weather_snippet": "32°C, Sunny"
+            },
+            {
+                "id": "tokyo_jp",
+                "name": "Tokyo",
+                "country": "Japan",
+                "image": "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+                "tags": ["Technology", "Food", "Nightlife", "Shopping"],
+                "base_cost": 1200,
+                "rating": 4.9,
+                "weather_snippet": "22°C, Clear Sky"
+            },
+            {
+                "id": "bali_id",
+                "name": "Bali",
+                "country": "Indonesia",
+                "image": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+                "tags": ["Nature", "Adventure", "Spiritual"],
+                "base_cost": 850,
+                "rating": 4.8,
+                "weather_snippet": "28°C, Tropical"
+            },
+            {
+                "id": "dubai_ae",
+                "name": "Dubai",
+                "country": "UAE",
+                "image": "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+                "tags": ["Architecture", "Shopping", "Luxury"],
+                "base_cost": 2100,
+                "rating": 4.7,
+                "weather_snippet": "35°C, Hot"
+            },
+            {
+                "id": "new_york_us",
+                "name": "New York",
+                "country": "USA",
+                "image": "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+                "tags": ["Art & Culture", "Food", "Nightlife"],
+                "base_cost": 2500,
+                "rating": 4.8,
+                "weather_snippet": "15°C, Breezy"
+            }
+        ]
+
+        interest_lower = [i.lower() for i in (interests or [])]
+        results = []
+        for dest in base_destinations:
+            dest_tags_lower = [t.lower() for t in dest['tags']]
+            match_count = sum(1 for tag in dest_tags_lower if tag in interest_lower)
+            
+            if not interests:
+                match_percentage = random.randint(75, 95)
+            else:
+                if match_count > 0:
+                    base_match = 80 + (match_count * 5)
+                    weight_factor = (weight - 50) / 100.0 if weight > 50 else 0
+                    match_percentage = min(98, int(base_match + (weight_factor * 10)))
+                else:
+                    match_percentage = random.randint(60, 75)
+            
+            dest['match_percentage'] = match_percentage
+            # Find the first tag that matches interests, or just use the first tag
+            matching_tags = [t for t in dest['tags'] if t.lower() in interest_lower]
+            dest['tag'] = matching_tags[0] if matching_tags else dest['tags'][0]
+            dest['estimated_cost'] = f"${dest['base_cost']}"
+            results.append(dest)
+            
+        results.sort(key=lambda x: x['match_percentage'], reverse=True)
+        return results
         
     def recommend_core_attractions(self, user_prefs, attractions, retrieved_knowledge=None):
         """Recommend core attractions based on user preferences"""

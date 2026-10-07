@@ -7,55 +7,55 @@ class TransitAgent:
         """Initialize the TransitAgent with specified model."""
         self.model = ChatGoogleGenerativeAI(model=model_name, temperature=0.7)
     
-    def get_transit_options(self, origin, destination, start_date, budget_level="medium"):
+    def get_transit_options(self, origin, destination, start_date, budget_level="medium", is_international=False):
         """Generate mocked transit options using Gemini."""
+        location_context = "internationally" if is_international else "in India"
+        currency_context = "Make the prices realistic for the local currency or USD." if is_international else "Make the prices realistic for Indian Rupees (INR)."
+        
         prompt = f"""
-        Generate realistic but mocked travel options from {origin} to {destination} in India for a trip starting on {start_date}.
-        If the origin or destination contains extra descriptive text (e.g. "from andhra pradesh"), please infer the actual city name.
-        The budget level is {budget_level}. Make the prices realistic for Indian Rupees (INR).
+        Generate realistic but mocked travel options from {origin} to {destination} {location_context} for a trip starting on {start_date}.
+        If the origin or destination contains extra descriptive text, please infer the actual city name.
+        The budget level is {budget_level}. {currency_context}
         
         Provide the options strictly as a JSON object with the following structure:
         {{
-            "recommended_mode": "train",
-            "flights": [
+            "origin": "Inferred origin city",
+            "destination": "Inferred destination city",
+            "intercity_transport": [
                 {{
-                    "operator": "IndiGo",
-                    "departure_time": "08:00",
-                    "arrival_time": "10:30",
+                    "mode": "flight",
+                    "provider": "IndiGo",
                     "duration": "2h 30m",
-                    "price_inr": 5000,
-                    "type": "Non-stop"
+                    "estimated_cost": 5000,
+                    "currency": "INR",
+                    "departure_info": "08:00 AM",
+                    "arrival_info": "10:30 AM",
+                    "recommendation_reason": "Fastest option for this distance",
+                    "is_estimate": true
                 }}
             ],
-            "trains": [
+            "local_transport": [
                 {{
-                    "operator": "Rajdhani Express (12951)",
-                    "departure_time": "16:30",
-                    "arrival_time": "08:30",
-                    "duration": "16h 0m",
-                    "price_inr": 2500,
-                    "type": "AC 2 Tier"
+                    "mode": "metro",
+                    "estimated_cost": 200,
+                    "currency": "INR",
+                    "recommendation_reason": "Convenient for city travel",
+                    "is_estimate": true
                 }}
             ],
-            "buses": [
-                {{
-                    "operator": "IntrCity SmartBus",
-                    "departure_time": "21:00",
-                    "arrival_time": "09:00",
-                    "duration": "12h 0m",
-                    "price_inr": 1200,
-                    "type": "AC Sleeper"
-                }}
-            ]
+            "recommended_mode": "flight"
         }}
         
-        Provide 2 to 3 options for each category. Even if you are unsure of the exact real-world schedule, you MUST invent highly realistic, plausible mock options based on typical Indian travel routes. Do NOT leave an array empty unless the mode of transport is absolutely physically impossible (like a train across an ocean).
-        CRITICAL: Set the "recommended_mode" field to either "flight", "train", or "bus" based on the most practical and cost-effective option for the given distance and budget. For example, nearby destinations should use "bus" or "train", medium-distance should prefer "train" where practical, and long-distance should use "flight" only if it is the most reasonable option for the budget.
+        For intercity_transport, provide 2 to 3 options (e.g., flight, train, bus, or car) suitable for {location_context}.
+        If providing flight options, do NOT fabricate exact flight availability, flight number, or booking data. Provide general estimated flight costs and clearly label it as estimated by setting "is_estimate": true.
+        For local_transport, provide 2 to 3 options (e.g., metro, taxi, rental car, bus, ride-hailing) suitable for {destination}. Since there are travelers, consider group transportation if applicable.
+        Even if you are unsure of the exact real-world schedule, you MUST invent highly realistic, plausible mock options based on typical travel routes. Do NOT leave an array empty unless the mode of transport is absolutely physically impossible.
+        CRITICAL: Set the "recommended_mode" field to either "flight", "train", "bus", or "car" based on the most practical and cost-effective option for the given distance and budget.
         Ensure the output is ONLY valid JSON and contains NO markdown formatting like ```json or ```. Return the raw JSON object.
         """
         
         messages = [
-            SystemMessage(content="You are a travel API that returns strictly valid JSON data representing transit schedules in India. Do not return any conversational text."),
+            SystemMessage(content="You are a travel API that returns strictly valid JSON data representing transit schedules. Do not return any conversational text."),
             HumanMessage(content=prompt)
         ]
         try:

@@ -1,1 +1,838 @@
-{"status": "completed successfully"}
+{
+  "accommodations": [
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "medium",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_315482350",
+      "image_url": null,
+      "latitude": 25.2660218,
+      "location": {
+        "lat": 25.2660218,
+        "lng": 55.3256435
+      },
+      "longitude": 55.3256435,
+      "name": "Coral Deira Hotel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.5
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "medium",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_574351635",
+      "image_url": null,
+      "latitude": 25.261817,
+      "location": {
+        "lat": 25.261817,
+        "lng": 55.3240809
+      },
+      "longitude": 55.3240809,
+      "name": "Delmon Hotel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.5
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "medium",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_736822490",
+      "image_url": null,
+      "latitude": 25.3495289,
+      "location": {
+        "lat": 25.3495289,
+        "lng": 55.3694468
+      },
+      "longitude": 55.3694468,
+      "name": "Golden Beach Motel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.5
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Wheelchair Accessible"
+      ],
+      "booking_url": "",
+      "budget_tier": "medium",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_944613072",
+      "image_url": null,
+      "latitude": 25.2428805,
+      "location": {
+        "lat": 25.2428805,
+        "lng": 55.2717727
+      },
+      "longitude": 55.2717727,
+      "name": "Holiday Inn Express Dubai Jumeirah",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.5
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "luxury",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_315482350",
+      "image_url": "https://images.pexels.com/photos/5619280/pexels-photo-5619280.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "latitude": 25.2660218,
+      "location": {
+        "lat": 25.2660218,
+        "lng": 55.3256435
+      },
+      "longitude": 55.3256435,
+      "name": "Coral Deira Hotel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.8
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "luxury",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_574351635",
+      "image_url": null,
+      "latitude": 25.261817,
+      "location": {
+        "lat": 25.261817,
+        "lng": 55.3240809
+      },
+      "longitude": 55.3240809,
+      "name": "Delmon Hotel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.8
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "luxury",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_736822490",
+      "image_url": null,
+      "latitude": 25.3495289,
+      "location": {
+        "lat": 25.3495289,
+        "lng": 55.3694468
+      },
+      "longitude": 55.3694468,
+      "name": "Golden Beach Motel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.8
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Wheelchair Accessible"
+      ],
+      "booking_url": "",
+      "budget_tier": "luxury",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_944613072",
+      "image_url": "https://images.pexels.com/photos/35171473/pexels-photo-35171473.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "latitude": 25.2428805,
+      "location": {
+        "lat": 25.2428805,
+        "lng": 55.2717727
+      },
+      "longitude": 55.2717727,
+      "name": "Holiday Inn Express Dubai Jumeirah",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.8
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "budget",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_4133099089",
+      "image_url": null,
+      "latitude": 25.172972,
+      "location": {
+        "lat": 25.172972,
+        "lng": 55.4013334
+      },
+      "longitude": 55.4013334,
+      "name": "Y-20",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.0
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "budget",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_4192978389",
+      "image_url": null,
+      "latitude": 25.3319218,
+      "location": {
+        "lat": 25.3319218,
+        "lng": 55.3940378
+      },
+      "longitude": 55.3940378,
+      "name": "Grand Excelsior Hotel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.0
+    },
+    {
+      "address": "15th street",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "budget",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_4232054390",
+      "image_url": null,
+      "latitude": 25.2931372,
+      "location": {
+        "lat": 25.2931372,
+        "lng": 55.4047395
+      },
+      "longitude": 55.4047395,
+      "name": "DHA Hostel",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.0
+    },
+    {
+      "address": "Local Accommodation",
+      "amenities": [
+        "Wi-Fi",
+        "Air Conditioning"
+      ],
+      "booking_url": "",
+      "budget_tier": "budget",
+      "category": "Accommodation",
+      "currency": "USD",
+      "id": "osm_4235246689",
+      "image_url": null,
+      "latitude": 25.1489444,
+      "location": {
+        "lat": 25.1489444,
+        "lng": 55.2214469
+      },
+      "longitude": 55.2214469,
+      "name": "Mayed House",
+      "price_per_night": null,
+      "price_status": "unavailable",
+      "rating": 4.0
+    }
+  ],
+  "attractions": [
+    {
+      "_interest_weights": {},
+      "_internal_score": 71,
+      "address": "La Mer Beach, Dubai",
+      "category": "attraction",
+      "description": "A popular attraction located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_509577649",
+      "image_url": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.2316946,
+      "location": {
+        "lat": 25.2316946,
+        "lng": 55.2586812
+      },
+      "longitude": 55.2586812,
+      "match_percentage": 51,
+      "matched_interests": [
+        "nature"
+      ],
+      "name": "La Mer Beach",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "interest_based",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 70,
+      "address": "Laguna Waterpark, Dubai",
+      "category": "water_park",
+      "description": "A popular water park located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_613945512",
+      "image_url": "https://images.unsplash.com/photo-1502602898657-3e9076113801?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.2303847,
+      "location": {
+        "lat": 25.2303847,
+        "lng": 55.2564328
+      },
+      "longitude": 55.2564328,
+      "match_percentage": 50,
+      "matched_interests": [],
+      "name": "Laguna Waterpark",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "popular",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 76,
+      "address": "\u0645\u062d\u0645\u064a\u0629 \u0631\u0623\u0633 \u0627\u0644\u062e\u0648\u0631 \u0644\u0644\u062d\u064a\u0627\u0629 \u0627\u0644\u0628\u0631\u064a\u0629, Dubai",
+      "category": "nature_reserve",
+      "description": "A popular nature reserve located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_393004319",
+      "image_url": "https://images.unsplash.com/photo-1502602898657-3e9076113801?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.192535,
+      "location": {
+        "lat": 25.192535,
+        "lng": 55.3254874
+      },
+      "longitude": 55.3254874,
+      "match_percentage": 56,
+      "matched_interests": [
+        "nature"
+      ],
+      "name": "\u0645\u062d\u0645\u064a\u0629 \u0631\u0623\u0633 \u0627\u0644\u062e\u0648\u0631 \u0644\u0644\u062d\u064a\u0627\u0629 \u0627\u0644\u0628\u0631\u064a\u0629",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "interest_based",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 69,
+      "address": "\u062f\u0628\u064a \u062c\u0627\u0631\u062f\u0646 \u062c\u0644\u0648, Dubai",
+      "category": "attraction",
+      "description": "A popular attraction located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_418520759",
+      "image_url": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.2289468,
+      "location": {
+        "lat": 25.2289468,
+        "lng": 55.2961672
+      },
+      "longitude": 55.2961672,
+      "match_percentage": 49,
+      "matched_interests": [],
+      "name": "\u062f\u0628\u064a \u062c\u0627\u0631\u062f\u0646 \u062c\u0644\u0648",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "popular",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 70,
+      "address": "Pearls Kingdom Waterpark, Dubai",
+      "category": "water_park",
+      "description": "A popular water park located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_13048373157",
+      "image_url": "https://images.pexels.com/photos/4957462/pexels-photo-4957462.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "latitude": 25.3413294,
+      "location": {
+        "lat": 25.3413294,
+        "lng": 55.3802266
+      },
+      "longitude": 55.3802266,
+      "match_percentage": 50,
+      "matched_interests": [],
+      "name": "Pearls Kingdom Waterpark",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "popular",
+      "review_count": 50,
+      "source": "osm"
+    }
+  ],
+  "budget": {
+    "accommodation": 168000.0,
+    "attractions": 7500.0,
+    "breakdown": {
+      "accommodation": "\u20b94,200/room/night \u00d7 5 room(s) \u00d7 8 nights = \u20b9168,000",
+      "attractions": "5 attraction(s) \u00d7 avg \u20b9150/person \u00d7 10 person(s) = \u20b97,500",
+      "car_rental": "No car rental",
+      "food": "\u20b91,200/person/day \u00d7 10 person(s) \u00d7 8 days = \u20b996,000",
+      "fuel": "No fuel cost (no car rental)",
+      "intercity_transport": "\u20b955,000 (flight) \u00d7 2 (round-trip) \u00d7 10 person(s) = \u20b91,100,000",
+      "local_transport": "\u20b9440/person/day \u00d7 10 person(s) \u00d7 8 days = \u20b935,200",
+      "miscellaneous": "10% of \u20b91,406,700 subtotal = \u20b9140,670",
+      "total": "\u20b91,406,700 (subtotal) + \u20b9140,670 (misc) = \u20b91,547,370"
+    },
+    "budget_amount": 8080000,
+    "budget_category": "high",
+    "budget_infeasible": false,
+    "budget_limit": 8080000,
+    "budget_strictness": "strict",
+    "budget_warning": null,
+    "car_rental": 0.0,
+    "days": 8,
+    "food": 96000.0,
+    "fuel": 0.0,
+    "intercity_transport": 1100000.0,
+    "local_transport": 35200.0,
+    "miscellaneous": 140670.0,
+    "people": 10,
+    "remaining": 6532630.0,
+    "rooms": 5,
+    "total": 1547370.0,
+    "utilization_percentage": 19.2,
+    "within_budget": true
+  },
+  "budget_level": "high",
+  "days": 8,
+  "destination": "Dubai",
+  "interests": "Photography, Nature, Adventure, Nightlife",
+  "itinerary": {
+    "days": [
+      {
+        "afternoon": [],
+        "date": "2026-10-14",
+        "day": 1,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      },
+      {
+        "afternoon": [],
+        "date": "2026-10-15",
+        "day": 2,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      },
+      {
+        "afternoon": [],
+        "date": "2026-10-16",
+        "day": 3,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      },
+      {
+        "afternoon": [],
+        "date": "2026-10-17",
+        "day": 4,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      },
+      {
+        "afternoon": [],
+        "date": "2026-10-18",
+        "day": 5,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      },
+      {
+        "afternoon": [],
+        "date": "2026-10-19",
+        "day": 6,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      },
+      {
+        "afternoon": [],
+        "date": "2026-10-20",
+        "day": 7,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      },
+      {
+        "afternoon": [],
+        "date": "2026-10-21",
+        "day": 8,
+        "evening": [],
+        "meals": [],
+        "morning": [],
+        "night": [],
+        "spots": [],
+        "transport": {}
+      }
+    ]
+  },
+  "kids": 0,
+  "origin": "Hyderabad",
+  "people": 10,
+  "selected_attractions": [
+    {
+      "_interest_weights": {},
+      "_internal_score": 76,
+      "address": "\u0645\u062d\u0645\u064a\u0629 \u0631\u0623\u0633 \u0627\u0644\u062e\u0648\u0631 \u0644\u0644\u062d\u064a\u0627\u0629 \u0627\u0644\u0628\u0631\u064a\u0629, Dubai",
+      "category": "nature_reserve",
+      "description": "A popular nature reserve located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_393004319",
+      "image_url": "https://images.unsplash.com/photo-1502602898657-3e9076113801?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.192535,
+      "location": {
+        "lat": 25.192535,
+        "lng": 55.3254874
+      },
+      "longitude": 55.3254874,
+      "match_percentage": 56,
+      "matched_interests": [
+        "nature"
+      ],
+      "name": "\u0645\u062d\u0645\u064a\u0629 \u0631\u0623\u0633 \u0627\u0644\u062e\u0648\u0631 \u0644\u0644\u062d\u064a\u0627\u0629 \u0627\u0644\u0628\u0631\u064a\u0629",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "interest_based",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 71,
+      "address": "La Mer Beach, Dubai",
+      "category": "attraction",
+      "description": "A popular attraction located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_509577649",
+      "image_url": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.2316946,
+      "location": {
+        "lat": 25.2316946,
+        "lng": 55.2586812
+      },
+      "longitude": 55.2586812,
+      "match_percentage": 51,
+      "matched_interests": [
+        "nature"
+      ],
+      "name": "La Mer Beach",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "interest_based",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 70,
+      "address": "Pearls Kingdom Waterpark, Dubai",
+      "category": "water_park",
+      "description": "A popular water park located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_13048373157",
+      "image_url": "https://images.pexels.com/photos/4957462/pexels-photo-4957462.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "latitude": 25.3413294,
+      "location": {
+        "lat": 25.3413294,
+        "lng": 55.3802266
+      },
+      "longitude": 55.3802266,
+      "match_percentage": 50,
+      "matched_interests": [],
+      "name": "Pearls Kingdom Waterpark",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "popular",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 70,
+      "address": "Laguna Waterpark, Dubai",
+      "category": "water_park",
+      "description": "A popular water park located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_613945512",
+      "image_url": "https://images.unsplash.com/photo-1502602898657-3e9076113801?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.2303847,
+      "location": {
+        "lat": 25.2303847,
+        "lng": 55.2564328
+      },
+      "longitude": 55.2564328,
+      "match_percentage": 50,
+      "matched_interests": [],
+      "name": "Laguna Waterpark",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "popular",
+      "review_count": 50,
+      "source": "osm"
+    },
+    {
+      "_interest_weights": {},
+      "_internal_score": 69,
+      "address": "\u062f\u0628\u064a \u062c\u0627\u0631\u062f\u0646 \u062c\u0644\u0648, Dubai",
+      "category": "attraction",
+      "description": "A popular attraction located in Dubai, highly rated by visitors for its experience and atmosphere.",
+      "duration": 1.5,
+      "id": "osm_418520759",
+      "image_url": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+      "latitude": 25.2289468,
+      "location": {
+        "lat": 25.2289468,
+        "lng": 55.2961672
+      },
+      "longitude": 55.2961672,
+      "match_percentage": 49,
+      "matched_interests": [],
+      "name": "\u062f\u0628\u064a \u062c\u0627\u0631\u062f\u0646 \u062c\u0644\u0648",
+      "price": 1,
+      "rating": 4.0,
+      "recommendation_type": "popular",
+      "review_count": 50,
+      "source": "osm"
+    }
+  ],
+  "start_date": "2026-10-14",
+  "transit_options": {
+    "destination": "Dubai",
+    "intercity_transport": [
+      {
+        "arrival_info": "06:60 AM",
+        "currency": "INR",
+        "departure_info": "04:15 AM",
+        "duration": "4h 15m",
+        "estimated_cost": 85000,
+        "is_estimate": true,
+        "mode": "flight",
+        "price_inr": 85000.0,
+        "provider": "Emirates",
+        "recommendation_reason": "Premium service with exceptional comfort, ideal for high budget travel"
+      },
+      {
+        "arrival_info": "12:00 PM",
+        "currency": "INR",
+        "departure_info": "09:30 AM",
+        "duration": "4h 30m",
+        "estimated_cost": 65000,
+        "is_estimate": true,
+        "mode": "flight",
+        "price_inr": 65000.0,
+        "provider": "Air India",
+        "recommendation_reason": "Direct flight with excellent business class offerings"
+      },
+      {
+        "arrival_info": "03:65 PM",
+        "currency": "INR",
+        "departure_info": "01:15 PM",
+        "duration": "4h 20m",
+        "estimated_cost": 55000,
+        "is_estimate": true,
+        "mode": "flight",
+        "price_inr": 55000.0,
+        "provider": "Flydubai",
+        "recommendation_reason": "Reliable direct service with comfortable seating options"
+      }
+    ],
+    "local_transport": [
+      {
+        "currency": "INR",
+        "estimated_cost": 4500,
+        "is_estimate": true,
+        "mode": "taxi",
+        "recommendation_reason": "Private luxury taxi service for direct and comfortable transfer from Dubai International Airport to your destination"
+      },
+      {
+        "currency": "INR",
+        "estimated_cost": 12000,
+        "is_estimate": true,
+        "mode": "rental car",
+        "recommendation_reason": "High-end luxury car rental for flexible travel throughout your stay in Dubai"
+      },
+      {
+        "currency": "INR",
+        "estimated_cost": 800,
+        "is_estimate": true,
+        "mode": "metro",
+        "recommendation_reason": "Gold Class Dubai Metro pass for fast, efficient transit avoiding city traffic"
+      }
+    ],
+    "origin": "Hyderabad",
+    "recommended_mode": "flight"
+  },
+  "weather": {
+    "daily_forecast": [
+      {
+        "condition": "Overcast",
+        "date": "2026-10-14",
+        "humidity": "67%",
+        "max_temp": "37.8 \u00b0C",
+        "min_temp": "28.8 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "1%",
+        "uv_index": "7.0",
+        "wind_speed": "14.0 km/h"
+      },
+      {
+        "condition": "Overcast",
+        "date": "2026-10-15",
+        "humidity": "53%",
+        "max_temp": "36.2 \u00b0C",
+        "min_temp": "28.9 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "2%",
+        "uv_index": "6.95",
+        "wind_speed": "20.0 km/h"
+      },
+      {
+        "condition": "Clear sky",
+        "date": "2026-10-16",
+        "humidity": "40%",
+        "max_temp": "36.1 \u00b0C",
+        "min_temp": "27.9 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "1%",
+        "uv_index": "6.9",
+        "wind_speed": "14.7 km/h"
+      },
+      {
+        "condition": "Clear sky",
+        "date": "2026-10-17",
+        "humidity": "40%",
+        "max_temp": "35.9 \u00b0C",
+        "min_temp": "28.4 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "1%",
+        "uv_index": "6.85",
+        "wind_speed": "15.4 km/h"
+      },
+      {
+        "condition": "Clear sky",
+        "date": "2026-10-18",
+        "humidity": "40%",
+        "max_temp": "35.9 \u00b0C",
+        "min_temp": "27.9 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "1%",
+        "uv_index": "6.8",
+        "wind_speed": "13.4 km/h"
+      },
+      {
+        "condition": "Clear sky",
+        "date": "2026-10-19",
+        "humidity": "59%",
+        "max_temp": "34.6 \u00b0C",
+        "min_temp": "28.2 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "1%",
+        "uv_index": "6.75",
+        "wind_speed": "12.2 km/h"
+      },
+      {
+        "condition": "Clear sky",
+        "date": "2026-10-20",
+        "humidity": "67%",
+        "max_temp": "34.2 \u00b0C",
+        "min_temp": "26.6 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "1%",
+        "uv_index": "6.7",
+        "wind_speed": "12.5 km/h"
+      },
+      {
+        "condition": "Clear sky",
+        "date": "2026-10-21",
+        "humidity": "65%",
+        "max_temp": "33.9 \u00b0C",
+        "min_temp": "26.3 \u00b0C",
+        "packing_advice": "Sunscreen, Light clothing",
+        "precipitation": "0.0 mm",
+        "precipitation_probability": "1%",
+        "uv_index": "6.7",
+        "wind_speed": "17.9 km/h"
+      }
+    ],
+    "precipitation_summary": "No precipitation is expected throughout the entire trip, with a negligible rain probability of 1% to 2%.",
+    "recommendation": "Be sure to pack lightweight, breathable clothing and plenty of sunscreen to stay comfortable in the intense heat and high UV conditions. Staying well-hydrated is also strongly advised.",
+    "summary": "The upcoming period features consistently hot and humid weather with a mix of overcast skies early on and clear skies for the remainder of the trip. Daytime conditions remain very warm with high sun exposure throughout the week. No rainfall is expected during this travel window.",
+    "temperature_summary": "Temperatures will be consistently hot, with daily maximums reaching up to 37.8 \u00b0C and minimums staying around 26.3 \u00b0C to 28.9 \u00b0C.",
+    "uv_summary": "The UV index is high, hovering around 6.7 to 7.0 throughout the week, requiring strong sun protection.",
+    "wind_summary": "Wind speeds will remain gentle to moderate, generally ranging between 12.2 km/h and 20.0 km/h."
+  }
+}

@@ -17,6 +17,7 @@
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         // Server-injected session context. `authenticated` reflects the real
         // Flask session so the SPA can skip the landing/login views.
@@ -39,7 +40,7 @@
             Expl<span class="brand-earth-sm" aria-hidden="true"></span>reX
         </a>
 
-        <div class="nav-tabs-wrapper d-none d-md-flex">
+        <div class="nav-tabs-wrapper d-flex">
             <button class="nav-tab active" data-tab="chat" id="nav-tab-chat" data-testid="nav-tab-chat"><i class="fas fa-comment-dots"></i> Chat</button>
             <button class="nav-tab" data-tab="explore" id="nav-tab-explore" data-testid="nav-tab-explore"><i class="fas fa-compass"></i> Explore</button>
             <button class="nav-tab" data-tab="map" id="nav-tab-map" data-testid="nav-tab-map"><i class="fas fa-map"></i> Map</button>
@@ -49,7 +50,7 @@
         </div>
 
         <div class="nav-actions">
-            <button class="btn btn-outline" id="reset-btn">New Trip</button>
+            <button class="btn btn-outline" id="reset-btn" data-testid="reset-btn">New Trip</button>
             <div class="user-profile d-flex align-items-center gap-2">
                 <span id="nav-user-name" class="fw-bold small text-secondary d-none d-md-inline"></span>
                 <img id="nav-user-avatar" src="https://ui-avatars.com/api/?name=User&background=0284C7&color=fff" width="40" class="rounded-circle">
@@ -58,37 +59,31 @@
         </div>
     </nav>
 
+    <!-- Journey Indicator -->
+    <div class="journey-bar" id="journey-bar">
+        <div class="journey-step active" id="step-chat"><i class="fas fa-comment-dots"></i> Chat</div>
+        <div class="journey-connector" id="conn-1"></div>
+        <div class="journey-step" id="step-explore"><i class="fas fa-compass"></i> Explore</div>
+        <div class="journey-connector" id="conn-2"></div>
+        <div class="journey-step" id="step-plan"><i class="fas fa-map"></i> Plan</div>
+        <div class="journey-connector" id="conn-3"></div>
+        <div class="journey-step" id="step-itinerary"><i class="fas fa-calendar-alt"></i> Itinerary</div>
+    </div>
+
 
     <div class="app-container" id="app-container">
         
         <!-- 1. LANDING PAGE -->
         <section id="view-landing" class="view-section active">
             <div class="hero-stage">
-                <header class="landing-header">
-                    <a class="brand-text" href="#">Expl<span class="brand-earth-sm" aria-hidden="true"></span>reX</a>
+                <header class="landing-header d-flex justify-content-end align-items-center w-100 p-4 p-md-5">
                     <nav class="landing-links">
-                        <button class="btn landing-link">Features</button>
-                        <button class="btn landing-link">Destinations</button>
-                        <button class="btn landing-link">About</button>
                     </nav>
-                    <button class="btn btn-primary" onclick="window.location.href='/login'">Get Started</button>
+                    <button class="btn btn-primary" data-testid="landing-get-started" onclick="window.location.href='/login'">Get Started</button>
                 </header>
-                
-                <div class="hero-copy">
-                    <h1 class="hero-title Bricolage">Plan less.<br>Explore more.</h1>
-                    <p class="hero-subtitle">Your AI travel companion for personalized itineraries,<br class="d-none d-lg-inline"> real destinations and unforgettable experiences.</p>
-                    <button id="hero-explore-button" data-testid="hero-explore-button" class="btn btn-primary btn-lg px-5" onclick="window.location.href='/login'">Start Exploring <i class="fas fa-arrow-right ms-2"></i></button>
-
-                    <div class="hero-badges">
-                        <span class="badge-tech"><i class="fas fa-wand-magic-sparkles"></i> Generative AI</span>
-                        <span class="badge-tech"><i class="fas fa-database"></i> RAG</span>
-                        <span class="badge-tech"><i class="fas fa-robot"></i> Multi-Agent System</span>
-                        <span class="badge-tech"><i class="fas fa-bolt"></i> Real-time Data</span>
-                    </div>
-                </div>
-
                 <!-- 3D Earth + orbiting destination cards -->
                 <div class="hero-body">
+                    <a class="brand-text hero-main-brand" href="#">Expl<span class="brand-earth-sm" aria-hidden="true"></span>reX</a>
                     <div class="hero-earth-wrap">
                         <div id="landing-earth-container">
                             <canvas id="landing-earth-canvas"></canvas>
@@ -96,7 +91,7 @@
                     </div>
 
                     <div class="dest-orbit" id="landing-destinations">
-                        <button type="button" class="dest-card" data-testid="dest-card-paris" data-dest="Paris, France" onclick="goToDestination('Paris, France')">
+                        <button type="button" class="dest-card" data-testid="destination-card-paris" data-dest="Paris, France" onclick="goToDestination('Paris, France')">
                             <span class="dest-media"><img src="https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=85&amp;w=800" alt="Paris, France" onerror="this.style.display='none'"></span>
                             <span class="dest-info">
                                 <span class="dest-name Bricolage">Paris</span>
@@ -106,7 +101,7 @@
                             </span>
                         </button>
 
-                        <button type="button" class="dest-card" data-testid="dest-card-agra" data-dest="Agra, India" onclick="goToDestination('Agra, India')">
+                        <button type="button" class="dest-card" data-testid="destination-card-agra" data-dest="Agra, India" onclick="goToDestination('Agra, India')">
                             <span class="dest-media"><img src="https://images.unsplash.com/photo-1564507592333-c60657eea523?q=85&amp;w=800" alt="Agra, India" onerror="this.style.display='none'"></span>
                             <span class="dest-info">
                                 <span class="dest-name Bricolage">Agra</span>
@@ -116,7 +111,7 @@
                             </span>
                         </button>
 
-                        <button type="button" class="dest-card" data-testid="dest-card-tokyo" data-dest="Tokyo, Japan" onclick="goToDestination('Tokyo, Japan')">
+                        <button type="button" class="dest-card" data-testid="destination-card-tokyo" data-dest="Tokyo, Japan" onclick="goToDestination('Tokyo, Japan')">
                             <span class="dest-media"><img src="https://images.unsplash.com/photo-1513407030348-c983a97b98d8?q=85&amp;w=800" alt="Tokyo, Japan" onerror="this.style.display='none'"></span>
                             <span class="dest-info">
                                 <span class="dest-name Bricolage">Tokyo</span>
@@ -126,7 +121,7 @@
                             </span>
                         </button>
 
-                        <button type="button" class="dest-card" data-testid="dest-card-bali" data-dest="Bali, Indonesia" onclick="goToDestination('Bali, Indonesia')">
+                        <button type="button" class="dest-card" data-testid="destination-card-bali" data-dest="Bali, Indonesia" onclick="goToDestination('Bali, Indonesia')">
                             <span class="dest-media"><img src="https://images.unsplash.com/photo-1537996194471-e657df975ab4?q=85&amp;w=800" alt="Bali, Indonesia" onerror="this.style.display='none'"></span>
                             <span class="dest-info">
                                 <span class="dest-name Bricolage">Bali</span>
@@ -136,7 +131,7 @@
                             </span>
                         </button>
 
-                        <button type="button" class="dest-card" data-testid="dest-card-dubai" data-dest="Dubai, UAE" onclick="goToDestination('Dubai, UAE')">
+                        <button type="button" class="dest-card" data-testid="destination-card-dubai" data-dest="Dubai, UAE" onclick="goToDestination('Dubai, UAE')">
                             <span class="dest-media"><img src="https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=85&amp;w=800" alt="Dubai, UAE" onerror="this.style.display='none'"></span>
                             <span class="dest-info">
                                 <span class="dest-name Bricolage">Dubai</span>
@@ -146,7 +141,7 @@
                             </span>
                         </button>
 
-                        <button type="button" class="dest-card" data-testid="dest-card-newyork" data-dest="New York, USA" onclick="goToDestination('New York, USA')">
+                        <button type="button" class="dest-card" data-testid="destination-card-newyork" data-dest="New York, USA" onclick="goToDestination('New York, USA')">
                             <span class="dest-media"><img src="https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=85&amp;w=800" alt="New York, USA" onerror="this.style.display='none'"></span>
                             <span class="dest-info">
                                 <span class="dest-name Bricolage">New York</span>
@@ -155,6 +150,20 @@
                                 <span class="dest-rating"><i class="fas fa-star"></i> 4.87</span>
                             </span>
                         </button>
+                    </div>
+                </div>
+                
+                <div class="hero-copy">
+                    <h1 class="hero-title Bricolage">Plan less.<br>Explore more.</h1>
+                    <p class="hero-subtitle">Your AI travel companion for personalized itineraries,<br class="d-none d-lg-inline"> real destinations and unforgettable experiences.</p>
+                    <div class="mb-4">
+                        <button id="hero-explore-button" data-testid="hero-explore-button" class="btn btn-primary btn-lg px-5" onclick="window.location.href='/login'">Start Exploring <i class="fas fa-arrow-right ms-2"></i></button>
+                    </div>
+                    <div class="hero-badges">
+                        <span class="badge-tech"><i class="fas fa-wand-magic-sparkles"></i> Generative AI</span>
+                        <span class="badge-tech"><i class="fas fa-database"></i> RAG</span>
+                        <span class="badge-tech"><i class="fas fa-robot"></i> Multi-Agent System</span>
+                        <span class="badge-tech"><i class="fas fa-bolt"></i> Real-time Data</span>
                     </div>
                 </div>
             </div>
@@ -180,8 +189,8 @@
                         <!-- Injected sources -->
                     </div>
                     <form id="chat-form" class="position-relative">
-                        <input type="text" id="chat-input-field" data-testid="chat-input-field" class="form-control rounded-pill py-3 px-4 bg-alt border-0" placeholder="Ask anything... e.g. Plan a 5-day trip to Tokyo under $2500">
-                        <button type="submit" id="chat-send-button" data-testid="chat-send-button" class="btn btn-primary rounded-circle position-absolute" style="right: 8px; top: 8px; bottom: 8px; width: 40px; padding: 0;">
+                        <input type="text" id="chat-input-field" data-testid="chat-input-field" class="form-control rounded-pill py-3 px-4 bg-alt border-0" placeholder="Ask anything... e.g. Plan a 5-day trip to Tokyo under $2500" aria-label="Chat input">
+                        <button type="submit" id="chat-send-button" data-testid="chat-send-button" class="btn btn-primary rounded-circle position-absolute" style="right: 8px; top: 8px; bottom: 8px; width: 40px; padding: 0;" aria-label="Send message">
                             <i class="fas fa-paper-plane"></i>
                         </button>
                     </form>
@@ -203,17 +212,17 @@
                     
                     <div class="interest-grid" id="interest-chips">
                         <div class="interest-chip" id="interest-chip-history" data-interest="History" data-testid="interest-chip-history"><i class="fas fa-landmark text-warning"></i> History</div>
-                        <div class="interest-chip" data-interest="Architecture"><i class="fas fa-building text-danger"></i> Architecture</div>
-                        <div class="interest-chip selected" data-interest="Food"><i class="fas fa-utensils text-primary"></i> Food</div>
-                        <div class="interest-chip selected" data-interest="Photography"><i class="fas fa-camera text-info"></i> Photography</div>
-                        <div class="interest-chip" data-interest="Nature"><i class="fas fa-leaf text-success"></i> Nature</div>
-                        <div class="interest-chip" data-interest="Adventure"><i class="fas fa-hiking text-danger"></i> Adventure</div>
-                        <div class="interest-chip" data-interest="Shopping"><i class="fas fa-shopping-bag text-warning"></i> Shopping</div>
-                        <div class="interest-chip" data-interest="Spiritual"><i class="fas fa-om text-secondary"></i> Spiritual</div>
-                        <div class="interest-chip" data-interest="Art & Culture"><i class="fas fa-palette text-warning"></i> Art & Culture</div>
-                        <div class="interest-chip" data-interest="Nightlife"><i class="fas fa-glass-martini-alt text-purple"></i> Nightlife</div>
-                        <div class="interest-chip" data-interest="Family Friendly"><i class="fas fa-child text-primary"></i> Family Friendly</div>
-                        <div class="interest-chip" data-interest="Offbeat"><i class="fas fa-map-signs text-success"></i> Offbeat</div>
+                        <div class="interest-chip" data-interest="Architecture" data-testid="interest-chip-architecture"><i class="fas fa-building text-danger"></i> Architecture</div>
+                        <div class="interest-chip selected" data-interest="Food" data-testid="interest-chip-food"><i class="fas fa-utensils text-primary"></i> Food</div>
+                        <div class="interest-chip selected" data-interest="Photography" data-testid="interest-chip-photography"><i class="fas fa-camera text-info"></i> Photography</div>
+                        <div class="interest-chip" data-interest="Nature" data-testid="interest-chip-nature"><i class="fas fa-leaf text-success"></i> Nature</div>
+                        <div class="interest-chip" data-interest="Adventure" data-testid="interest-chip-adventure"><i class="fas fa-hiking text-danger"></i> Adventure</div>
+                        <div class="interest-chip" data-interest="Shopping" data-testid="interest-chip-shopping"><i class="fas fa-shopping-bag text-warning"></i> Shopping</div>
+                        <div class="interest-chip" data-interest="Spiritual" data-testid="interest-chip-spiritual"><i class="fas fa-om text-secondary"></i> Spiritual</div>
+                        <div class="interest-chip" data-interest="Art & Culture" data-testid="interest-chip-art-culture"><i class="fas fa-palette text-warning"></i> Art & Culture</div>
+                        <div class="interest-chip" data-interest="Nightlife" data-testid="interest-chip-nightlife"><i class="fas fa-glass-martini-alt text-purple"></i> Nightlife</div>
+                        <div class="interest-chip" data-interest="Family Friendly" data-testid="interest-chip-family-friendly"><i class="fas fa-child text-primary"></i> Family Friendly</div>
+                        <div class="interest-chip" data-interest="Offbeat" data-testid="interest-chip-offbeat"><i class="fas fa-map-signs text-success"></i> Offbeat</div>
                     </div>
                     
                     <div class="slider-container mt-4">
@@ -221,7 +230,7 @@
                             <span>Adjust your interest weight (optional)</span>
                             <span id="weight-val">80%</span>
                         </label>
-                        <input type="range" class="form-range" min="0" max="100" value="80" id="interest-weight">
+                        <input type="range" class="form-range" min="0" max="100" value="80" id="interest-weight" data-testid="interest-weight">
                     </div>
                 </div>
             </div>
@@ -233,6 +242,10 @@
                 </div>
             </div>
 
+            <div id="destinations-container" class="bento-grid mb-5" style="display: none;">
+                <!-- Populated with global destinations by main.js -->
+            </div>
+
             <div id="recommendations-container" class="bento-grid">
                 <!-- Real recommendations are injected here by main.js from the
                      /api/stream recommend step. This is only an empty state. -->
@@ -242,7 +255,7 @@
                 </div>
             </div>
             
-            <div class="text-center mt-5">
+            <div class="sticky-cta">
                 <button class="btn btn-primary btn-lg rounded-pill px-5" id="btn-generate-route">Generate Itinerary <i class="fas fa-magic ms-2"></i></button>
             </div>
         </section>
@@ -254,7 +267,15 @@
                     <div id="map" class="w-100 h-100"></div>
                 </div>
                 <div class="map-sidebar" id="map-right-panel">
-                    <h4 class="Bricolage mb-4">Itinerary <i class="fas fa-chevron-down ms-2 fs-6 text-muted"></i></h4>
+                    <h4 class="Bricolage mb-3">Itinerary</h4>
+                    
+                    <div class="d-flex gap-2 mb-4 overflow-auto pb-1" id="map-day-filters">
+                        <!-- Injected -->
+                    </div>
+
+                    <div id="route-unavailable-state" class="alert alert-warning d-none small py-2 mb-3">
+                        <i class="fas fa-exclamation-triangle"></i> Routing unavailable. Displaying markers only.
+                    </div>
                     
                     <div id="map-location-details" class="d-none mb-4 pb-4 border-bottom">
                         <img src="" id="map-detail-img" class="w-100 rounded mb-3" style="height: 150px; object-fit: cover;">
@@ -267,7 +288,8 @@
                         <!-- Injected -->
                     </div>
                     <div class="border-top pt-3 mt-3 d-flex justify-content-between text-secondary small fw-bold">
-                        <span>Total Distance: <span class="text-dark" id="map-total-distance">—</span></span>
+                        <span>Dist: <span class="text-dark" id="map-total-distance">—</span></span>
+                        <span>Time: <span class="text-dark" id="map-travel-time">—</span></span>
                         <span>Stops: <span class="text-dark" id="map-total-stops">—</span></span>
                     </div>
                 </div>
@@ -302,6 +324,12 @@
                 <div class="tab-pane fade" id="tab-hotels">
                     <h3 class="Bricolage mb-1">Stay Your Way</h3>
                     <p class="text-secondary mb-4">Authentic curated stays for the perfect experience</p>
+                    <div class="d-flex gap-2 mb-4 overflow-auto pb-1" id="acc-tier-tabs">
+                        <button class="btn btn-success rounded-pill px-4 flex-shrink-0" data-tier="all">All</button>
+                        <button class="btn btn-outline-secondary rounded-pill px-4 flex-shrink-0" data-tier="budget" data-testid="accommodation-budget">Budget</button>
+                        <button class="btn btn-outline-secondary rounded-pill px-4 flex-shrink-0" data-tier="medium" data-testid="accommodation-medium">Medium</button>
+                        <button class="btn btn-outline-secondary rounded-pill px-4 flex-shrink-0" data-tier="luxury" data-testid="accommodation-luxury">Luxury</button>
+                    </div>
                     <div class="options-grid" id="accommodation-options">
                         <!-- Injected from state.accommodations -->
                     </div>
@@ -311,11 +339,12 @@
                 <div class="tab-pane fade" id="tab-food">
                     <h3 class="Bricolage mb-1">Local Flavors You'll Love</h3>
                     <p class="text-secondary mb-4">Authentic cuisine curated for your trip</p>
-                    <div class="d-flex gap-2 mb-4">
-                        <button class="btn btn-primary rounded-pill px-4">Breakfast</button>
-                        <button class="btn btn-outline rounded-pill px-4">Lunch</button>
-                        <button class="btn btn-outline rounded-pill px-4">Dinner</button>
-                        <button class="btn btn-outline rounded-pill px-4">Street Food & Cafes</button>
+                    <div class="d-flex gap-2 mb-4 overflow-auto pb-1" id="food-cat-tabs">
+                        <button class="btn btn-success rounded-pill px-4 flex-shrink-0" data-cat="all" data-testid="food-all">All</button>
+                        <button class="btn btn-outline-secondary rounded-pill px-4 flex-shrink-0" data-cat="breakfast" data-testid="food-breakfast">Breakfast</button>
+                        <button class="btn btn-outline-secondary rounded-pill px-4 flex-shrink-0" data-cat="lunch" data-testid="food-lunch">Lunch</button>
+                        <button class="btn btn-outline-secondary rounded-pill px-4 flex-shrink-0" data-cat="dinner" data-testid="food-dinner">Dinner</button>
+                        <button class="btn btn-outline-secondary rounded-pill px-4 flex-shrink-0" data-cat="street_food" data-testid="food-street">Street Food & Cafes</button>
                     </div>
                     <div class="options-grid" id="food-options">
                         <!-- Injected -->
@@ -336,7 +365,7 @@
         <section id="view-weather" class="view-section max-w-1000">
             <h3 class="Bricolage mb-1">Weather Forecast</h3>
             <p class="text-secondary mb-4">Plan better with real-time weather insights</p>
-            <div class="weather-strip" id="weather-container">
+            <div id="weather-container">
                 <!-- Injected -->
             </div>
         </section>
@@ -345,11 +374,13 @@
         <section id="view-budget" class="view-section max-w-1000">
             <h3 class="Bricolage mb-1">Your Trip Budget</h3>
             <p class="text-secondary mb-4">Estimated cost breakdown for your trip</p>
+            <div id="budget-warning-container" class="alert alert-warning d-none mb-4 rounded-4" data-testid="budget-warning"></div>
             
             <div class="budget-container glass p-4 rounded-4">
-                <div class="donut-chart" id="budget-donut-chart" data-testid="budget-donut-chart">
-                    <div class="donut-hole">
-                        <div class="fs-2 fw-bold text-main" id="total-budget-display">—</div>
+                <div class="donut-chart position-relative" style="width: 280px; height: 280px; margin: 0 auto;">
+                    <canvas id="budget-donut-chart" data-testid="budget-donut"></canvas>
+                    <div class="position-absolute top-50 start-50 translate-middle text-center w-100" style="pointer-events: none;">
+                        <div class="fs-4 fw-bold text-main" id="total-budget-display" data-testid="budget-total">—</div>
                         <div class="text-secondary small">Total Budget</div>
                     </div>
                 </div>
@@ -362,11 +393,11 @@
     </div>
 
     <!-- ATTRACTION MODAL -->
-    <div class="modal fade" id="attractionModal" tabindex="-1">
+    <div class="modal fade" id="attractionModal" tabindex="-1" data-testid="attraction-modal">
         <div class="modal-dialog modal-dialog-centered modal-lg">
-            <div class="modal-content" data-testid="attraction-card-taj-mahal">
+            <div class="modal-content">
                 <div class="modal-header border-0 pb-0 pt-4 px-4 position-relative">
-                    <button type="button" class="btn-close position-absolute" style="right: 1.5rem; top: 1.5rem;" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close position-absolute" style="right: 1.5rem; top: 1.5rem;" data-bs-dismiss="modal" aria-label="Close" data-testid="attraction-modal-close"></button>
                 </div>
                 <div class="modal-body p-4 d-flex gap-4">
                     <div class="w-50">
@@ -385,23 +416,23 @@
                         <div class="d-flex gap-3 flex-wrap mb-4">
                             <div class="d-flex align-items-center gap-2 w-100">
                                 <div class="bg-alt p-2 rounded-circle text-accent"><i class="fas fa-clock"></i></div>
-                                <div><div class="fw-bold">3-4 Hours</div><div class="text-muted small" style="font-size: 0.75rem;">Average visit duration</div></div>
+                                <div><div class="fw-bold" id="modal-duration">3-4 Hours</div><div class="text-muted small" style="font-size: 0.75rem;">Average visit duration</div></div>
                             </div>
                             <div class="d-flex align-items-center gap-2 w-100">
                                 <div class="bg-alt p-2 rounded-circle text-accent"><i class="fas fa-ticket-alt"></i></div>
-                                <div><div class="fw-bold">₹50 - ₹200</div><div class="text-muted small" style="font-size: 0.75rem;">Entry fee</div></div>
+                                <div><div class="fw-bold" id="modal-fee">₹50 - ₹200</div><div class="text-muted small" style="font-size: 0.75rem;">Entry fee</div></div>
                             </div>
                             <div class="d-flex align-items-center gap-2 w-100">
                                 <div class="bg-alt p-2 rounded-circle text-accent"><i class="fas fa-headphones"></i></div>
-                                <div><div class="fw-bold">Audio Guide</div><div class="text-muted small" style="font-size: 0.75rem;">Available in multiple languages</div></div>
+                                <div><div class="fw-bold" id="modal-audio">Audio Guide</div><div class="text-muted small" style="font-size: 0.75rem;">Available in multiple languages</div></div>
                             </div>
                         </div>
                         
-                        <p class="text-secondary small mb-4" id="modal-desc">Description</p>
+                        <p class="text-secondary small mb-4" id="modal-desc" data-testid="attraction-description">Description</p>
                         
                         <div class="d-flex gap-2">
-                            <button class="btn btn-primary flex-grow-1 rounded-pill" id="modal-add-btn">Add to Itinerary</button>
-                            <button class="btn btn-outline rounded-pill"><i class="fas fa-map me-2"></i> View on Map</button>
+                            <button class="btn btn-primary flex-grow-1 rounded-pill" id="modal-add-btn" data-testid="modal-add-btn">Add to Itinerary</button>
+                            <button class="btn btn-outline rounded-pill" id="modal-map-btn" data-testid="attraction-view-map"><i class="fas fa-map me-2"></i> View on Map</button>
                         </div>
                     </div>
                 </div>
@@ -415,7 +446,7 @@
             <div class="modal-content p-2">
                 <div class="modal-header border-0">
                     <h5 class="modal-title Bricolage"><i class="fas fa-paper-plane text-accent me-2"></i> Send Your Itinerary</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" data-testid="modal-close-btn-email"></button>
                 </div>
                 <div class="modal-body text-center">
                     <p class="text-muted mb-4">Get a complete copy of your trip plan in your inbox.</p>
@@ -424,14 +455,22 @@
                         <i class="fas fa-circle-info me-1"></i>
                         Email delivery is available to signed-in accounts only. <a href="/login" class="fw-bold">Create a free account or sign in</a> to send your itinerary — everything else works in guest mode.
                     </div>
-                    <input type="email" class="form-control bg-alt border-0 py-3 rounded-3 mb-3 text-center" id="email-deliver-input" placeholder="you@example.com">
-                    <textarea class="form-control bg-alt border-0 py-3 rounded-3 mb-4" rows="2" placeholder="Add a personal note (optional)"></textarea>
+                    <input type="email" class="form-control bg-alt border-0 py-3 rounded-3 mb-3 text-center" id="email-deliver-input" placeholder="you@example.com" aria-label="Email address">
+                    <textarea class="form-control bg-alt border-0 py-3 rounded-3 mb-4" id="email-deliver-notes" rows="2" placeholder="Add a personal note (optional)" aria-label="Personal note"></textarea>
                     
-                    <div class="d-flex justify-content-between mt-4">
-                        <button class="btn btn-outline rounded-pill px-4" data-bs-dismiss="modal">Cancel</button>
+                    <div id="email-error-message" class="alert alert-danger d-none text-start small mb-3"></div>
+
+                    <div class="d-flex justify-content-between mt-4" id="email-action-buttons">
+                        <button class="btn btn-outline rounded-pill px-4" data-bs-dismiss="modal" data-testid="email-cancel-btn">Cancel</button>
                         <button class="btn btn-primary rounded-pill px-4" id="btn-send-itinerary-email">Send Itinerary</button>
                     </div>
-                    <div id="email-success-state" class="text-success mt-3 d-none fw-bold"><i class="fas fa-check-circle me-1"></i> Sent successfully!</div>
+                    <div id="email-success-state" class="mt-4 d-none">
+                        <div class="mb-3">
+                            <i class="fas fa-check-circle text-success" style="font-size: 3rem;"></i>
+                        </div>
+                        <h4 class="Bricolage text-main mb-2">Itinerary Sent!</h4>
+                        <p class="text-secondary small">Your complete trip plan is waiting in your inbox.</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -439,6 +478,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=1"></script>
 </body>
 </html>

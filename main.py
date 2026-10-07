@@ -14,12 +14,12 @@ from flask import Flask, render_template, request, jsonify, session, send_from_d
 from flask_session import Session
 import os
 import json
+import time
 from dotenv import load_dotenv
 from workflows.travel_graph import TravelGraph
-import requests
-import time
+
 import warnings
-from services.email_service import send_trip_email
+from services.email_service import send_trip_email, is_valid_email, normalize_itinerary
 from services import user_store
 from services.user_store import AuthError
 
@@ -80,6 +80,19 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # Create a session store for workflows
 workflows = {}
 
+# Human-readable trace labels for the real multi-agent loop. Each key is an
+# actual process_step name; the value names the agent(s) that genuinely run in
+# that step. Used only to label the SSE 'status' events — no behavior change.
+AGENT_TRACE_LABELS = {
+    "chat": "Travel Planning Agent",
+    "information": "Destination / POI · Weather · Stay · Food Agents",
+    "retrieval": "Knowledge Retrieval Agent (RAG)",
+    "recommend": "Recommendation Agent",
+    "strategy": "Strategy & Budget Agent",
+    "communication": "Transportation & Budget Agents",
+    "route": "Itinerary Agent",
+}
+
 
 @app.route('/test-image')
 def test_image():
@@ -90,6 +103,45 @@ def serve_image(filename):
     return send_from_directory('frontend/static/images', filename)
 
 
+
+def normalize_itinerary_for_client(raw_itinerary):
+    if not raw_itinerary or not isinstance(raw_itinerary, list): return raw_itinerary
+    days = []
+    for day in raw_itinerary:
+        d = {
+            "day": day.get("day"),
+            "date": day.get("date"),
+            "morning": [],
+            "afternoon": [],
+            "evening": [],
+            "night": [],
+            "meals": [],
+            "transport": {},
+            "spots": day.get("spots", [])
+        }
+        for spot in day.get("spots", []):
+            if spot.get("is_meal"):
+                d["meals"].append(spot)
+                continue
+            t = str(spot.get("start_time") or spot.get("time") or "").lower()
+            b = "afternoon"
+            if "am" in t or t.startswith("0") or t.startswith("10") or t.startswith("11"):
+                if t.startswith("0") and "am" not in t and "pm" not in t:
+                    try:
+                        hr = int(t.split(":")[0])
+                        b = "morning" if hr < 12 else "afternoon"
+                    except: b = "morning"
+                elif "am" in t: b = "morning"
+            if "pm" in t:
+                try:
+                    hr = int(''.join(filter(str.isdigit, t.split(":")[0])))
+                    if hr == 12 or hr < 5: b = "afternoon"
+                    elif hr >= 5 and hr < 8: b = "evening"
+                    else: b = "night"
+                except: b = "afternoon"
+            d[b].append(spot)
+        days.append(d)
+    return {"days": days}
 
 def _attach_user_to_workflow(name, email):
     """Personalize the active workflow (if one exists) with the signed-in user."""
@@ -169,12 +221,7 @@ def login():
                     raise AuthError('Google did not return a credential. Try again or use email / guest.', status=400)
                 return jsonify(_start_session(_verify_google_id_token(credential)))
 
-            if provider == 'apple':
-                raise AuthError(
-                    'Apple sign-in requires APPLE_CLIENT_ID and a registered Return URL on this host. '
-                    'Use email or continue as Guest.',
-                    status=503,
-                )
+
 
             raise AuthError(f'Unsupported sign-in provider: {provider}', status=400)
         except AuthError as e:
@@ -280,6 +327,10 @@ def reset_session():
     
     session.clear()
     
+    new_session_id = os.urandom(16).hex()
+    session['session_id'] = new_session_id
+    workflows[new_session_id] = TravelGraph(user_name=u_name, user_email=u_email)
+    
     # Restore auth data
     if is_auth:
         session['authenticated'] = True
@@ -287,7 +338,7 @@ def reset_session():
         session['user_email'] = u_email
         session['is_guest'] = bool(is_guest)
         
-    return jsonify({"status": "success", "message": "Session reset"})
+    return jsonify({"status": "success", "message": "Session reset", "session_id": new_session_id})
 
 @app.route('/api/state', methods=['GET'])
 def get_state():
@@ -318,7 +369,7 @@ def get_state():
         "selected_attractions": state.get("selected_attractions") or [],
         "accommodations": state.get("accommodations") or [],
         "weather": state.get("weather_forecast") or [],
-        "itinerary": state.get("itinerary") or [],
+        "itinerary": normalize_itinerary_for_client(state.get("itinerary") or []),
         "budget": state.get("budget") or {},
         "transit_options": state.get("transit_options"),
     }
@@ -377,6 +428,33 @@ def process():
         print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/destinations', methods=['POST'])
+def recommend_destinations():
+    """Recommend global destinations based on user interests."""
+    try:
+        data = request.json
+        interests = data.get('interests', [])
+        weight = data.get('weight', 80)
+        
+        session_id = session.get('session_id')
+        if not session_id or session_id not in workflows:
+            # Fallback for explore tab when no session exists yet
+            from agents.recommend_agent import RecommendAgent
+            agent = RecommendAgent()
+        else:
+            workflow = workflows[session_id]
+            if 'user_info' not in workflow.state:
+                workflow.state['user_info'] = {}
+            workflow.state['user_info']['interests'] = interests
+            agent = workflow.recommend_agent
+            
+        destinations = agent.recommend_destinations(interests, weight)
+        return jsonify({"status": "success", "destinations": destinations})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/attractions/<city>')
 def get_attractions(city):
     """Get attractions for a specific city"""
@@ -393,52 +471,121 @@ def get_attractions(city):
 
 @app.route('/api/email', methods=['POST'])
 def send_email_api():
-    """Manually trigger itinerary email delivery"""
+    """Manually trigger itinerary email delivery.
+
+    Returns a clean JSON contract:
+      Success -> {"success": true,  "message": "Itinerary sent successfully"}
+      Failure -> {"success": false, "message": "Unable to send itinerary", "error": "..."}
+    Never exposes SMTP credentials or stack traces to the frontend.
+    """
+    data = request.get_json(silent=True) or {}
+
+    # ---- Validate recipient ------------------------------------------------
+    email = (data.get('email') or '').strip()
+    if not email:
+        print("[EMAIL][VALIDATION] /api/email called without an email address.")
+        return jsonify({
+            "success": False,
+            "message": "Unable to send itinerary",
+            "error": "Email is required"
+        }), 400
+    if not is_valid_email(email):
+        print(f"[EMAIL][VALIDATION] /api/email rejected malformed address: {email!r}")
+        return jsonify({
+            "success": False,
+            "message": "Unable to send itinerary",
+            "error": "Please enter a valid email address"
+        }), 400
+
+    # ---- Session / workflow ------------------------------------------------
+    session_id = session.get('session_id')
+    if not session_id or session_id not in workflows:
+        print("[EMAIL] /api/email called with no active session.")
+        return jsonify({
+            "success": False,
+            "message": "Unable to send itinerary",
+            "error": "No active session. Please plan a trip first."
+        }), 400
+
+    workflow = workflows[session_id]
+    state = workflow.get_current_state() or {}
+    user_info = state.get("user_info", {}) or {}
+
+    # ---- Itinerary (prefer the frontend's latest copy) ---------------------
+    itinerary = data.get("itinerary") or state.get("itinerary")
+    normalized_days = normalize_itinerary(itinerary)
+    if not normalized_days:
+        print("[EMAIL][PAYLOAD] /api/email received no usable itinerary.")
+        return jsonify({
+            "success": False,
+            "message": "Unable to send itinerary",
+            "error": "Itinerary not generated yet"
+        }), 400
+
+    budget = data.get("budget") or state.get("budget") or state.get("budget_estimate") or {}
+    notes = (data.get("notes") or "").strip()
+
+    # ---- Trip context for a rich email -------------------------------------
+    accommodation = state.get("selected_accommodation")
+    if not accommodation:
+        accs = state.get("accommodations") or []
+        accommodation = accs[0] if accs else None
+
+    trip_context = {
+        "origin": user_info.get("origin_city") or state.get("origin_city"),
+        "days": user_info.get("days") or state.get("days"),
+        "people": user_info.get("people") or state.get("people"),
+        "kids": user_info.get("kids") or state.get("kids"),
+        "start_date": user_info.get("start_date") or state.get("start_date"),
+        "end_date": state.get("end_date"),
+        "accommodation": accommodation,
+        "food": state.get("restaurants") or [],
+        "transport": state.get("transit_options"),
+        "tips": state.get("travel_tips") or state.get("tips"),
+    }
+
+    user_name = user_info.get("name") or "Traveler"
+    city = user_info.get("city") or state.get("city") or "your destination"
+    days = trip_context["days"] or len(normalized_days)
+    confirmation = (
+        f"Your {days}-day trip to {city} has been planned, {user_name}! "
+        f"Check your itinerary below."
+    )
+
+    print(f"[EMAIL] /api/email dispatching to={email} city={city!r} "
+          f"itinerary_days={len(normalized_days)}")
+
+    # ---- Send --------------------------------------------------------------
     try:
-        data = request.json
-        email = data.get('email', '').strip()
-        if not email:
-            return jsonify({"status": "error", "message": "Email is required"}), 400
-
-        if session.get('is_guest'):
-            return jsonify({
-                "status": "error",
-                "message": "Email delivery is available to signed-in accounts only. Create a free account or sign in to send your itinerary by email — everything else works in guest mode."
-            }), 403
-
-        session_id = session.get('session_id')
-        if not session_id or session_id not in workflows:
-            return jsonify({"status": "error", "message": "No active session"}), 400
-            
-        workflow = workflows[session_id]
-        state = workflow.get_current_state()
-        
-        itinerary = state.get("itinerary")
-        budget = state.get("budget") or state.get("budget_estimate") or {}
-        
-        if not itinerary:
-            return jsonify({"status": "error", "message": "Itinerary not generated yet"}), 400
-            
-        from services.email_service import send_trip_email
-        user_name = state.get("user_info", {}).get("name", "Traveler")
-        city = state.get("user_info", {}).get("city", "your destination")
-        days = state.get("user_info", {}).get("days", "?")
-        confirmation = f"Your {days}-day trip to {city} has been planned, {user_name}! Check your itinerary below."
-        
-        success = send_trip_email(email, user_name, city, itinerary, budget, confirmation)
-        if success:
-            return jsonify({"status": "success"})
-        else:
-            return jsonify({"status": "error", "message": "Failed to send email. Check configuration."}), 500
-    except Exception as e:
+        success = send_trip_email(
+            email, user_name, city, itinerary, budget, confirmation,
+            notes=notes, trip_context=trip_context
+        )
+    except Exception as exc:
+        # Log detail server-side only; never leak it to the client.
         import traceback
+        print(f"[EMAIL][ERROR] Unexpected failure sending to {email}: {exc}")
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        success = False
+
+    if success:
+        print(f"[EMAIL][SUCCESS] Itinerary delivered to {email}.")
+        return jsonify({
+            "success": True,
+            "status": "success",
+            "message": "Itinerary sent successfully"
+        }), 200
+
+    print(f"[EMAIL][ERROR] Delivery failed for {email}.")
+    return jsonify({
+        "success": False,
+        "message": "Unable to send itinerary",
+        "error": "We couldn't send the email right now. Please try again."
+    }), 500
 
 @app.route('/api/stream')
 def stream():
     """Handle streaming responses"""
-    print(f"[DEBUG] /api/stream endpoint called")
 
     # Priority: URL param first (EventSource doesn't reliably send cookies), then cookie
     session_id = request.args.get('session_id', '').strip() or session.get('session_id')
@@ -503,7 +650,13 @@ def stream():
             while True:
                 loop_count += 1
                 print(f"[DIAGNOSTIC] Stream loop iteration {loop_count} for session {session_id}. current_step='{current_step}'")
-                
+
+                # Emit a real agent-trace event for the step about to run. This
+                # reflects the actual multi-agent loop (no fabrication): each
+                # iteration corresponds to one process_step call on a real agent.
+                agent_label = AGENT_TRACE_LABELS.get(current_step, current_step.replace('_', ' ').title())
+                yield f"data: {json.dumps({'type': 'status', 'step': current_step, 'agent': agent_label})}\n\n"
+
                 # Use kwargs initialized outside generate()
                 current_kwargs = kwargs.copy()
                 # Clear for auto transitions so we don't pass them to the next steps
@@ -539,7 +692,6 @@ def stream():
 
                 # Handle streaming response
                 if 'stream' in result and result['stream']:
-                    print(f"[DEBUG] Starting to consume stream for step '{current_step}'")
                     try:
                         for chunk in result['stream']:
                             if hasattr(chunk, 'content') and chunk.content:
@@ -551,7 +703,6 @@ def stream():
                         import traceback
                         print(f"[ERROR] Exception while consuming stream for step '{current_step}': {stream_err}")
                         traceback.print_exc()
-                    print(f"[DEBUG] Stream consumption complete for step '{current_step}'")
                 
                 next_step = result.get('next_step')
                 print(f"[DIAGNOSTIC] Step '{current_step}' completed. Returned next_step='{next_step}'")
@@ -588,7 +739,7 @@ def stream():
                 'state': result.get('state'),
                 'attractions': result.get('recommended_attractions') or result.get('attractions'),
                 'map_data': result.get('map_data'),
-                'itinerary': result.get('itinerary'),
+                'itinerary': normalize_itinerary_for_client(result.get('itinerary')),
                 'budget': result.get('budget'),
                 'response': result.get('response'),
                 'optimal_route': result.get('optimal_route'),
@@ -596,7 +747,10 @@ def stream():
                 'transit_options': result.get('transit_options'),
                 'accommodations': result.get('accommodations'),
                 'restaurants': result.get('restaurants'),
-                'recommended_attractions': result.get('recommended_attractions')
+                'recommended_attractions': result.get('recommended_attractions'),
+                'rag_sources': (result.get('rag_sources')
+                                or workflow.get_current_state().get('rag_sources')
+                                or [])
             }
             
             import math
@@ -715,49 +869,7 @@ if __name__ == '__main__':
     # Create data directory if it doesn't exist
     os.makedirs('data', exist_ok=True)
     
-    # Create a sample attractions.json file if it doesn't exist
-    if not os.path.exists('data/attractions.json'):
-        sample_data = {
-            "Delhi": [
-                {
-                    "id": "qutub_minar",
-                    "name": "Qutub Minar",
-                    "category": "landmark",
-                    "location": {"lat": 28.5245, "lng": 77.1855},
-                    "estimated_duration": 3,
-                    "price_level": 2
-                },
-                {
-                    "id": "red_fort",
-                    "name": "Red Fort",
-                    "category": "landmark",
-                    "location": {"lat": 28.6562, "lng": 77.2410},
-                    "estimated_duration": 3,
-                    "price_level": 2
-                }
-            ],
-            "Jaipur": [
-                {
-                    "id": "hawa_mahal",
-                    "name": "Hawa Mahal",
-                    "category": "landmark",
-                    "location": {"lat": 26.9239, "lng": 75.8267},
-                    "estimated_duration": 2,
-                    "price_level": 1
-                },
-                {
-                    "id": "amber_fort",
-                    "name": "Amber Fort",
-                    "category": "landmark",
-                    "location": {"lat": 26.9855, "lng": 75.8513},
-                    "estimated_duration": 4,
-                    "price_level": 2
-                }
-            ]
-        }
-        
-        with open('data/attractions.json', 'w') as f:
-            json.dump(sample_data, f)
+    pass
     
     # Run the app
     app.run(host="127.0.0.1", port=8000, debug=True)

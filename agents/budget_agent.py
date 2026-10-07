@@ -199,29 +199,31 @@ class BudgetAgent:
         # ── 4. Calculate each budget component ────────────────────────────────
         total_acc   = self._calculate_accommodation_cost(acc_ppd, rooms, num_days)
         total_food  = self._calculate_food_cost(food_ppd, num_people, num_days)
-        total_trans = self._calculate_local_transport_cost(trans_ppd, num_people, num_days, should_rent_car)
+        actual_rent_car = should_rent_car and bool(car_info)
+        total_trans = self._calculate_local_transport_cost(trans_ppd, num_people, num_days, actual_rent_car)
 
         attraction_cost = self._calculate_attraction_cost(spots, num_people)
 
         car_rental_cost = 0.0
         fuel_cost       = 0.0
         fuel_km         = 0.0
-        if should_rent_car:
+        if actual_rent_car:
             car_rental_cost, daily_car_rate = self._calculate_car_rental_cost(
                 car_info, budget_level, num_days
             )
             fuel_cost, fuel_km = self._calculate_fuel_cost(spots, budget_level, num_days)
-            total_trans = 0.0   # local transport replaced by fuel when driving
+            # local transport replaced by fuel when driving
 
-        intercity_transport_cost, intercity_mode = self._calculate_intercity_transport_cost(
-            transit_options, budget_level, num_people
-        )
-
-        subtotal = (
+        subtotal_without_transit = (
             total_acc + total_food + total_trans
             + attraction_cost + car_rental_cost + fuel_cost
-            + intercity_transport_cost
         )
+
+        intercity_transport_cost, intercity_mode = self._calculate_intercity_transport_cost(
+            transit_options, budget_level, num_people, budget_amount, subtotal_without_transit
+        )
+
+        subtotal = subtotal_without_transit + intercity_transport_cost
 
         # ── 5. Budget feasibility check and optimisation ──────────────────────
         budget_warning    = None
@@ -232,7 +234,7 @@ class BudgetAgent:
                 budget_amount, intercity_transport_cost, num_people, num_days, rooms
             )
 
-            if not budget_infeasible and subtotal > budget_amount:
+            if not budget_infeasible and (subtotal * 1.1) > budget_amount:
                 (
                     total_acc, total_food, total_trans,
                     acc_ppd, food_ppd, trans_ppd,
@@ -242,7 +244,7 @@ class BudgetAgent:
                     total_acc, total_food, total_trans,
                     subtotal,
                     num_people, num_days, rooms,
-                    should_rent_car,
+                    actual_rent_car,
                     attraction_cost, car_rental_cost, fuel_cost, intercity_transport_cost,
                     budget_amount, budget_strictness,
                 )
@@ -259,28 +261,34 @@ class BudgetAgent:
             rooms, num_people, num_days,
             total_acc, total_food, total_trans,
             attraction_cost, spots,
-            car_rental_cost, should_rent_car,
+            car_rental_cost, actual_rent_car,
             fuel_cost, fuel_km, budget_level,
             intercity_transport_cost, intercity_mode,
             subtotal, miscellaneous_cost, total,
         )
 
+        utilization_percentage = round((total / budget_amount * 100), 1) if budget_amount else 0.0
+        within_budget = total <= budget_amount if budget_amount else True
+        
         return {
             "total":               round(total, 2),
             "accommodation":       round(total_acc, 2),
             "food":                round(total_food, 2),
-            "transport":           round(total_trans, 2),
+            "local_transport":     round(total_trans, 2),
             "intercity_transport": round(intercity_transport_cost, 2),
             "miscellaneous":       round(miscellaneous_cost, 2),
             "attractions":         round(attraction_cost, 2),
             "car_rental":          round(car_rental_cost, 2),
-            "fuel_cost":           round(fuel_cost, 2),
-            "budget_level":        budget_level,
+            "fuel":                round(fuel_cost, 2),
+            "budget_category":     budget_level,
             "budget_amount":       budget_amount,
+            "budget_limit":        budget_amount,
             "budget_strictness":   budget_strictness,
             "budget_warning":      budget_warning,
             "budget_infeasible":   budget_infeasible,
             "remaining":           remaining,
+            "within_budget":       within_budget,
+            "utilization_percentage": utilization_percentage,
             "rooms":               rooms,
             "days":                num_days,
             "people":              num_people,
@@ -567,8 +575,7 @@ class BudgetAgent:
         daily_max     = float(self._RENTAL_DAILY_MAX.get(budget_level, 3_500))
 
         if not car_info:
-            daily = min(default_daily, daily_max)
-            return daily * num_days, daily
+            return 0.0, 0.0
 
         # LLM picks the most suitable car for this budget
         idx = 0
@@ -677,6 +684,8 @@ class BudgetAgent:
         transit_options: dict | None,
         budget_level: str,
         num_people: int,
+        budget_amount: int | None = None,
+        subtotal: float = 0.0
     ) -> tuple:
         """
         Round-trip intercity transport cost (origin → destination → origin).
@@ -702,47 +711,81 @@ class BudgetAgent:
 
         Returns (cost: float, mode_description: str)
         """
-        if not transit_options:
+        if not transit_options or "intercity_transport" not in transit_options:
             return 0.0, "N/A"
 
         recommended_mode = transit_options.get("recommended_mode", "").lower()
-        trains           = transit_options.get("trains",  [])
-        flights          = transit_options.get("flights", [])
-        buses            = transit_options.get("buses",   [])
+        options_list = transit_options.get("intercity_transport", [])
+        
+        # map estimated_cost to price_inr for backwards compatibility
+        for o in options_list:
+            o["price_inr"] = float(o.get("estimated_cost", 0))
+
+        trains           = [o for o in options_list if o.get("mode", "").lower() == "train"]
+        flights          = [o for o in options_list if o.get("mode", "").lower() == "flight"]
+        buses            = [o for o in options_list if o.get("mode", "").lower() == "bus"]
 
         options: list = []
         mode_label    = "transport"
 
-        # ── Step 1: Default to lowest train fare whenever trains are available ─
-        if trains:
-            # Sort ascending by price_inr so we always use the cheapest train
-            sorted_trains = sorted(trains, key=lambda t: float(t.get("price_inr", 0)))
-            options    = sorted_trains
-            mode_label = "train"
+        # ── Step 1: Gather all available options ──
+        all_options = []
+        if flights: all_options.append(("flight", sorted(flights, key=lambda f: float(f.get("price_inr", 0)))))
+        if trains:  all_options.append(("train",  sorted(trains, key=lambda t: float(t.get("price_inr", 0)))))
+        if buses:   all_options.append(("bus",    sorted(buses, key=lambda b: float(b.get("price_inr", 0)))))
 
-        # ── Step 2: Override with explicit user/agent mode selection ──────────
-        # Only switch away from trains when the recommended mode is NOT train
-        # AND the recommended mode has available options
-        elif "flight" in recommended_mode and flights:
-            options    = sorted(flights, key=lambda f: float(f.get("price_inr", 0)))
-            mode_label = "flight"
+        if not all_options:
+            return 0.0, "N/A"
 
-        elif "bus" in recommended_mode and buses:
-            options    = sorted(buses, key=lambda b: float(b.get("price_inr", 0)))
-            mode_label = "bus"
+        # ── Step 2: Determine preferred mode ──
+        preferred_mode = "train" # Default
+        if "flight" in recommended_mode and flights: preferred_mode = "flight"
+        elif "bus" in recommended_mode and buses: preferred_mode = "bus"
+        elif trains: preferred_mode = "train"
+        else: preferred_mode = all_options[0][0]
 
-        # ── Step 3: Last-resort fallback (no trains; no explicit mode match) ──
+        # ── Step 3: Find the best affordable mode ──
+        options = []
+        mode_label = preferred_mode
+
+        # Helper to check if a mode is affordable
+        def is_affordable(opts):
+            if not opts: return False
+            cost = float(opts[0].get("price_inr", 0)) * 2 * num_people
+            if budget_amount is None: return True
+            # Allow transport if it + subtotal fits within budget (allowing a 10% buffer for misc)
+            return (subtotal + cost) * 1.1 <= budget_amount
+
+        # Try preferred mode first
+        for mode, opts in all_options:
+            if mode == preferred_mode:
+                if is_affordable(opts) or budget_amount is None:
+                    options = opts
+                    mode_label = mode
+                    break
+
+        # If preferred mode is unaffordable or wasn't set properly, fallback to cheapest available
         if not options:
-            all_options: list = []
-            if flights:
-                all_options += [("flight", f) for f in flights]
-            if buses:
-                all_options += [("bus",    b) for b in buses]
-            if all_options:
-                # Pick the cheapest option across any available mode
-                all_options.sort(key=lambda x: float(x[1].get("price_inr", 0)))
-                mode_label = all_options[0][0]
-                options    = [all_options[0][1]]
+            # Flatten and sort all available options by price
+            flat_options = []
+            for mode, opts in all_options:
+                for opt in opts:
+                    flat_options.append((mode, opt))
+            
+            flat_options.sort(key=lambda x: float(x[1].get("price_inr", 0)))
+            
+            # Find cheapest affordable
+            for mode, opt in flat_options:
+                cost = float(opt.get("price_inr", 0)) * 2 * num_people
+                if budget_amount is None or (subtotal + cost) * 1.1 <= budget_amount:
+                    options = [opt]
+                    mode_label = mode
+                    break
+            
+            # If nothing is affordable, just pick the absolute cheapest
+            if not options and flat_options:
+                options = [flat_options[0][1]]
+                mode_label = flat_options[0][0]
 
         if not options:
             return 0.0, "N/A"
@@ -790,7 +833,7 @@ class BudgetAgent:
         if budget_amount < min_viable * 0.65:
             warning = (
                 f"Your budget of ₹{budget_amount:,} appears too low for a {num_days}-day trip "
-                f"for {num_people} person(s). Minimum realistic cost: ₹{int(min_viable):,}. "
+                f"for {num_people} person(s). Minimum realistic cost: ₹{int(min_viable * 1.1):,}. "
                 "Consider increasing your budget, reducing trip duration, or fewer paid attractions."
             )
             return True, warning
@@ -857,19 +900,19 @@ class BudgetAgent:
 
             final_acc, final_food, final_trans = new_acc, new_food, new_trans
 
-            if new_total <= budget_amount:
+            if (new_total * 1.1) <= budget_amount:
                 break
 
-        if new_total > budget_amount:
+        if (new_total * 1.1) > budget_amount:
             if budget_strictness == "strict":
                 budget_warning = (
-                    f"Even after optimisation the estimated cost (₹{int(new_total):,}) "
-                    f"exceeds your strict budget of ₹{budget_amount:,}. "
-                    "Consider reducing travel days or choosing fewer paid attractions."
+                    f"Your requested trip cannot currently fit within ₹{budget_amount:,}. "
+                    f"The closest feasible configuration is ₹{int(new_total * 1.1):,}. "
+                    "Consider reducing travel days, choosing fewer paid attractions, or selecting cheaper intercity transport to fit within your strict budget."
                 )
             else:
                 budget_warning = (
-                    f"Estimated trip cost (₹{int(new_total):,}) is above your "
+                    f"Estimated trip cost (₹{int(new_total * 1.1):,}) is above your "
                     f"budget of ₹{budget_amount:,}. We've minimised costs where possible."
                 )
         else:

@@ -126,6 +126,12 @@ class RetrievalAgent:
         self._web_cache: dict = {}
         self._cache_ttl_seconds = 3600  # 1 hour TTL
 
+        # Real provenance for the last retrieve_context() call. Each entry is
+        # {"name": str, "url": str|None, "type": "knowledge_base"|"web"}.
+        # Populated only from actual ChromaDB doc metadata or live web results —
+        # never fabricated. Read by travel_graph after retrieval.
+        self.last_sources: list = []
+
     # ─────────────────────────────────────────────────────────────────────
     # Public Interface
     # ─────────────────────────────────────────────────────────────────────
@@ -146,6 +152,7 @@ class RetrievalAgent:
             return "No destination provided."
 
         city_clean = city.strip()
+        self.last_sources = []
 
         # Step 1: Determine routing
         if self._is_indian_destination(city_clean, user_prefs):
@@ -173,7 +180,7 @@ class RetrievalAgent:
 
         No external API calls are made here — detection uses pre-computed data only.
         """
-        city_lower = city.lower().strip()
+        city_lower = str(city).lower().strip() if city else ""
 
         # Stage 1a: Exact match in known names set
         if city_lower in INDIA_KNOWN_NAMES:
@@ -242,7 +249,14 @@ class RetrievalAgent:
             query_parts.append("budget travel cheap affordable")
         elif budget == "high":
             query_parts.append("luxury premium high-end travel")
-        if kids and kids.lower() == "yes":
+            
+        has_kids = False
+        if isinstance(kids, str) and kids.strip().lower() in ["yes", "true", "y"]:
+            has_kids = True
+        elif isinstance(kids, (int, float)) and kids > 0:
+            has_kids = True
+            
+        if has_kids:
             query_parts.append("family friendly kids children")
 
         query = " ".join(query_parts)
@@ -256,12 +270,41 @@ class RetrievalAgent:
 
             context_lines = [f"- {doc.page_content}" for doc in results]
             context = "\n".join(context_lines)
+            self.last_sources = self._sources_from_rag_docs(results)
             print(f"[RETRIEVAL AGENT] Retrieved {len(results)} RAG documents for '{city}'.")
             return context
 
         except Exception as e:
             print(f"[ERROR] RetrievalAgent RAG search failed for '{city}': {str(e)}")
             return ""
+
+    def _sources_from_rag_docs(self, docs) -> list:
+        """Build real provenance chips from ChromaDB document metadata.
+
+        Uses only metadata that actually exists on the ingested documents
+        (source filename / destination / category). De-duplicated, capped."""
+        sources = []
+        seen = set()
+        for doc in docs or []:
+            meta = getattr(doc, "metadata", {}) or {}
+            raw = meta.get("source") or meta.get("destination") or meta.get("title")
+            if not raw:
+                continue
+            name = str(raw)
+            if name.lower().endswith(".txt"):
+                name = name[:-4]
+            name = name.replace("_", " ").replace("-", " ").strip().title()
+            dest = meta.get("destination")
+            if dest and str(dest).lower() not in name.lower():
+                name = f"{name} · {dest}"
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            sources.append({"name": name, "url": None, "type": "knowledge_base"})
+            if len(sources) >= 6:
+                break
+        return sources
 
     # ─────────────────────────────────────────────────────────────────────
     # Web Retrieval (International Destinations)
@@ -285,7 +328,8 @@ class RetrievalAgent:
         cached = self._get_from_cache(cache_key)
         if cached:
             print(f"[RETRIEVAL AGENT] ✅ Cache hit for international destination: '{city}'")
-            return cached
+            self.last_sources = cached.get("sources", [])
+            return cached["result"]
 
         print(f"[RETRIEVAL AGENT] 🔍 Fetching web information for: '{city}'")
 
@@ -302,16 +346,43 @@ class RetrievalAgent:
         if not all_snippets:
             print(f"[RETRIEVAL AGENT] No web results for '{city}'. Returning fallback.")
             fallback = self._build_fallback_context(city, user_prefs)
-            self._save_to_cache(cache_key, fallback)
+            self.last_sources = []
+            self._save_to_cache(cache_key, fallback, [])
             return fallback
 
         # Normalise web snippets into context string (same format as RAG)
         context = self._normalize_web_results(all_snippets, city, user_prefs)
+        self.last_sources = self._sources_from_web(all_snippets)
         print(f"[RETRIEVAL AGENT] Web retrieval complete: {len(all_snippets)} snippets for '{city}'.")
 
         # Cache the result
-        self._save_to_cache(cache_key, context)
+        self._save_to_cache(cache_key, context, self.last_sources)
         return context
+
+    def _sources_from_web(self, snippets) -> list:
+        """Build real provenance chips from live web search results (title + url).
+
+        Skips ad/tracking redirect links (e.g. bing.com/aclick, doubleclick) so
+        only genuine organic sources are shown. Never fabricates a source."""
+        ad_markers = ("bing.com/aclick", "doubleclick.net", "googleadservices",
+                      "adurl=", "ad_service", "/aclk?", "googadservices")
+        sources = []
+        seen = set()
+        for s in snippets or []:
+            title = (s.get("title") or "").strip()
+            href = (s.get("href") or "").strip()
+            if not title:
+                continue
+            if href and any(m in href.lower() for m in ad_markers):
+                continue
+            key = (href or title).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            sources.append({"name": title, "url": href or None, "type": "web"})
+            if len(sources) >= 6:
+                break
+        return sources
 
     def _build_web_queries(self, city: str, hobbies: str, budget: str,
                            health: str, kids: str) -> list:
@@ -331,7 +402,14 @@ class RetrievalAgent:
             queries.append(f"budget travel tips cheap things to do in {city}")
         elif budget == "high":
             queries.append(f"luxury hotels fine dining premium experiences in {city}")
-        if kids and kids.lower() == "yes":
+            
+        has_kids = False
+        if isinstance(kids, str) and kids.strip().lower() in ["yes", "true", "y"]:
+            has_kids = True
+        elif isinstance(kids, (int, float)) and kids > 0:
+            has_kids = True
+            
+        if has_kids:
             queries.append(f"family friendly activities kids things to do {city}")
         return queries
 
@@ -458,7 +536,10 @@ class RetrievalAgent:
     # ─────────────────────────────────────────────────────────────────────
 
     def _make_cache_key(self, city: str, hobbies: str, budget: str) -> str:
-        raw = f"{city.lower().strip()}|{hobbies.lower().strip()}|{budget.lower().strip()}"
+        safe_city = str(city).lower().strip() if city else ""
+        safe_hobbies = str(hobbies).lower().strip() if hobbies else ""
+        safe_budget = str(budget).lower().strip() if budget else ""
+        raw = f"{safe_city}|{safe_hobbies}|{safe_budget}"
         return hashlib.md5(raw.encode()).hexdigest()
 
     def _get_from_cache(self, key: str):
@@ -468,10 +549,10 @@ class RetrievalAgent:
         if time.time() - entry["timestamp"] > self._cache_ttl_seconds:
             del self._web_cache[key]
             return None
-        return entry["result"]
+        return entry
 
-    def _save_to_cache(self, key: str, result: str):
-        self._web_cache[key] = {"result": result, "timestamp": time.time()}
+    def _save_to_cache(self, key: str, result: str, sources: list = None):
+        self._web_cache[key] = {"result": result, "sources": sources or [], "timestamp": time.time()}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

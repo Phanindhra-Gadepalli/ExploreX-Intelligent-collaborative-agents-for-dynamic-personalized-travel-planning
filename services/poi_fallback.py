@@ -149,11 +149,14 @@ class POIManager:
                         seen_lng = float(seen_poi.get('longitude', 0))
                     except (ValueError, TypeError):
                         continue
+                    
+                    id_match = (poi.get('id') and poi.get('id') == seen_poi.get('id'))
                     name_match = (name in seen_name and len(name) > 5) or (seen_name in name and len(seen_name) > 5) or (name == seen_name)
                     dist = calculate_distance(lat, lng, seen_lat, seen_lng)
-                    dist_match = dist < 2.0
+                    dist_match = dist < 0.5  # 500 meters for similar names
+                    duplicate_loc = dist < 0.01 # 10 meters for duplicate locations regardless of name
                     
-                    if name_match and dist_match:
+                    if id_match or (name_match and dist_match) or duplicate_loc:
                         matched_group_idx = i
                         break
                 if matched_group_idx != -1:
@@ -200,23 +203,33 @@ class POIManager:
                 pass
         return []
 
-    def get_restaurants(self, lat: float, lng: float, radius: int = 5000, number: int = 5):
+    def get_restaurants(self, lat: float, lng: float, radius: int = 5000, number: int = 20):
         print(f"[POI_MANAGER] Fetching restaurants for lat={lat}, lng={lng}")
+        all_results = []
         try:
-            results = self._fetch_osm_restaurants(lat, lng, radius, number)
-            if results:
-                return results
+            osm_results = self._fetch_osm_restaurants(lat, lng, radius, number)
+            all_results.extend(osm_results)
         except Exception as e:
             print(f"[POI_MANAGER][OSM] Restaurants failed: {e}")
 
         if self.geoapify_key:
             try:
-                results = self._fetch_geoapify_restaurants(lat, lng, radius, number)
-                if results:
-                    return results
-            except Exception:
-                pass
-        return []
+                geo_results = self._fetch_geoapify_restaurants(lat, lng, radius, number)
+                all_results.extend(geo_results)
+            except Exception as e:
+                print(f"[POI_MANAGER][Geoapify] Restaurants failed: {e}")
+        
+        # Deduplicate
+        seen = set()
+        deduped = []
+        for r in all_results:
+            name_key = r.get('name', '').lower().strip()
+            if name_key and name_key not in seen:
+                seen.add(name_key)
+                deduped.append(r)
+                if len(deduped) >= number: break
+                
+        return deduped
 
     # -------------------------------------------------------------------------
     # OVERPASS API
@@ -259,27 +272,38 @@ class POIManager:
         raise Exception(f"All Overpass endpoints exhausted. Last error: {last_exception}")
 
     def _get_category_filters(self, hobbies, radius, lat, lng):
+        import math
+        earth_radius = 6371000
+        lat_delta = (radius / earth_radius) * (180 / math.pi)
+        lng_delta = (radius / earth_radius) * (180 / math.pi) / math.cos(lat * math.pi / 180)
+        s = lat - lat_delta
+        w = lng - lng_delta
+        n = lat + lat_delta
+        e = lng + lng_delta
+        bbox = f"{s},{w},{n},{e}"
+        
         filters = []
         h = hobbies.lower() if hobbies else ""
         
         if "history" in h or "architecture" in h or "heritage" in h:
-            filters.append(f'nwr["historic"](around:{radius},{lat},{lng});')
+            filters.append(f'nwr["historic"]({bbox});')
         if "nature" in h or "adventure" in h:
-            filters.append(f'nwr["leisure"~"park|nature_reserve"](around:{radius},{lat},{lng});')
-            filters.append(f'nwr["natural"~"waterfall|beach|peak"](around:{radius},{lat},{lng});')
+            filters.append(f'nwr["leisure"~"park|nature_reserve"]({bbox});')
+            filters.append(f'nwr["natural"~"waterfall|beach|peak"]({bbox});')
         if "spiritual" in h or "temple" in h or "religion" in h:
-            filters.append(f'nwr["amenity"~"place_of_worship"](around:{radius},{lat},{lng});')
+            filters.append(f'nwr["amenity"~"place_of_worship"]({bbox});')
         if "art" in h or "culture" in h or "museum" in h:
-            filters.append(f'nwr["tourism"~"museum|gallery"](around:{radius},{lat},{lng});')
+            filters.append(f'nwr["tourism"~"museum|gallery"]({bbox});')
             
         if not filters or "shopping" in h or "food" in h:
-            filters.append(f'nwr["tourism"~"attraction|museum|viewpoint|gallery|theme_park"](around:{radius},{lat},{lng});')
+            filters.append(f'nwr["tourism"~"attraction|museum|viewpoint|gallery|theme_park"]({bbox});')
             
         return "".join(filters)
 
     def _fetch_osm_attractions(self, lat, lng, radius, hobbies):
-        cat_filters = self._get_category_filters(hobbies, radius, lat, lng)
-        query = f"[out:json][timeout:15];({cat_filters});out 200 tags center;"
+        cat_filters = self._get_category_filters(hobbies, min(radius, 15000), lat, lng)
+        # Using [out:json][timeout:15] and bounding box for elements, limited via Python logic rather than broken out limits
+        query = f"[out:json][timeout:15];({cat_filters});out center;"
         
         elements = self._execute_overpass_query(query)
         normalized = []
@@ -334,8 +358,25 @@ class POIManager:
         return normalized
 
     def _fetch_osm_accommodations(self, lat, lng, radius, budget, number):
-        acc_type = "hostel" if budget == 'low' else "hotel"
-        query = f"[out:json][timeout:15];(node[\"tourism\"~\"{acc_type}|guest_house\"](around:{radius},{lat},{lng}););out 15 tags center;"
+        import math
+        earth_radius = 6371000
+        radius = min(radius, 15000)
+        lat_delta = (radius / earth_radius) * (180 / math.pi)
+        lng_delta = (radius / earth_radius) * (180 / math.pi) / math.cos(lat * math.pi / 180)
+        s = lat - lat_delta
+        w = lng - lng_delta
+        n = lat + lat_delta
+        e = lng + lng_delta
+        bbox = f"{s},{w},{n},{e}"
+        
+        if budget == 'budget':
+            acc_type = "hostel|guest_house|motel"
+        elif budget == 'luxury':
+            acc_type = "resort|hotel"
+        else:
+            acc_type = "hotel|apartment"
+
+        query = f'[out:json][timeout:15];(node["tourism"~"{acc_type}"]({bbox}););out center;'
         
         elements = self._execute_overpass_query(query)
         accommodations = []
@@ -347,21 +388,27 @@ class POIManager:
             latitude = el.get('lat') or el.get('center', {}).get('lat')
             longitude = el.get('lon') or el.get('center', {}).get('lon')
             
+            amenities = []
+            if "internet_access" in tags: amenities.append("Wi-Fi")
+            if "wheelchair" in tags: amenities.append("Wheelchair Accessible")
+            if "swimming_pool" in tags: amenities.append("Pool")
+            if not amenities: amenities = ["Wi-Fi", "Air Conditioning"] # fallback basics
+
             accommodations.append({
                 'id': f"osm_{el.get('id')}",
-                'source': 'osm',
                 'name': name,
+                'address': f"{tags.get('addr:street', '')} {tags.get('addr:city', '')}".strip() or "Local Accommodation",
                 'latitude': latitude,
                 'longitude': longitude,
-                'category': 'accommodation',
-                'subcategory': acc_type,
-                'rating': 4.0,
-                'user_ratings_total': 50,
-                'price_level': 1 if budget == 'low' else 2,
-                'address': f"{tags.get('addr:street', '')} {tags.get('addr:city', '')}".strip() or "Local Accommodation",
-                'website': tags.get('website', ''),
-                'image_url': self._fetch_pexels_image(name),
-                'verified': True
+                'rating': 4.0 if budget == 'budget' else (4.5 if budget == 'medium' else 4.8),
+                'category': 'Accommodation',
+                'price_per_night': None,
+                'currency': 'USD',
+                'price_status': 'unavailable',
+                'amenities': amenities,
+                'image_url': self._fetch_pexels_image(f"{name} {tags.get('tourism', 'hotel')}"),
+                'booking_url': tags.get('website', ''),
+                'budget_tier': budget
             })
             if len(accommodations) >= number:
                 break
@@ -438,8 +485,16 @@ class POIManager:
 
     def _fetch_geoapify_accommodations(self, lat, lng, radius, budget, number):
         url = "https://api.geoapify.com/v2/places"
+        
+        if budget == 'budget':
+            cat = "accommodation.hostel,accommodation.motel,accommodation.guest_house"
+        elif budget == 'luxury':
+            cat = "accommodation.hotel"
+        else:
+            cat = "accommodation.hotel,accommodation.apartment"
+
         params = {
-            "categories": "accommodation",
+            "categories": cat,
             "filter": f"circle:{lng},{lat},{radius}",
             "limit": max(10, number),
             "apiKey": self.geoapify_key
@@ -459,18 +514,19 @@ class POIManager:
             
             accommodations.append({
                 'id': props.get('place_id', str(props.get('lat'))),
-                'source': 'geoapify',
                 'name': props.get('name'),
+                'address': props.get('formatted', 'Local Accommodation'),
                 'latitude': props.get('lat'),
                 'longitude': props.get('lon'),
-                'category': 'accommodation',
-                'rating': 4.0,
-                'user_ratings_total': 100,
-                'price_level': 1 if budget == 'low' else (4 if budget == 'high' else 2),
-                'address': props.get('formatted', ''),
-                'website': props.get('website', ''),
-                'image_url': self._fetch_pexels_image(props.get('name')),
-                'verified': True
+                'rating': 4.0 if budget == 'budget' else (4.5 if budget == 'medium' else 4.8),
+                'category': 'Accommodation',
+                'price_per_night': None,
+                'currency': 'USD',
+                'price_status': 'unavailable',
+                'amenities': ["Wi-Fi", "Air Conditioning", "Breakfast Available"],
+                'image_url': self._fetch_pexels_image(f"{props.get('name')} hotel"),
+                'booking_url': props.get('website', ''),
+                'budget_tier': budget
             })
             if len(accommodations) >= number:
                 break
@@ -478,7 +534,18 @@ class POIManager:
         return accommodations
 
     def _fetch_osm_restaurants(self, lat, lng, radius, number):
-        query = f'[out:json][timeout:15];nwr["amenity"~"restaurant|cafe|fast_food|food_court"](around:{radius},{lat},{lng});out {number * 3} tags center;'
+        import math
+        earth_radius = 6371000
+        radius = min(radius, 10000)
+        lat_delta = (radius / earth_radius) * (180 / math.pi)
+        lng_delta = (radius / earth_radius) * (180 / math.pi) / math.cos(lat * math.pi / 180)
+        s = lat - lat_delta
+        w = lng - lng_delta
+        n = lat + lat_delta
+        e = lng + lng_delta
+        bbox = f"{s},{w},{n},{e}"
+        
+        query = f'[out:json][timeout:15];nwr["amenity"~"restaurant|cafe|fast_food|food_court"]({bbox});out center;'
         elements = self._execute_overpass_query(query)
         results = []
         for el in elements:
@@ -486,24 +553,37 @@ class POIManager:
             name = tags.get('name') or tags.get('name:en')
             if not name: continue
             
-            cuisine = tags.get('cuisine', 'Local')
+            cuisine = tags.get('cuisine', 'Local').replace('_', ' ').title()
+            amenity = tags.get('amenity', 'restaurant')
+            
+            meal_types = []
+            if 'cafe' in amenity:
+                meal_types.extend(['breakfast', 'cafe'])
+            elif 'fast_food' in amenity or 'street_food' in cuisine.lower():
+                meal_types.extend(['lunch', 'street_food'])
+            else:
+                meal_types.extend(['lunch', 'dinner'])
+                
             results.append({
                 'id': f"osm_rest_{el.get('id')}",
-                'source': 'osm',
                 'name': name,
+                'cuisine': cuisine,
+                'category': 'Food',
+                'meal_types': meal_types,
+                'address': f"{tags.get('addr:street', '')} {tags.get('addr:city', '')}".strip() or "Local Restaurant",
                 'latitude': el.get('lat') or el.get('center', {}).get('lat'),
                 'longitude': el.get('lon') or el.get('center', {}).get('lon'),
-                'category': 'Food',
-                'description': f"{cuisine.title()} Restaurant",
-                'rating': 4.0,
+                'rating': 4.3,
                 'price_level': 2,
-                'is_meal': True
+                'image_url': self._fetch_pexels_image(f"{name} food {cuisine}"),
+                'description': f"{cuisine} {amenity.replace('_', ' ').title()}",
+                'source': 'osm'
             })
             if len(results) >= number: break
         return results
 
     def _fetch_geoapify_restaurants(self, lat, lng, radius, number):
-        url = f"https://api.geoapify.com/v2/places?categories=catering.restaurant,catering.cafe&filter=circle:{lng},{lat},{radius}&limit={number * 3}&apiKey={self.geoapify_key}"
+        url = f"https://api.geoapify.com/v2/places?categories=catering.restaurant,catering.cafe,catering.fast_food&filter=circle:{lng},{lat},{radius}&limit={number * 3}&apiKey={self.geoapify_key}"
         try:
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
@@ -514,18 +594,33 @@ class POIManager:
                 name = props.get('name')
                 if not name: continue
                 
+                cats = props.get('categories', [])
+                cat_str = ' '.join(cats).lower()
+                
+                meal_types = []
+                if 'cafe' in cat_str or 'coffee' in cat_str:
+                    meal_types.extend(['breakfast', 'cafe'])
+                elif 'fast_food' in cat_str or 'street_food' in cat_str:
+                    meal_types.extend(['lunch', 'street_food'])
+                else:
+                    meal_types.extend(['lunch', 'dinner'])
+                
+                cuisine = props.get('cuisine', 'Local').replace('_', ' ').title()
+                
                 results.append({
                     'id': f"geoapify_rest_{props.get('place_id')}",
-                    'source': 'geoapify',
                     'name': name,
+                    'cuisine': cuisine,
+                    'category': 'Food',
+                    'meal_types': meal_types,
+                    'address': props.get('formatted', 'Local Restaurant'),
                     'latitude': props.get('lat'),
                     'longitude': props.get('lon'),
-                    'category': 'Food',
-                    'description': props.get('categories', ['Restaurant'])[0].replace('catering.', '').title(),
-                    'rating': 4.0,
+                    'rating': 4.2,
                     'price_level': 2,
-                    'address': props.get('formatted'),
-                    'is_meal': True
+                    'image_url': self._fetch_pexels_image(f"{name} food {cuisine}"),
+                    'description': cats[0].replace('catering.', '').replace('_', ' ').title() if cats else "Restaurant",
+                    'source': 'geoapify'
                 })
                 if len(results) >= number: break
             return results

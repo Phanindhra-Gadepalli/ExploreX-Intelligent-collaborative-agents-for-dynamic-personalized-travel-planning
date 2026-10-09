@@ -372,7 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyInterestsToDom();
         if (state.attractions.length) renderRecommendations(state.attractions);
         if (state.accommodations.length) renderAccommodations(state.accommodations);
-        if (state.weather.length) renderWeather(state.weather);
+        if (state.weather && (Array.isArray(state.weather) ? state.weather.length : Object.keys(state.weather).length)) renderWeather(state.weather);
         if (state.itinerary) {
             renderItinerary(state.itinerary);
             renderMap(state.itinerary);
@@ -404,8 +404,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             state.attractions = Array.isArray(t.attractions) ? t.attractions : [];
             state.accommodations = Array.isArray(t.accommodations) ? t.accommodations : [];
-            state.weather = Array.isArray(t.weather) ? t.weather : [];
-            state.itinerary = (Array.isArray(t.itinerary) && t.itinerary.length) ? t.itinerary : null;
+            const w = t.weather;
+            state.weather = (w && (Array.isArray(w) ? w.length : Object.keys(w).length)) ? w : [];
+            const itin = t.itinerary;
+            state.itinerary = (Array.isArray(itin) ? itin.length : (itin && Array.isArray(itin.days) && itin.days.length)) ? itin : null;
             state.budget = (t.budget && Object.keys(t.budget).length) ? t.budget : null;
             state.transport = t.transit_options || [];
             state.selectedAttractionIds = new Set(
@@ -655,15 +657,42 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.type === 'status') {
                 if (data.agent && agentTrace[agentTrace.length - 1] !== data.agent) agentTrace.push(data.agent);
                 renderTrace(bubble, agentTrace, true);
-                if (msgDiv && !fullText) msgDiv.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> ${escapeHtml(data.agent || 'Working')}...`;
+                
+                let uiMsg = `Working (${escapeHtml(data.agent || 'Working')})...`;
+                if (data.agent === 'information') {
+                    uiMsg = "Analyzing your request and fetching destination information...";
+                } else if (data.agent === 'recommend') {
+                    uiMsg = "Finding personalized attractions...";
+                    // User must not stare at Chat. Automatically open explore while loading.
+                    switchTab('explore');
+                    showRecommendationSkeletons();
+                } else if (data.agent === 'strategy') {
+                    uiMsg = "Generating optimal daily strategy...";
+                    switchTab('map'); // Switch to Plan/route progress
+                } else if (data.agent === 'budget') {
+                    uiMsg = "Calculating budget and transport costs...";
+                    switchTab('map');
+                } else if (data.agent === 'route') {
+                    uiMsg = "Planning route and assigning times...";
+                    switchTab('map');
+                } else if (data.agent === 'communication') {
+                    uiMsg = "Finalizing itinerary details...";
+                    switchTab('itinerary');
+                }
+                
+                if (msgDiv && !fullText) msgDiv.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> ${uiMsg}`;
                 return;
             }
 
             if (data.type === 'error') {
                 stopWatchdog();
-                if (msgDiv) msgDiv.innerHTML = `<span class="text-danger"><i class="fas fa-exclamation-circle"></i> Error: ${escapeHtml(data.error || 'Something went wrong.')}</span>`;
+                let humanError = data.error || 'Something went wrong.';
+                if (humanError.includes('AttributeError') || humanError.includes('NoneType') || humanError.includes('JSON decode error') || humanError.includes('stack trace')) {
+                    humanError = "Your itinerary could not be completed because an unexpected error occurred. We've skipped that segment and are continuing.";
+                }
+                if (msgDiv) msgDiv.innerHTML = `<div class="p-3 bg-danger text-white rounded mb-2"><i class="fas fa-exclamation-triangle me-2"></i> ${escapeHtml(humanError)}</div>`;
                 renderTrace(bubble, agentTrace, false);
-                showToast(data.error || 'Something went wrong.', 'error');
+                showToast(humanError, 'error');
                 clearRecommendationSkeletons();
                 state.generating = false;
                 eventSource.close();
@@ -675,6 +704,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 fullText += data.content;
                 if (msgDiv) msgDiv.innerHTML = marked.parse(fullText);
                 if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+                return;
+            }
+
+            // Truthful keep-alive from the backend while a long step genuinely
+            // runs. Shows real elapsed seconds — no fabricated progress bars.
+            if (data.type === 'progress') {
+                if (msgDiv && !fullText) {
+                    msgDiv.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> ${escapeHtml(data.message || 'Working...')}`;
+                }
                 return;
             }
 
@@ -757,15 +795,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Recommendations ready -> render + let the user choose.
-        if (Array.isArray(data.recommended_attractions) && data.recommended_attractions.length) {
-            state.attractions = data.recommended_attractions;
-            renderRecommendations(state.attractions);
+        if (data.ui_action === 'OPEN_EXPLORE' || ns === 'recommend' || (Array.isArray(data.recommended_attractions) && data.recommended_attractions.length)) {
+            state.attractions = data.recommended_attractions || state.attractions || [];
+            if (state.attractions.length) {
+                renderRecommendations(state.attractions);
+            }
             if (Array.isArray(data.accommodations)) {
                 state.accommodations = data.accommodations;
                 renderAccommodations(state.accommodations);
             }
             switchTab('explore');
-            showToast(`${state.attractions.length} places curated for you — select your favorites.`, 'success');
+            const count = state.attractions.length;
+            showToast(`${count} recommendations found. Select the places you'd like to visit.`, 'success');
         } else if (['chat', 'information', 'retrieval'].includes(ns)) {
             // Still conversing / gathering info — drop the placeholder skeletons.
             clearRecommendationSkeletons();
@@ -808,7 +849,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (data.transit_options) { state.transport = data.transit_options; renderTransport(data.transit_options); }
 
-        if (data.itinerary) {
+        if (ns === 'route') {
+            switchTab('map');
+        }
+
+        if (ns === 'itinerary' || data.itinerary) {
             state.generating = false;
             switchTab('itinerary');
             showToast('Your itinerary, budget and route are ready.', 'success');
@@ -943,22 +988,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let fetchDestinationsTimeout = null;
     async function fetchDestinations() {
         // If we already have attractions, we don't show destinations.
         if (state.attractions && state.attractions.length > 0) return;
         
-        try {
-            const res = await fetch('/api/destinations', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ interests: state.interests, weight: state.interestWeight })
-            });
-            const data = await res.json();
-            if (data.status === 'success') {
-                renderDestinations(data.destinations);
-            }
-        } catch (e) {
+        if (fetchDestinationsTimeout) {
+            clearTimeout(fetchDestinationsTimeout);
         }
+        
+        fetchDestinationsTimeout = setTimeout(async () => {
+            try {
+                const res = await fetch('/api/destinations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ interests: state.interests, weight: state.interestWeight })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    renderDestinations(data.destinations);
+                }
+            } catch (e) {
+                console.error("Error fetching destinations:", e);
+            }
+        }, 300);
     }
 
     function renderDestinations(dests) {
@@ -1796,7 +1849,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const totalEl = document.getElementById('total-budget-display');
-        const total = budget.total ?? budget.total_cost ?? 0;
+        const total = budget.total ?? budget.total_cost ?? budget.estimated_total ?? 0;
         const convertedTotal = total * rate;
         if (totalEl) totalEl.innerText = `${sym}${Math.round(convertedTotal).toLocaleString('en-US')}`;
 
@@ -1818,10 +1871,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const limitLabel = `<div class="d-flex justify-content-between mb-2 pb-2 border-bottom"><span class="fw-bold text-dark" data-testid="budget-limit">Budget Limit:</span> <span class="fw-bold">${sym}${Math.round(limitConverted).toLocaleString('en-US')}</span></div>`;
             
             let statusHtml = '';
-            const remainingConverted = Math.abs(budget.remaining) * rate;
-            if (budget.remaining >= 0) {
+            const remainingAmt = (budget.remaining != null) ? budget.remaining : (budget.remaining_budget != null ? budget.remaining_budget : null);
+            const remainingConverted = remainingAmt != null ? Math.abs(remainingAmt) * rate : 0;
+            if (remainingAmt != null && remainingAmt >= 0) {
                 statusHtml = `<div class="d-flex justify-content-between mb-2"><span class="text-success fw-bold" data-testid="budget-remaining">Remaining:</span> <span class="text-success fw-bold">${sym}${Math.round(remainingConverted).toLocaleString('en-US')}</span></div>`;
-            } else {
+            } else if (remainingAmt != null) {
                 statusHtml = `<div class="d-flex justify-content-between mb-2"><span class="text-danger fw-bold" data-testid="budget-remaining">Over budget:</span> <span class="text-danger fw-bold">${sym}${Math.round(remainingConverted).toLocaleString('en-US')}</span></div>`;
             }
             
@@ -2010,7 +2064,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const options = Array.isArray(transitData.options) ? transitData.options : [];
+        const options = Array.isArray(transitData.options) ? transitData.options
+            : (Array.isArray(transitData.intercity_transport) ? transitData.intercity_transport : []);
         const recommendedMode = String(transitData.recommended_mode || '').toLowerCase();
 
         if (options.length === 0) {

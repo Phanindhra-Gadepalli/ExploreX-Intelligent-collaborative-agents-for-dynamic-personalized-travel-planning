@@ -75,9 +75,23 @@ class ChatAgent:
             return ''.join(parts)
         return str(content) if content else ''
 
+    def is_valid_field(self, field: str, value) -> bool:
+        """
+        Semantic validation for required fields.
+        Zero is valid for kids, but invalid for days/people.
+        Empty strings or None are invalid.
+        """
+        if value is None:
+            return False
+        if isinstance(value, str) and value.strip() == "":
+            return False
+        if field in ["days", "people"] and value == 0:
+            return False
+        return True
+
     def _has_budget(self, state: dict) -> bool:
         """Return True if the user has provided either a budget category or a numerical budget amount."""
-        return bool(state.get("budget") or state.get("budget_amount"))
+        return self.is_valid_field("budget", state.get("budget")) or self.is_valid_field("budget_amount", state.get("budget_amount"))
 
     def _init_system_message(self):
         """Initialize system message for the conversation."""
@@ -134,7 +148,7 @@ class ChatAgent:
             # being frozen forever. The extractor is instructed to return a value
             # ONLY when the user explicitly states/changes it, so unchanged fields
             # come back as None and are left untouched.
-            missing_current = [f for f in self.required_fields if state.get(f) in (None, "")]
+            missing_current = [f for f in self.required_fields if not self.is_valid_field(f, state.get(f))]
             fields_to_extract = list(dict.fromkeys(
                 self.required_fields + ["budget_amount", "budget_strictness"]
             ))
@@ -224,7 +238,7 @@ class ChatAgent:
 
         # Get AI response based on current state and conversation history
         messages = self.conversation_history.copy()
-        missing = [f for f in self.required_fields if state.get(f) in (None, "")]
+        missing = [f for f in self.required_fields if not self.is_valid_field(f, state.get(f))]
         # Budget is satisfied if either category OR numeric amount is provided
         if self._has_budget(state) and "budget" in missing:
             missing = [f for f in missing if f != "budget"]

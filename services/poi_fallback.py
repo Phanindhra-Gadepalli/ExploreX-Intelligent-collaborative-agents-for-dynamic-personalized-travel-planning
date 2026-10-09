@@ -53,24 +53,25 @@ class POIManager:
         
         candidates = []
         
-        # 1. Try Overpass
-        try:
-            osm_results = self._fetch_osm_attractions(lat, lng, radius, hobbies)
-            if osm_results:
-                print(f"[POI_MANAGER] OSM returned {len(osm_results)} POIs.")
-                candidates.extend(osm_results)
-        except Exception as e:
-            print(f"[POI_MANAGER][OSM] Failed: {e}")
-            
-        # 2. Try Geoapify as fallback
-        if not candidates and self.geoapify_key:
+        # 1. Try Geoapify first as it is often more stable
+        if self.geoapify_key:
             try:
                 geo_results = self._fetch_geoapify_attractions(lat, lng, radius, hobbies)
                 if geo_results:
-                    print(f"[POI_MANAGER] Geoapify returned {len(geo_results)} POIs.")
+                    print(f"[PROVIDER][GEOAPIFY][FALLBACK] Geoapify returned {len(geo_results)} POIs.")
                     candidates.extend(geo_results)
             except Exception as e:
-                print(f"[POI_MANAGER][Geoapify] Failed: {e}")
+                print(f"[PROVIDER][GEOAPIFY][WARN] Failed: {e}")
+
+        # 2. Try Overpass if Geoapify didn't return enough (e.g. less than 10)
+        if len(candidates) < 10:
+            try:
+                osm_results = self._fetch_osm_attractions(lat, lng, radius, hobbies)
+                if osm_results:
+                    print(f"[PROVIDER][OVERPASS][WARN] OSM returned {len(osm_results)} POIs.")
+                    candidates.extend(osm_results)
+            except Exception as e:
+                print(f"[PROVIDER][OVERPASS][WARN] Failed: {e}")
 
         # 3. Fallback to RAG POIs if provided
         if not candidates and retrieved_rag_pois:
@@ -187,49 +188,90 @@ class POIManager:
 
     def get_accommodations(self, lat: float, lng: float, budget: str, number: int = 4, radius: int = 15000):
         print(f"[POI_MANAGER] Fetching accommodations for lat={lat}, lng={lng}, budget={budget}")
+        cache_key = self._generate_cache_key(lat, lng, radius, f"accom_{budget}")
+        
+        if cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
+            if time.time() - cache_entry['timestamp'] < 3600 * 24:
+                print(f"[POI_MANAGER] Cache hit for {cache_key}.")
+                return cache_entry['data'][:number]
+
+        results = []
         try:
             results = self._fetch_osm_accommodations(lat, lng, radius, budget, number)
-            if results:
-                return results
         except Exception as e:
-            print(f"[POI_MANAGER][OSM] Accommodations failed: {e}")
+            print(f"[PROVIDER][OVERPASS][WARN] Accommodations failed: {e}")
 
-        if self.geoapify_key:
+        if not results and self.geoapify_key:
             try:
                 results = self._fetch_geoapify_accommodations(lat, lng, radius, budget, number)
-                if results:
-                    return results
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[PROVIDER][GEOAPIFY][WARN] Accommodations failed: {e}")
+                
+        if results:
+            self._cache[cache_key] = {
+                'timestamp': time.time(),
+                'data': results
+            }
+            return results[:number]
+
+        if cache_key in self._cache:
+            print(f"[PROVIDER][ACCOMMODATION][DEGRADED] Using expired cache data.")
+            return self._cache[cache_key]['data'][:number]
+
+        print(f"[PROVIDER][ACCOMMODATION][DEGRADED] All accommodation providers failed. Returning safe empty list.")
         return []
 
     def get_restaurants(self, lat: float, lng: float, radius: int = 5000, number: int = 20):
         print(f"[POI_MANAGER] Fetching restaurants for lat={lat}, lng={lng}")
+        cache_key = self._generate_cache_key(lat, lng, radius, "restaurants")
+        
+        if cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
+            if time.time() - cache_entry['timestamp'] < 3600 * 24:
+                print(f"[POI_MANAGER] Cache hit for {cache_key}.")
+                return cache_entry['data'][:number]
+                
         all_results = []
         try:
             osm_results = self._fetch_osm_restaurants(lat, lng, radius, number)
-            all_results.extend(osm_results)
+            if osm_results:
+                all_results.extend(osm_results)
         except Exception as e:
-            print(f"[POI_MANAGER][OSM] Restaurants failed: {e}")
+            print(f"[PROVIDER][OVERPASS][WARN] Restaurants failed: {e}")
 
-        if self.geoapify_key:
+        if len(all_results) < number and self.geoapify_key:
             try:
                 geo_results = self._fetch_geoapify_restaurants(lat, lng, radius, number)
-                all_results.extend(geo_results)
+                if geo_results:
+                    all_results.extend(geo_results)
             except Exception as e:
-                print(f"[POI_MANAGER][Geoapify] Restaurants failed: {e}")
+                print(f"[PROVIDER][GEOAPIFY][WARN] Restaurants failed: {e}")
         
         # Deduplicate
         seen = set()
         deduped = []
         for r in all_results:
-            name_key = r.get('name', '').lower().strip()
+            name_val = r.get('name', '')
+            name_key = str(name_val).lower().strip() if name_val is not None else ""
             if name_key and name_key not in seen:
                 seen.add(name_key)
                 deduped.append(r)
                 if len(deduped) >= number: break
                 
-        return deduped
+        if deduped:
+            self._cache[cache_key] = {
+                'timestamp': time.time(),
+                'data': deduped
+            }
+            return deduped
+
+        if cache_key in self._cache:
+            print(f"[PROVIDER][RESTAURANT][DEGRADED] Using expired cache data.")
+            return self._cache[cache_key]['data'][:number]
+            
+        print("[PROVIDER][RESTAURANT][DEGRADED] All providers failed. Returning safe empty list.")
+        return []
 
     # -------------------------------------------------------------------------
     # OVERPASS API
@@ -244,32 +286,46 @@ class POIManager:
         last_exception = None
         max_retries = 3
         
+        if not hasattr(self, 'overpass_cooldowns'):
+            self.overpass_cooldowns = {}
+            
+        now = time.time()
+        available_endpoints = [e for e in self.overpass_endpoints if now > self.overpass_cooldowns.get(e, 0)]
+        
+        if not available_endpoints:
+            print("[PROVIDER][OVERPASS][WARN] All endpoints in cooldown. Failing fast.")
+            return []
+            
         for attempt in range(max_retries):
-            endpoint = self.overpass_endpoints[attempt % len(self.overpass_endpoints)]
+            endpoint = available_endpoints[attempt % len(available_endpoints)]
             try:
                 resp = requests.post(
                     endpoint, 
                     data={"data": query}, 
                     headers=headers, 
-                    timeout=15
+                    timeout=10
                 )
                 if resp.status_code in (429, 500, 502, 503, 504):
-                    print(f"[POI_MANAGER][OSM] Recoverable error {resp.status_code} on {endpoint}. Backing off.")
-                    time.sleep(2 * (attempt + 1))
+                    print(f"[PROVIDER][OVERPASS][WARN] Recoverable error {resp.status_code} on {endpoint}. Backing off.")
+                    self.overpass_cooldowns[endpoint] = time.time() + 30
+                    time.sleep(2 ** attempt)
                     continue
                     
                 resp.raise_for_status()
                 return resp.json().get('elements', [])
             except requests.exceptions.Timeout as e:
-                print(f"[POI_MANAGER][OSM] Timeout on {endpoint}: {e}")
+                print(f"[PROVIDER][OVERPASS][WARN] Timeout on {endpoint}: {e}")
+                self.overpass_cooldowns[endpoint] = time.time() + 60
                 last_exception = e
-                time.sleep(2 * (attempt + 1))
+                time.sleep(2 ** attempt)
             except Exception as e:
                 last_exception = e
-                print(f"[POI_MANAGER][OSM] Attempt {attempt+1} failed on {endpoint}: {e}")
-                time.sleep(2 * (attempt + 1)) # Exponential backoff
+                print(f"[PROVIDER][OVERPASS][WARN] Attempt {attempt+1} failed on {endpoint}: {e}")
+                self.overpass_cooldowns[endpoint] = time.time() + 15
+                time.sleep(2 ** attempt)
         
-        raise Exception(f"All Overpass endpoints exhausted. Last error: {last_exception}")
+        print(f"[PROVIDER][OVERPASS][WARN] All Overpass attempts exhausted. Returning safe empty list.")
+        return []
 
     def _get_category_filters(self, hobbies, radius, lat, lng):
         import math

@@ -238,7 +238,7 @@ class BudgetAgent:
                 (
                     total_acc, total_food, total_trans,
                     acc_ppd, food_ppd, trans_ppd,
-                    subtotal, budget_warning
+                    subtotal, budget_warning, budget_infeasible
                 ) = self._optimize_for_budget(
                     acc_ppd, food_ppd, trans_ppd,
                     total_acc, total_food, total_trans,
@@ -246,7 +246,7 @@ class BudgetAgent:
                     num_people, num_days, rooms,
                     actual_rent_car,
                     attraction_cost, car_rental_cost, fuel_cost, intercity_transport_cost,
-                    budget_amount, budget_strictness,
+                    budget_amount, budget_strictness, spots
                 )
 
         # ── 6. Miscellaneous buffer (10 % of subtotal) ────────────────────────
@@ -271,23 +271,24 @@ class BudgetAgent:
         within_budget = total <= budget_amount if budget_amount else True
         
         return {
-            "total":               round(total, 2),
+            "budget_type":         budget_strictness or "flexible",
+            "budget_limit":        budget_amount,
+            "estimated_total":     round(total, 2),
+            "remaining_budget":    remaining,
+            "within_budget":       within_budget,
+            "transport":           round(intercity_transport_cost, 2),
             "accommodation":       round(total_acc, 2),
             "food":                round(total_food, 2),
-            "local_transport":     round(total_trans, 2),
-            "intercity_transport": round(intercity_transport_cost, 2),
+            "activities":          round(attraction_cost, 2),
+            "local_transport":     round(total_trans + car_rental_cost + fuel_cost, 2),
+            
+            # Additional fields needed by system
             "miscellaneous":       round(miscellaneous_cost, 2),
-            "attractions":         round(attraction_cost, 2),
             "car_rental":          round(car_rental_cost, 2),
             "fuel":                round(fuel_cost, 2),
             "budget_category":     budget_level,
-            "budget_amount":       budget_amount,
-            "budget_limit":        budget_amount,
-            "budget_strictness":   budget_strictness,
             "budget_warning":      budget_warning,
             "budget_infeasible":   budget_infeasible,
-            "remaining":           remaining,
-            "within_budget":       within_budget,
             "utilization_percentage": utilization_percentage,
             "rooms":               rooms,
             "days":                num_days,
@@ -426,8 +427,15 @@ class BudgetAgent:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
             from langchain_core.messages import HumanMessage
+            from pydantic import BaseModel, Field
+
+            class CityCosts(BaseModel):
+                accommodation: float = Field(description="Cost per room per night")
+                food: float = Field(description="Total food cost per person per day")
+                transport: float = Field(description="Local city transport per person per day")
 
             llm = ChatGoogleGenerativeAI(model="gemini-flash-lite-latest", temperature=0.1)
+            structured_llm = llm.with_structured_output(CityCosts)
 
             luxury_note = "" if budget_level == "high" else (
                 " Do NOT use luxury hotel or fine-dining prices. "
@@ -439,36 +447,28 @@ class BudgetAgent:
                 f"Estimate realistic AVERAGE daily costs in INR for a '{budget_level}' budget traveller "
                 f"visiting {city}.\n"
                 f"{luxury_note}\n"
-                f"Return ONLY a JSON object with these three fields:\n"
-                f"  accommodation: cost per ROOM per NIGHT for a typical "
+                f"accommodation: cost per ROOM per NIGHT for a typical "
                 f"{'budget guesthouse/hostel' if budget_level=='low' else '3-star hotel' if budget_level=='medium' else '4-star hotel'} "
                 f"in {city}. Realistic range: INR {int(acc_min)}–{int(acc_max)}.\n"
-                f"  food: total food cost per PERSON per DAY (breakfast + lunch + dinner) at "
+                f"food: total food cost per PERSON per DAY (breakfast + lunch + dinner) at "
                 f"{'dhabas/local eateries' if budget_level=='low' else 'mid-range restaurants' if budget_level=='medium' else 'good restaurants'} "
                 f"in {city}. Realistic range: INR {int(food_min)}–{int(food_max)}.\n"
-                f"  transport: local city transport per PERSON per DAY "
+                f"transport: local city transport per PERSON per DAY "
                 f"(autos/metro/cabs within {city} only, NOT intercity). "
                 f"Realistic range: INR {int(trans_min)}–{int(trans_max)}.\n"
-                'Return ONLY valid JSON (no markdown, no explanation): '
-                '{"accommodation": N, "food": N, "transport": N}'
             )
 
-            resp = llm.invoke([HumanMessage(content=prompt)])
-            content = resp.content
-            if isinstance(content, list):
-                content = "".join(
-                    p.get("text", "") if isinstance(p, dict) else str(p) for p in content
-                )
-            content = content.strip()
-
-            # Strip optional markdown fences
-            m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL | re.IGNORECASE)
-            content = m.group(1) if m else content[content.find("{") : content.rfind("}") + 1]
-
-            d = json.loads(content)
-            raw_acc   = float(d.get("accommodation", default_acc))
-            raw_food  = float(d.get("food",          default_food))
-            raw_trans = float(d.get("transport",     default_trans))
+            try:
+                resp = structured_llm.invoke([HumanMessage(content=prompt)])
+                raw_acc = float(resp.accommodation)
+                raw_food = float(resp.food)
+                raw_trans = float(resp.transport)
+            except Exception as e:
+                print(f"[BudgetAgent WARN] Structured LLM cost failed: {e}. Retrying...")
+                resp = structured_llm.invoke([HumanMessage(content=prompt)])
+                raw_acc = float(resp.accommodation)
+                raw_food = float(resp.food)
+                raw_trans = float(resp.transport)
 
             print(f"[BudgetAgent] LLM costs for {city} ({budget_level}): "
                   f"acc=₹{raw_acc:.0f}, food=₹{raw_food:.0f}, trans=₹{raw_trans:.0f}")
@@ -524,11 +524,34 @@ class BudgetAgent:
 
     # ─────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _resolve_entry_tier(spot: dict) -> int | None:
+        """
+        Resolve a spot's entry-fee tier.
+
+        Raw POIs carry ``price_level``, but the POI enrichment layer
+        (``information_agent._enrich_single``) re-emits it as ``price``.
+        Check both before giving up, so a known tier is never silently
+        replaced by the ₹150 fallback.
+        """
+        for key in ("price_level", "price"):
+            val = spot.get(key)
+            if val is None:
+                continue
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return None
+        return None
+
     def _calculate_attraction_cost(self, spots: list, num_people: int) -> float:
         """
         Total attraction entry-fee cost.
 
-        Formula: Σ entry_fee(spot.price_level) × num_people
+        Formula: Σ entry_fee(tier) × num_people
+
+        The tier is read from ``price_level`` or the legacy ``price`` field
+        (see ``_resolve_entry_tier``); unknown tiers use the default fee.
 
         Entry fee map (INR per person, realistic Indian tourist prices):
             0 = free       (parks, beaches, public squares)
@@ -539,8 +562,8 @@ class BudgetAgent:
         """
         total = 0.0
         for spot in spots:
-            price_level = spot.get("price_level")
-            per_person  = self._ENTRY_FEE_MAP.get(price_level, self._ENTRY_FEE_DEFAULT)
+            tier        = self._resolve_entry_tier(spot)
+            per_person  = self._ENTRY_FEE_MAP.get(tier, self._ENTRY_FEE_DEFAULT)
             total      += per_person * num_people
         return total
 
@@ -861,6 +884,7 @@ class BudgetAgent:
         intercity_transport_cost: float,
         budget_amount: int,
         budget_strictness: str | None,
+        spots: list = None
     ) -> tuple:
         """
         Iteratively reduce variable costs until the total fits the budget.
@@ -903,12 +927,33 @@ class BudgetAgent:
             if (new_total * 1.1) <= budget_amount:
                 break
 
+        budget_infeasible = False
+        
         if (new_total * 1.1) > budget_amount:
+            excess = (new_total * 1.1) - budget_amount
             if budget_strictness == "strict":
+                budget_infeasible = True
+                
+                expensive_attractions = []
+                if spots and attraction_cost > 0:
+                    expensive_attractions = [
+                        s.get('name') for s in spots
+                        if (self._resolve_entry_tier(s) or 0) >= 2
+                    ]
+                
+                if expensive_attractions:
+                    conflict_reason = f"User-selected paid attractions ({', '.join(expensive_attractions)})"
+                elif should_rent_car and (car_rental_cost + fuel_cost > new_trans):
+                    conflict_reason = "Opting for a rental car instead of local transport"
+                else:
+                    conflict_reason = f"Minimum cost of transport, accommodation, and food for {num_people} people over {num_days} days"
+
                 budget_warning = (
-                    f"Your requested trip cannot currently fit within ₹{budget_amount:,}. "
+                    f"Your requested trip cannot currently fit within the strict budget of ₹{budget_amount:,}. "
+                    f"The exact excess is ₹{int(excess):,}. "
                     f"The closest feasible configuration is ₹{int(new_total * 1.1):,}. "
-                    "Consider reducing travel days, choosing fewer paid attractions, or selecting cheaper intercity transport to fit within your strict budget."
+                    f"Conflict caused by: {conflict_reason}. "
+                    "Please reduce travel days, choose fewer paid attractions, or select cheaper transport to fit within your strict budget."
                 )
             else:
                 budget_warning = (
@@ -924,7 +969,7 @@ class BudgetAgent:
         return (
             round(final_acc,   2), round(final_food, 2), round(final_trans, 2),
             sa, sf, st,
-            round(new_total,   2), budget_warning
+            round(new_total,   2), budget_warning, budget_infeasible
         )
 
     # ─────────────────────────────────────────────────────────────────────────

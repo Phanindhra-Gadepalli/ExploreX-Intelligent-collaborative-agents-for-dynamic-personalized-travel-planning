@@ -1038,7 +1038,7 @@ Weather data:
             return cars[:top_n] if cars else []
             
         except Exception as e:
-            print(f"Error in search_car_rentals: {str(e)}")
+            print(f"[PROVIDER][CAR_RENTAL][UNAVAILABLE] Error in search_car_rentals: {str(e)}")
             # Mark car rental unavailable on API error (e.g., 403)
             return []
             

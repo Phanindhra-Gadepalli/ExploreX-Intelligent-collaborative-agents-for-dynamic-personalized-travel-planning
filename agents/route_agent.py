@@ -46,6 +46,86 @@ class RouteAgent:
             print(f"Error initialising InformationAgent in RouteAgent: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Location resolution
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _resolve_location(self, spot_obj):
+        """
+        Attempt to find valid lat/lng coordinates for an attraction.
+        Returns (lat, lng) or (None, None).
+        Mutates spot_obj to ensure 'location' is a clean dict if found.
+        """
+        if not spot_obj:
+            return None, None
+            
+        if spot_obj.get("_location_resolved"):
+            loc = spot_obj.get("location")
+            if loc: return loc.get("lat"), loc.get("lng")
+            return None, None
+            
+        loc = spot_obj.get("location")
+        lat, lng = None, None
+        
+        if isinstance(loc, dict):
+            lat = loc.get("lat") or loc.get("latitude")
+            lng = loc.get("lng") or loc.get("longitude")
+        elif isinstance(loc, (list, tuple)) and len(loc) >= 2:
+            try:
+                lat = float(loc[0])
+                lng = float(loc[1])
+            except (ValueError, TypeError):
+                pass
+                
+        # Fallback to flat keys
+        if lat is None or lng is None:
+            lat = spot_obj.get("lat") or spot_obj.get("latitude")
+            lng = spot_obj.get("lng") or spot_obj.get("longitude")
+            
+        try:
+            lat = float(lat) if lat is not None else None
+            lng = float(lng) if lng is not None else None
+        except (ValueError, TypeError):
+            lat, lng = None, None
+            
+        if lat is not None and lng is not None:
+            spot_obj["location"] = {"lat": lat, "lng": lng}
+            spot_obj["_location_resolved"] = True
+            return lat, lng
+            
+        # Geocoding fallback
+        name = spot_obj.get("name")
+        if not name:
+            spot_obj["location"] = None
+            spot_obj["_location_resolved"] = True
+            return None, None
+            
+        if self.info_agent and hasattr(self.info_agent, "geocoder"):
+            city = ""
+            if hasattr(self.info_agent, "state") and isinstance(self.info_agent.state, dict):
+                city = self.info_agent.state.get("city", "")
+            
+            # Never geocode a bare name without destination context: "Relaxation"
+            # on its own once resolved to Paris, polluting the itinerary with
+            # foreign coordinates. Only geocode "<name>, <city>".
+            if city:
+                query = f"{name}, {city}".strip(", ")
+                print(f"[ROUTE_AGENT][WARN] Missing coordinates for '{name}'. Attempting geocode: '{query}'")
+                try:
+                    res = self.info_agent.geocoder.geocode(query)
+                    if res and res.lat and res.lng:
+                        print(f"[ROUTE_AGENT][INFO] Geocoded fallback for '{name}': {res.lat}, {res.lng}")
+                        spot_obj["location"] = {"lat": float(res.lat), "lng": float(res.lng)}
+                        spot_obj["_location_resolved"] = True
+                        return float(res.lat), float(res.lng)
+                except Exception as e:
+                    print(f"[ROUTE_AGENT][ERROR] Geocode failed for '{name}': {e}")
+                
+        print(f"[ROUTE_AGENT][WARN] Unable to resolve coordinates for: {name}")
+        spot_obj["location"] = None
+        spot_obj["_location_resolved"] = True
+        return None, None
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Route optimisation
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -63,46 +143,58 @@ class RouteAgent:
         if not attractions_for_day or len(attractions_for_day) <= 1:
             return attractions_for_day  # No optimisation needed for 0 or 1 attraction
 
+        # Resolve all locations and separate them
+        valid_spots = []
+        unresolved_spots = []
+        for attr in attractions_for_day:
+            lat, lng = self._resolve_location(attr)
+            if lat is not None and lng is not None:
+                valid_spots.append(attr)
+            else:
+                unresolved_spots.append(attr)
+
+        if len(valid_spots) <= 1:
+            # Not enough valid spots for routing
+            return valid_spots + unresolved_spots
+
         # Check if we can use the InformationAgent
         if not self.info_agent:
             print("InformationAgent not available. Using fallback TSP solution.")
-            return self.get_optimal_route(attractions_for_day)
+            return self.get_optimal_route(valid_spots) + unresolved_spots
 
         try:
             # Extract first attraction as starting point
-            origin = attractions_for_day[0]
+            origin = valid_spots[0]
 
             # Extract last attraction as destination (complete the loop back to start)
-            destination = attractions_for_day[0]
+            destination = valid_spots[0]
 
             # The rest are waypoints
             waypoints = []
-            for attraction in attractions_for_day[1:]:
-                if "location" in attraction and "lat" in attraction["location"] and "lng" in attraction["location"]:
-                    waypoint_location = f"{attraction['location']['lat']},{attraction['location']['lng']}"
-                    waypoints.append(waypoint_location)
-                else:
-                    print(f"Warning: Attraction {attraction.get('name', 'unknown')} missing location data")
+            for attraction in valid_spots[1:]:
+                lat, lng = attraction["location"]["lat"], attraction["location"]["lng"]
+                waypoints.append(f"{lat},{lng}")
 
             # Prepare origin and destination strings
-            if "location" in origin and "lat" in origin["location"] and "lng" in origin["location"]:
-                origin_location = f"{origin['location']['lat']},{origin['location']['lng']}"
-                destination_location = origin_location  # Loop back to start
-            else:
-                print(f"Warning: Origin attraction {origin.get('name', 'unknown')} missing location data")
-                return attractions_for_day  # Can't optimise without location data
+            lat, lng = origin["location"]["lat"], origin["location"]["lng"]
+            origin_location = f"{lat},{lng}"
+            destination_location = origin_location  # Loop back to start
 
             # Call plan_with_waypoints
-            optimized_route_data = self.info_agent.plan_with_waypoints(
-                origin=origin_location,
-                destination=destination_location,
-                waypoints=waypoints,
-                mode="driving",
-            )
+            optimized_route_data = None
+            try:
+                optimized_route_data = self.info_agent.plan_with_waypoints(
+                    origin=origin_location,
+                    destination=destination_location,
+                    waypoints=waypoints,
+                    mode="driving",
+                )
+            except Exception as e:
+                print(f"[ROUTE_AGENT][ERROR] OSRM routing failed: {e}")
 
             if not optimized_route_data:
                 print("Failed to get optimised route. Using fallback TSP solution.")
-                return self.get_optimal_route(attractions_for_day)
+                return self.get_optimal_route(valid_spots) + unresolved_spots
 
             # Extract the optimised waypoint order
             waypoint_indices = optimized_route_data.get("waypoint_original_indices", [])
@@ -115,14 +207,15 @@ class RouteAgent:
 
             # Add waypoints in optimised order
             for idx in waypoint_indices:
-                optimized_attractions.append(attractions_for_day[idx + 1])  # +1 because origin excluded
+                if idx + 1 < len(valid_spots):
+                    optimized_attractions.append(valid_spots[idx + 1])
 
-            return optimized_attractions
+            return optimized_attractions + unresolved_spots
 
         except Exception as e:
             print(f"Error optimising daily route: {e}")
             # Fallback to internal TSP solver
-            return self.get_optimal_route(attractions_for_day)
+            return self.get_optimal_route(valid_spots) + unresolved_spots
 
     def get_optimal_route(self, spots, start_point=None):
         """Calculate optimal route between selected attractions."""
@@ -169,27 +262,27 @@ class RouteAgent:
 
     def _calculate_distance(self, spot1, spot2):
         """Calculate distance between two spots using coordinates (Haversine formula)."""
+        lat1, lon1 = self._resolve_location(spot1)
+        lat2, lon2 = self._resolve_location(spot2)
+
         # Check if we have location data
-        if not spot1.get("location") or not spot2.get("location"):
+        if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
             return 1  # Default distance if no location data
 
         # Check cache first
-        cache_key = f"{spot1['id']}_{spot2['id']}"
+        cache_key = f"{spot1.get('id', 'u1')}_{spot2.get('id', 'u2')}"
         if cache_key in self.distances_cache:
             return self.distances_cache[cache_key]
-
-        lat1, lon1 = spot1["location"].get("lat", 0), spot1["location"].get("lng", 0)
-        lat2, lon2 = spot2["location"].get("lat", 0), spot2["location"].get("lng", 0)
 
         R = 6371  # Earth radius in km
 
         # Convert coordinates to radians
-        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+        lat1_rad, lon1_rad, lat2_rad, lon2_rad = map(math.radians, [lat1, lon1, lat2, lon2])
 
         # Haversine formula
-        dlon = lon2 - lon1
-        dlat = lat2 - lat1
-        a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+        dlon = lon2_rad - lon1_rad
+        dlat = lat2_rad - lat1_rad
+        a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
         c = 2 * math.asin(math.sqrt(a))
         distance = R * c
 
@@ -332,10 +425,16 @@ class RouteAgent:
                         "name": name,
                         "description": "Leisure or semantic activity suggested by AI.",
                         "estimated_duration": 2,
-                        "location": None
+                        "location": None,
+                        # Leisure labels ("Relaxation") are not real POIs — never geocode them.
+                        "_location_resolved": True
                     })
 
             # TSP Optimization
+            # Ensure all locations are resolved early to prevent NoneType exceptions later
+            for spot_obj in current_day_spot_objects_raw:
+                self._resolve_location(spot_obj)
+
             if current_day_spot_objects_raw and len(current_day_spot_objects_raw) > 1:
                 optimized_day_attractions = self.optimize_daily_route(current_day_spot_objects_raw)
                 current_day_spot_objects_raw = optimized_day_attractions
@@ -354,12 +453,14 @@ class RouteAgent:
                     rest_name, rest_desc = "Lunch Break", "Time for lunch at a local restaurant or cafe."
                     if hasattr(self.info_agent, 'poi_manager') and spot_obj.get("location"):
                         try:
-                            rests = self.info_agent.poi_manager.get_restaurants(spot_obj["location"].get("lat", 0), spot_obj["location"].get("lng", 0), radius=2000, number=1)
+                            lat = spot_obj["location"].get("lat", 0)
+                            lng = spot_obj["location"].get("lng", 0)
+                            rests = self.info_agent.poi_manager.get_restaurants(lat, lng, radius=2000, number=1)
                             if rests:
                                 rest_name = rests[0].get("name", "Lunch Break")
                                 rest_desc = rests[0].get("description", "Time for lunch at a local restaurant or cafe.")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"[ROUTE_AGENT][ERROR] Restaurant lookup failed: {e}")
                     current_day_spots_timed.append({
                         "id": f"lunch_day_{day_number}",
                         "name": rest_name,
@@ -379,12 +480,14 @@ class RouteAgent:
                     rest_name, rest_desc = "Dinner", "Evening dinner to wrap up the day."
                     if hasattr(self.info_agent, 'poi_manager') and spot_obj.get("location"):
                         try:
-                            rests = self.info_agent.poi_manager.get_restaurants(spot_obj["location"].get("lat", 0), spot_obj["location"].get("lng", 0), radius=2000, number=1)
+                            lat = spot_obj["location"].get("lat", 0)
+                            lng = spot_obj["location"].get("lng", 0)
+                            rests = self.info_agent.poi_manager.get_restaurants(lat, lng, radius=2000, number=1)
                             if rests:
                                 rest_name = rests[0].get("name", "Dinner")
                                 rest_desc = rests[0].get("description", "Evening dinner to wrap up the day.")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"[ROUTE_AGENT][ERROR] Restaurant lookup failed: {e}")
                     current_day_spots_timed.append({
                         "id": f"dinner_day_{day_number}",
                         "name": rest_name,
@@ -426,10 +529,15 @@ class RouteAgent:
                 spot_with_time["end_time"] = activity_end.strftime("%H:%M")
                 
                 spot_with_time["time"] = f"{spot_with_time['start_time']} - {spot_with_time['end_time']}"
-                if "location" in spot_with_time:
-                    loc = spot_with_time["location"]
-                    spot_with_time["latitude"] = loc.get("lat") or loc.get("latitude")
-                    spot_with_time["longitude"] = loc.get("lng") or loc.get("longitude")
+                
+                # Retrieve the resolved location safely
+                loc = spot_with_time.get("location")
+                if loc and isinstance(loc, dict):
+                    spot_with_time["latitude"] = loc.get("lat")
+                    spot_with_time["longitude"] = loc.get("lng")
+                else:
+                    spot_with_time["latitude"] = None
+                    spot_with_time["longitude"] = None
 
                 # Validation: Ensure start_time < end_time
                 if current_time < activity_end:
@@ -443,7 +551,7 @@ class RouteAgent:
 
             itinerary.append({
                 "day": day_number,
-                "date": current_date.strftime("%Y-%m-%d"),
+                "date": (current_date + timedelta(days=day_number - 1)).strftime("%d %b %Y"),
                 "is_suggested_date": is_suggested,
                 "activities": current_day_spots_timed,
                 "transport": None,
@@ -451,6 +559,5 @@ class RouteAgent:
                 "accommodation": None,
                 "cost": None
             })
-            current_date += timedelta(days=1)
 
         return itinerary

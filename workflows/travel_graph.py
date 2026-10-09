@@ -1,4 +1,6 @@
 import sys, io
+import logging
+logging.basicConfig(level=logging.DEBUG)
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
@@ -226,7 +228,7 @@ class TravelGraph:
             traceback.print_exc()
             raise
         
-        missing_before = [f for f in self.chat_agent.required_fields if not current_user_info.get(f)]
+        missing_before = [f for f in self.chat_agent.required_fields if not self.chat_agent.is_valid_field(f, current_user_info.get(f))]
         print(f"Missing Fields Before: {missing_before}")
         
         print(f"[DEBUG] Calling entity extraction (chat_agent.collect_info)")
@@ -256,6 +258,7 @@ class TravelGraph:
                     self.state["weather_summary"] = None
                     self.state["transit_options"] = None
                     self.state["ai_recommendation_generated"] = False
+                    self.state["information_processed"] = False
                     new_state["city_validated"] = False
                     
                 self.state["user_info"].update(new_state)
@@ -339,11 +342,27 @@ class TravelGraph:
             print(f"[DEBUG] Returning response from _process_chat (chat not complete)")
             return response_data
             
-        print(f"Next State: information")
         print(f"Reason for Transition: All required information collected successfully.")
+        
+        # Check if we are already past the chat stage
+        if self.state.get("information_processed") and self.state.get("attractions"):
+            if self.state.get("ai_recommendation_generated") and self.state.get("selected_attractions"):
+                response_data["next_step"] = "strategy"
+                print(f"Next State: strategy (shortcut)")
+                return response_data
+            
+            response_data["next_step"] = "recommend"
+            response_data["ui_action"] = "OPEN_EXPLORE"
+            print(f"Next State: recommend (shortcut)")
+            
+            def shortcut_message():
+                yield AIMessage(content="Taking you back to your recommendations!")
+            response_data["stream"] = shortcut_message()
+            return response_data
         
         # Mark chat as complete and transition to information step
         response_data["next_step"] = "information"
+        print(f"Next State: information")
         
         def transition_message():
             yield AIMessage(content="I have all the information I need! Let me search for the best attractions for your trip...")
@@ -358,6 +377,21 @@ class TravelGraph:
         if not city:
             def error_gen(): yield AIMessage(content="Please tell me which city or destination you'd like to visit.")
             return {"next_step": "chat", "stream": error_gen(), "missing_fields": ["city"], "state": self.state.copy()}
+
+        if self.state.get("information_processed") and self.state.get("attractions"):
+            print("[STATE_MACHINE][WARNING] Duplicate stage execution detected: _process_information. Reusing cached data.")
+            def info_gen_message_cached():
+                yield AIMessage(content="I have your personalized list ready. Let's proceed!")
+            return {
+                "next_step": "recommend",
+                "ui_action": "OPEN_EXPLORE",
+                "stream": info_gen_message_cached(),
+                "recommended_attractions": self.state["attractions"],
+                "accommodations": self.state.get("accommodations", []),
+                "restaurants": self.state.get("restaurants", []),
+                "map_data": self.recommend_agent.generate_map_data(self.state["attractions"]),
+                "state": self.state.copy()
+            }
 
         city_lower = city.lower().strip()
 
@@ -481,34 +515,29 @@ class TravelGraph:
         # ================================================================
         # Fetch attractions — STATE path vs CITY path
         # ================================================================
-        if self.state.get("information_processed") and self.state.get("attractions"):
-            print("[STATE_MACHINE][WARNING] Duplicate stage execution detected: _process_information. Reusing cached attractions.")
-            attractions_from_info_agent = self.state["attractions"]
+        if is_state_search:
+            print(f"[STATE_SEARCH] Running state-wide search for {display_name}.")
+            attractions_from_info_agent = self.info_agent.get_attractions_for_state(
+                state_name=display_name,
+                state_cities=state_cities,
+                user_prefs=user_prefs,
+                weather_summary=self.state.get("weather_summary"),
+                total_number=20
+            )
         else:
-            if is_state_search:
-                print(f"[STATE_SEARCH] Running state-wide search for {display_name}.")
-                attractions_from_info_agent = self.info_agent.get_attractions_for_state(
-                    state_name=display_name,
-                    state_cities=state_cities,
-                    user_prefs=user_prefs,
-                    weather_summary=self.state.get("weather_summary"),
-                    total_number=20
-                )
-            else:
-                print(f"[DEBUG] Calling info_agent.get_attractions for city '{city}'.")
-                attractions_from_info_agent = self.info_agent.get_attractions(
-                    lat=city_coordinates["lat"],
-                    lng=city_coordinates["lng"],
-                    user_prefs=user_prefs,
-                    weather_summary=self.state.get("weather_summary"),
-                    number=20,
-                    poi_type="tourist_attraction"
-                )
-            
-            self.state["attractions"] = [normalize_poi(p) for p in (attractions_from_info_agent or [])]
-            self.state["information_processed"] = True
-            print(f"[ATTRACTION_PIPELINE] completed total_pois={len(self.state['attractions'])}")
-
+            print(f"[DEBUG] Calling info_agent.get_attractions for city '{city}'.")
+            attractions_from_info_agent = self.info_agent.get_attractions(
+                lat=city_coordinates["lat"],
+                lng=city_coordinates["lng"],
+                user_prefs=user_prefs,
+                weather_summary=self.state.get("weather_summary"),
+                number=20,
+                poi_type="tourist_attraction"
+            )
+        
+        self.state["attractions"] = [normalize_poi(p) for p in (attractions_from_info_agent or [])]
+        self.state["information_processed"] = True
+        print(f"[ATTRACTION_PIPELINE] completed total_pois={len(self.state['attractions'])}")
         print(f"[DEBUG] Attractions updated: {len(self.state['attractions'])} items.")
         # ---- Accommodations ----
         import concurrent.futures
@@ -609,7 +638,11 @@ class TravelGraph:
         if retrieved_knowledge and "No additional background knowledge" not in retrieved_knowledge:
             lat = user_prefs.get("_dest_lat", 0.0)
             lng = user_prefs.get("_dest_lng", 0.0)
-            rag_pois = self.recommend_agent.extract_pois_from_text(retrieved_knowledge, city, lat, lng)
+            try:
+                rag_pois = self.recommend_agent.extract_pois_from_text(retrieved_knowledge, city, lat, lng)
+            except Exception as rag_err:
+                print(f"[RETRIEVAL] POI extraction from RAG text failed (non-fatal): {rag_err}")
+                rag_pois = []
             
         if rag_pois:
             existing_pois = self.state.get("attractions", [])
@@ -784,6 +817,7 @@ class TravelGraph:
                 
                 return {
                     "next_step": "recommend",  # Stay on this step until user selects attractions
+                    "ui_action": "OPEN_EXPLORE",
                     "stream": recommendation_generator(),
                     "recommended_attractions": recommended,
                     "accommodations": self.state.get("accommodations", []),
@@ -992,9 +1026,18 @@ class TravelGraph:
                     end_date,
                     driver_age=self.state["user_info"].get("age", 30)
                 )
+                if not car_info:
+                    print(f"[PROVIDER][CAR_RENTAL][UNAVAILABLE] Car rental API returned empty or failed (403).")
+                    self.state["should_rent_car"] = False
+                    self.state["car_rental_available"] = False
+                else:
+                    self.state["car_rental_available"] = True
+                    
                 fuel_price = self.info_agent.get_fuel_price(self.state["user_info"].get("city", ""))
             except Exception as car_e:
-                print(f"[WARN] Could not fetch car/fuel info: {car_e}")
+                print(f"[PROVIDER][CAR_RENTAL][UNAVAILABLE] Could not fetch car/fuel info: {car_e}")
+                self.state["should_rent_car"] = False
+                self.state["car_rental_available"] = False
 
         budget = self.budget_agent.estimate_budget(
             all_attractions_objects,
@@ -1012,28 +1055,28 @@ class TravelGraph:
             if price_val:
                 nights = max(1, days - 1)
                 budget["accommodation"] = price_val * nights
-                budget["total"] = (
-                    budget.get("attractions", 0) + 
+                budget["estimated_total"] = (
+                    budget.get("activities", 0) + 
                     budget.get("food", 0) + 
                     budget.get("local_transport", 0) + 
                     budget["accommodation"] +
                     budget.get("car_rental", 0) +
                     budget.get("fuel", 0) +
-                    budget.get("intercity_transport", 0)
+                    budget.get("transport", 0)
                 )
-                budget["miscellaneous"] = round(budget["total"] * 0.10, 2)
-                budget["total"] += budget["miscellaneous"]
+                budget["miscellaneous"] = round(budget["estimated_total"] * 0.10, 2)
+                budget["estimated_total"] += budget["miscellaneous"]
                 
                 # Recalculate normalized fields
-                if budget.get("budget_amount"):
-                    budget["remaining"] = round(budget["budget_amount"] - budget["total"], 2)
-                    budget["utilization_percentage"] = round((budget["total"] / budget["budget_amount"] * 100), 1)
-                    budget["within_budget"] = budget["total"] <= budget["budget_amount"]
+                if budget.get("budget_limit"):
+                    budget["remaining_budget"] = round(budget["budget_limit"] - budget["estimated_total"], 2)
+                    budget["utilization_percentage"] = round((budget["estimated_total"] / budget["budget_limit"] * 100), 1)
+                    budget["within_budget"] = budget["estimated_total"] <= budget["budget_limit"]
                     
-                    if not budget["within_budget"] and budget.get("budget_strictness") == "strict":
+                    if not budget["within_budget"] and budget.get("budget_type") == "strict":
                         budget["budget_warning"] = (
-                            f"Your requested trip cannot currently fit within ₹{budget['budget_amount']:,}. "
-                            f"The closest feasible configuration is ₹{int(budget['total']):,}. "
+                            f"Your requested trip cannot currently fit within ₹{budget['budget_limit']:,}. "
+                            f"The closest feasible configuration is ₹{int(budget['estimated_total']):,}. "
                             "Consider reducing travel days, choosing fewer paid attractions, or selecting cheaper intercity transport to fit within your strict budget."
                         )
                         budget["budget_infeasible"] = True
@@ -1041,6 +1084,19 @@ class TravelGraph:
         # Store in state so route doesn't have to re-fetch
         self.state["budget"] = budget
         self.state["transit_options"] = transit_options
+
+        if budget.get("budget_type") == "strict" and budget.get("budget_infeasible", False):
+            def strict_error_generator():
+                yield AIMessage(content=budget.get("budget_warning", "Your requested trip cannot fit within the strict budget."))
+            
+            return {
+                "next_step": "complete",
+                "stream": strict_error_generator(),
+                "state": self.state.copy(),
+                "itinerary": [],
+                "optimal_route": [],
+                "response": budget.get("budget_warning")
+            }
 
         # Generate the communication text stream
         def tips_generator():
@@ -1144,12 +1200,56 @@ class TravelGraph:
                     )
                 # Assign to top-level canonical key
                 itinerary[0]["accommodation"] = selected_acc
+
+            # FINAL ITINERARY VALIDATION
+            # Ensure no dates repeat and no hallucinatory attractions persist.
+            seen_dates = set()
+            valid_attractions = {s["name"] for s in all_attractions_objects if "name" in s}
+            valid_attractions.update(["Lunch Break", "Dinner", "Accommodation", selected_acc.get("name", "Hotel") if selected_acc else ""])
+            allowed_labels = {"Relaxation", "Leisure", "Dinner", "Lunch Break", "Accommodation"}
+            
+            for day_idx, day_plan in enumerate(itinerary):
+                # Date validation
+                day_date = day_plan.get("date")
+                if day_date in seen_dates:
+                    print(f"[WARN] Repeating date {day_date} found. Overriding.")
+                    # Fix the date if it's repeated
+                    fixed_date = (start_date_dt + timedelta(days=day_idx)).strftime("%d %b %Y")
+                    day_plan["date"] = fixed_date
+                    seen_dates.add(fixed_date)
+                else:
+                    seen_dates.add(day_date)
+                    
+                # Attraction validation
+                valid_acts = []
+                for act in day_plan.get("activities", []):
+                    if act.get("name") in valid_attractions or act.get("name") in allowed_labels or act.get("is_meal") or act.get("is_accommodation"):
+                        valid_acts.append(act)
+                    else:
+                        print(f"[WARN] Found hallucinated POI '{act.get('name')}' in final itinerary. Removing.")
+                
+                day_plan["activities"] = valid_acts
                     
             # Store in state
             self.state["itinerary"] = itinerary
             self.state["budget"] = budget
             self.state["transit_options"] = transit_options
             
+            # If budget is strict and could not be met, do not finalize itinerary.
+            if budget.get("budget_type") == "strict" and budget.get("budget_infeasible", False):
+                error_msg = budget.get("budget_warning", "Your requested trip cannot fit within the strict budget.")
+                print(f"[BUDGET][STRICT] {error_msg}")
+                return {
+                    "next_step": "complete",
+                    "response": error_msg,
+                    "itinerary": [],
+                    "budget": budget,
+                    "optimal_route": [],
+                    "transit_options": transit_options,
+                    "budget_warning": budget.get("budget_warning"),
+                    "budget_infeasible": True,
+                }
+                
             # Generate confirmation message (with fallback if it fails)
             try:
                 confirmation = self.comm_agent.generate_booking_confirmation(

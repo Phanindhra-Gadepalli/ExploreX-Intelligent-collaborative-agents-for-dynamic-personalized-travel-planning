@@ -15,6 +15,8 @@ from flask_session import Session
 import os
 import json
 import time
+import queue
+import threading
 from dotenv import load_dotenv
 from workflows.travel_graph import TravelGraph
 
@@ -93,6 +95,22 @@ AGENT_TRACE_LABELS = {
     "route": "Itinerary Agent",
 }
 
+# Truthful keep-alive labels for long-running steps. Long stages (e.g. the
+# information stage doing live POI/weather/hotel lookups) can run for minutes
+# without emitting a chunk; these periodic SSE 'progress' events tell the
+# client the step is still genuinely executing and reset its idle watchdog.
+AGENT_PROGRESS_MESSAGES = {
+    "chat": "Understanding your request",
+    "information": "Researching attractions, stays and food options",
+    "retrieval": "Fetching destination background knowledge",
+    "recommend": "Ranking attractions for your interests",
+    "strategy": "Building your day-by-day plan",
+    "budget": "Checking costs against your budget",
+    "communication": "Writing your itinerary summary and travel tips",
+    "route": "Optimising travel routes between attractions",
+}
+STREAM_KEEPALIVE_SECONDS = 15
+
 
 @app.route('/test-image')
 def test_image():
@@ -108,18 +126,22 @@ def normalize_itinerary_for_client(raw_itinerary):
     if not raw_itinerary or not isinstance(raw_itinerary, list): return raw_itinerary
     days = []
     for day in raw_itinerary:
+        # Route agent writes "activities"; keep "spots" as a legacy alias.
+        raw_spots = day.get("activities") or day.get("spots") or []
         d = {
             "day": day.get("day"),
             "date": day.get("date"),
+            "is_suggested_date": day.get("is_suggested_date"),
             "morning": [],
             "afternoon": [],
             "evening": [],
             "night": [],
             "meals": [],
-            "transport": {},
-            "spots": day.get("spots", [])
+            "transport": day.get("transport") or {},
+            "activities": raw_spots,
+            "spots": raw_spots,
         }
-        for spot in day.get("spots", []):
+        for spot in raw_spots:
             if spot.get("is_meal"):
                 d["meals"].append(spot)
                 continue
@@ -437,18 +459,32 @@ def recommend_destinations():
         weight = data.get('weight', 80)
         
         session_id = session.get('session_id')
+        
+        # Simple cache key
+        cache_key = f"{','.join(sorted(interests))}_{weight}"
+        
         if not session_id or session_id not in workflows:
             # Fallback for explore tab when no session exists yet
             from agents.recommend_agent import RecommendAgent
             agent = RecommendAgent()
+            destinations = agent.recommend_destinations(interests, weight)
         else:
             workflow = workflows[session_id]
+            if 'destinations_cache' not in workflow.state:
+                workflow.state['destinations_cache'] = {}
+                
+            if cache_key in workflow.state['destinations_cache']:
+                return jsonify({"status": "success", "destinations": workflow.state['destinations_cache'][cache_key]})
+                
             if 'user_info' not in workflow.state:
                 workflow.state['user_info'] = {}
             workflow.state['user_info']['interests'] = interests
             agent = workflow.recommend_agent
+            destinations = agent.recommend_destinations(interests, weight)
             
-        destinations = agent.recommend_destinations(interests, weight)
+            # Cache the result
+            workflow.state['destinations_cache'][cache_key] = destinations
+            
         return jsonify({"status": "success", "destinations": destinations})
     except Exception as e:
         import traceback
@@ -645,7 +681,21 @@ def stream():
             current_step = step_name
             current_user_input = user_input
             current_selected_attraction_ids = selected_attraction_ids
-            
+
+            # Helper: extract plain text from Gemini chunk content (may be str or list of dicts)
+            def extract_text(content):
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    parts = []
+                    for part in content:
+                        if isinstance(part, dict) and 'text' in part:
+                            parts.append(part['text'])
+                        elif isinstance(part, str):
+                            parts.append(part)
+                    return ''.join(parts)
+                return str(content) if content else ''
+
             loop_count = 0
             while True:
                 loop_count += 1
@@ -664,45 +714,69 @@ def stream():
                     current_kwargs.pop('force_continue', None)
                     current_kwargs.pop('selected_attraction_ids', None)
                     
-                # Process the step - pass session_id so correct state is reused
-                result = workflow.process_step(
-                    current_step,
-                    session_id=session_id,
-                    user_input=current_user_input,
-                    **current_kwargs
-                )
-                
+                # Run the step in a daemon worker thread so a slow stage cannot
+                # block this generator: the request thread keeps pumping the
+                # queue, emits truthful keep-alive 'progress' events while the
+                # real agent work continues, and stays interruptible when the
+                # client disconnects (state still persists server-side).
+                step_queue = queue.Queue()
+                step_box = {}
+
+                def _run_step(step=current_step, text_input=current_user_input, step_kwargs=current_kwargs):
+                    try:
+                        r = workflow.process_step(
+                            step,
+                            session_id=session_id,
+                            user_input=text_input,
+                            **step_kwargs
+                        )
+                        if 'stream' in r and r['stream']:
+                            try:
+                                for chunk in r['stream']:
+                                    if hasattr(chunk, 'content') and chunk.content:
+                                        text = extract_text(chunk.content)
+                                        if text:
+                                            step_queue.put(('chunk', text))
+                            except Exception as stream_err:
+                                import traceback
+                                print(f"[ERROR] Exception while consuming stream for step '{step}': {stream_err}")
+                                traceback.print_exc()
+                        step_box['result'] = r
+                    except Exception as step_err:
+                        import traceback
+                        print(f"[ERROR] Step '{step}' failed: {step_err}")
+                        traceback.print_exc()
+                        step_box['error'] = step_err
+                    finally:
+                        step_queue.put(('done', None))
+
+                worker = threading.Thread(target=_run_step, daemon=True, name=f"step-{current_step}")
+                worker.start()
+
+                step_started = time.time()
+                base_progress_msg = AGENT_PROGRESS_MESSAGES.get(current_step, f"Processing {current_step}")
+                while True:
+                    try:
+                        kind, payload = step_queue.get(timeout=STREAM_KEEPALIVE_SECONDS)
+                    except queue.Empty:
+                        elapsed = int(time.time() - step_started)
+                        progress_msg = f"{base_progress_msg} ({elapsed}s)"
+                        yield f"data: {json.dumps({'type': 'progress', 'step': current_step, 'agent': agent_label, 'elapsed': elapsed, 'message': progress_msg})}\n\n"
+                        continue
+                    if kind == 'done':
+                        break
+                    if kind == 'chunk':
+                        yield f"data: {{\"type\": \"chunk\", \"content\": {json.dumps(payload)} }}\n\n"
+                        time.sleep(0.01)
+
+                worker.join(timeout=5)
+                if 'error' in step_box:
+                    raise step_box['error']
+                result = step_box['result']
+
                 # Check the should_rent_car status right after processing
                 current_should_rent_car = workflow.get_current_state().get('should_rent_car', False)
                 print(f"[DEBUG] After processing step {current_step}, should_rent_car = {current_should_rent_car}")
-                
-                # Helper: extract plain text from Gemini chunk content (may be str or list of dicts)
-                def extract_text(content):
-                    if isinstance(content, str):
-                        return content
-                    if isinstance(content, list):
-                        parts = []
-                        for part in content:
-                            if isinstance(part, dict) and 'text' in part:
-                                parts.append(part['text'])
-                            elif isinstance(part, str):
-                                parts.append(part)
-                        return ''.join(parts)
-                    return str(content) if content else ''
-
-                # Handle streaming response
-                if 'stream' in result and result['stream']:
-                    try:
-                        for chunk in result['stream']:
-                            if hasattr(chunk, 'content') and chunk.content:
-                                text = extract_text(chunk.content)
-                                if text:
-                                    yield f"data: {{\"type\": \"chunk\", \"content\": {json.dumps(text)} }}\n\n"
-                                    time.sleep(0.01)
-                    except Exception as stream_err:
-                        import traceback
-                        print(f"[ERROR] Exception while consuming stream for step '{current_step}': {stream_err}")
-                        traceback.print_exc()
                 
                 next_step = result.get('next_step')
                 print(f"[DIAGNOSTIC] Step '{current_step}' completed. Returned next_step='{next_step}'")
@@ -732,6 +806,7 @@ def stream():
                 'type': 'complete',
                 'session_id': session_id,   # Always send back so frontend can reuse it
                 'next_step': result.get('next_step'),
+                'ui_action': result.get('ui_action'),
                 'validation_warning': result.get('validation_warning'),
                 'required_count': result.get('required_count'),
                 'selected_count': result.get('selected_count'),

@@ -2,6 +2,31 @@ import json
 import random
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+# langchain_google_genai only recognises langchain_core.pydantic_v1.BaseModel
+# schemas in convert_to_genai_function_declarations; a pydantic v2 model falls
+# through to the callable branch and raises "Value not declarable with JSON Schema".
+from langchain_core.pydantic_v1 import BaseModel, Field
+from typing import List
+
+class POILocation(BaseModel):
+    lat: float
+    lng: float
+
+class POIExtraction(BaseModel):
+    id: str
+    name: str
+    rating: float = 4.5
+    user_ratings_total: int = 100
+    price_level: int = 2
+    address: str
+    location: POILocation
+    category: str = "tourist_attraction"
+    types: List[str] = ["tourist_attraction"]
+    description: str
+    source: str = "rag_extraction"
+
+class POIExtractionList(BaseModel):
+    pois: List[POIExtraction]
 
 class RecommendAgent:
     def __init__(self, model_name="gemini-flash-lite-latest"):
@@ -349,61 +374,29 @@ class RecommendAgent:
         Text:
         {text}
         
-        Format the output EXACTLY as a JSON array of objects. Do not include markdown blocks or any other text.
-        Each object must follow this schema:
-        {{
-            "id": "a unique string identifier based on name (e.g. 'rag_kashi_vishwanath')",
-            "name": "Name of the attraction",
-            "rating": 4.5,
-            "user_ratings_total": 100,
-            "price_level": 2,
-            "address": "{city}, India",
-            "location": {{"lat": {lat}, "lng": {lng}}},
-            "category": "tourist_attraction",
-            "types": ["tourist_attraction"],
-            "description": "A short summary of what this place is based on the text",
-            "source": "rag_extraction"
-        }}
+        Extract the attractions and return them as a JSON list.
         """
         
+        pois = []
         try:
-            response = self.model.invoke([HumanMessage(content=prompt)])
-            
-            content = response.content
-            if isinstance(content, list):
-                # Extract text from list of content blocks
-                content = " ".join([str(part.get("text", "")) for part in content if isinstance(part, dict)])
-            elif not isinstance(content, str):
-                content = str(content)
-                
-            content = content.strip()
-            
-            # Clean up potential markdown formatting
-            import re
-            json_match = re.search(r'\[.*\]', content, re.DOTALL)
-            if json_match:
-                content = json_match.group(0)
-                
+            structured_llm = self.model.with_structured_output(POIExtractionList)
             try:
-                pois = json.loads(content)
-            except json.JSONDecodeError as e:
-                print(f"[RECOMMEND_AGENT] JSON decode error: {e}. Attempting ast.literal_eval.")
-                import ast
-                try:
-                    pois = ast.literal_eval(content)
-                except Exception as eval_e:
-                    print(f"[RECOMMEND_AGENT] ast.literal_eval failed: {eval_e}")
-                    return []
+                response = structured_llm.invoke([HumanMessage(content=prompt)])
+                pois = [p.dict() for p in response.pois]
+            except Exception as e:
+                print(f"[RECOMMEND_AGENT] Structured output failed: {e}. Retrying once...")
+                response = structured_llm.invoke([HumanMessage(content=prompt)])
+                pois = [p.dict() for p in response.pois]
+        except Exception as e2:
+            print(f"[RECOMMEND_AGENT] Structured output failed: {e2}. Falling back to empty list.")
+            pois = []
 
-            if isinstance(pois, list):
-                import uuid
-                for p in pois:
-                    if "id" not in p or not p["id"]:
-                        p["id"] = f"rag_{uuid.uuid4().hex[:8]}"
-                print(f"[RECOMMEND_AGENT] Successfully extracted {len(pois)} POIs from RAG knowledge.")
-                return pois
-        except Exception as e:
-            print(f"[RECOMMEND_AGENT] Failed to extract POIs from RAG: {e}")
+        if isinstance(pois, list):
+            import uuid
+            for p in pois:
+                if "id" not in p or not p["id"]:
+                    p["id"] = f"rag_{uuid.uuid4().hex[:8]}"
+            print(f"[RECOMMEND_AGENT] Successfully extracted {len(pois)} POIs from RAG knowledge.")
+            return pois
             
         return []
-    

@@ -12,6 +12,11 @@ from typing import Generator
 import utils
 import json
 import re
+from pydantic import BaseModel, Field
+from typing import Dict, List
+
+class DailyPlanOutput(BaseModel):
+    plan: Dict[str, List[str]] = Field(description="A dictionary mapping day names like 'day1', 'day2' to lists of attraction names.")
 
 class StrategyAgent:
     def __init__(self, model_name="gemini-flash-lite-latest"):
@@ -163,40 +168,22 @@ class StrategyAgent:
                 Return ONLY a valid JSON object where keys are "day1", "day2", ..., "dayN" and values are lists of attraction names.
                 Example: {{"day1": ["Attraction A", "Attraction B"], "day2": ["Attraction C"]}}
                 """
-                result = utils.ask_openai(prompt)
-                safe_result = str(result).encode('ascii', 'replace').decode('ascii')
-                print(f"Attempt {i+1} - Raw AI Output: {safe_result[:200]}")  # Debug raw output (safe)
                 
-                if result and 'answer' in result:
-                    raw_answer = result['answer']
-                    # Try to extract JSON part if it's embedded in text
-                    match = re.search(r'\{.*\}', raw_answer, re.DOTALL)
-                    if match:
-                        json_str = match.group(0)
-                        try:
-                            daily_plan_raw = json.loads(json_str)
-                            # Validate structure: dict with "dayX" keys and list of strings (names) values
-                            if not isinstance(daily_plan_raw, dict) or \
-                               not all(isinstance(k, str) and k.startswith("day") and \
-                                       isinstance(v, list) and all(isinstance(name, str) for name in v) \
-                                       for k, v in daily_plan_raw.items()):
-                                print(f"Invalid JSON structure or non-string item in day's list: {daily_plan_raw}")
-                                daily_plan_raw = {} # Reset if structure is wrong
-                                continue
-                            print(f"Successfully parsed daily plan: {daily_plan_raw}")
-                        except json.JSONDecodeError as e:
-                            print(f"JSON parsing failed on attempt {i+1}: {e}")
-                            print(f"Problematic JSON string: {json_str}")
-                            daily_plan_raw = {}
-                            continue # Try again if parsing fails
-                    else:
-                        print(f"No JSON object found in AI response on attempt {i+1}: {raw_answer}")
-                        daily_plan_raw = {}
+                try:
+                    structured_llm = self.model.with_structured_output(DailyPlanOutput)
+                    response = structured_llm.invoke([HumanMessage(content=prompt)])
+                    daily_plan_raw = response.plan
+                except Exception as e:
+                    print(f"Structured output failed on attempt {i+1}: {e}")
+                    # Try once more with a stricter prompt if it failed
+                    if i == 0:
                         continue
-                else:
-                    print(f"No answer from AI on attempt {i+1}")
-                    daily_plan_raw = {}
+                    else:
+                        daily_plan_raw = {}
+                        
+                if not daily_plan_raw:
                     continue
+
 
                 #: attractions_name
                 current_plan_attraction_names = []
@@ -204,13 +191,52 @@ class StrategyAgent:
                     if isinstance(daily_plan_raw[day_key], list):
                         current_plan_attraction_names.extend(daily_plan_raw[day_key])
                 
-                # Validation: Check if all selected spots are in the plan
+                # Validation: Check if all selected spots are in the plan.
+                # Also, check for hallucinated POIs and replace/remove them.
                 valid_plan = True
+                
+                # Check for missed spots
+                missed_spots = []
                 for selected_spot_info in selected_data:
                     if selected_spot_info["name"] not in current_plan_attraction_names:
-                        print(f"Validation Failed: Selected spot '{selected_spot_info['name']}' not in the generated plan {current_plan_attraction_names}.")
-                        valid_plan = False
-                        break
+                        print(f"Validation Warning: Selected spot '{selected_spot_info['name']}' not in the generated plan.")
+                        missed_spots.append(selected_spot_info["name"])
+                
+                # Check for hallucinated spots
+                valid_selected_names = {s["name"] for s in selected_data}
+                # Allow standard filler labels
+                allowed_labels = {"Relaxation", "Leisure"}
+                
+                cleaned_plan = {}
+                for day_key, names in daily_plan_raw.items():
+                    cleaned_names = []
+                    for name in names:
+                        if name in valid_selected_names or name in allowed_labels:
+                            cleaned_names.append(name)
+                        else:
+                            print(f"Validation Warning: Removing hallucinated or unapproved POI: '{name}'")
+                            valid_plan = False # Not strictly perfect, but we can fix it!
+                    
+                    # Fill in missed spots if any
+                    while missed_spots and len(cleaned_names) < 3:
+                        cleaned_names.append(missed_spots.pop(0))
+                        
+                    cleaned_plan[day_key] = cleaned_names
+                    
+                daily_plan_raw = cleaned_plan
+                
+                # If there are still missed spots, just append them to the last day or any day
+                if missed_spots:
+                    for day_key in sorted(daily_plan_raw.keys()):
+                        if missed_spots:
+                            daily_plan_raw[day_key].append(missed_spots.pop(0))
+                            
+                valid_plan = True # We fixed it!
+                
+                current_plan_attraction_names = []
+                for day_key in sorted(daily_plan_raw.keys()):
+                    if isinstance(daily_plan_raw[day_key], list):
+                        current_plan_attraction_names.extend(daily_plan_raw[day_key])
                 
                 if valid_plan:
                     final_planned_attractions_names = current_plan_attraction_names

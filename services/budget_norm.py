@@ -212,7 +212,12 @@ def normalize_budget(raw: Any) -> Dict[str, Any]:
         "budget_category": raw.get("budget_category"),
         "budget_warning": raw.get("budget_warning"),
         "budget_infeasible": bool(raw.get("budget_infeasible")),
+        "min_viable_cost": _to_number(raw.get("min_viable_cost")),
+        "cost_index": _to_number(raw.get("cost_index")),
+        "destination_profile": raw.get("destination_profile") or {},
+        "currency_assumptions": list(raw.get("currency_assumptions") or []),
         "breakdown_text": breakdown,
+        "breakdown": raw.get("breakdown") or {},
     }
     normalized.update(parts_out)
     return normalized

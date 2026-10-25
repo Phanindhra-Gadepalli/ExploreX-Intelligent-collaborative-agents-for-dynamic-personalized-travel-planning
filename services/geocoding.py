@@ -69,6 +69,12 @@ class GeocodingResult:
     country_code: str = ""   # ISO 3166-1 alpha-2 lowercase ("in", "fr", …)
     provider: str = ""
     cached: bool = False
+    # Administrative classification used by services.destination_resolver.
+    # Providers that expose it fill it in; an empty value means "unknown",
+    # never "country".
+    feature_type: str = ""
+    place_type: str = ""
+    bbox: tuple = ()
 
     def is_in_india(self) -> bool:
         """Return True if this result represents an Indian location."""
@@ -135,6 +141,9 @@ class GeoapifyGeocoder(GeocodingProvider):
                 country=r.get("country", ""),
                 country_code=r.get("country_code", "").lower(),
                 provider=self.name,
+                feature_type=r.get("result_type", ""),
+                place_type=r.get("result_type", ""),
+                bbox=tuple(r.get("bbox") or ()),
             )
         except Exception:
             # Silenced to avoid 400/401 polluting the logs
@@ -198,6 +207,9 @@ class NominatimGeocoder(GeocodingProvider):
                 country=addr.get("country", ""),
                 country_code=addr.get("country_code", "").lower(),
                 provider=self.name,
+                feature_type=r.get("type", ""),
+                place_type=r.get("addresstype", ""),
+                bbox=tuple(r.get("boundingbox") or ()),
             )
         except Exception as e:
             logger.warning(f"[GEOCODER][Nominatim] '{city}': {e}")
@@ -239,6 +251,8 @@ class PhotonGeocoder(GeocodingProvider):
                 country=props.get("country", ""),
                 country_code=cc,
                 provider=self.name,
+                feature_type=props.get("osm_value", "") or props.get("type", ""),
+                place_type=props.get("type", ""),
             )
         except Exception as e:
             logger.warning(f"[GEOCODER][Photon] '{city}': {e}")

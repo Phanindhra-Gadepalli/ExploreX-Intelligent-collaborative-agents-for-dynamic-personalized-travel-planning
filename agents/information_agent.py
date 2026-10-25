@@ -7,6 +7,7 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
 import os
 import sys
 import json
+import math
 import hashlib
 import googlemaps
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -23,6 +24,24 @@ from services.weather_api import WeatherService
 from services.car_rental_api import CarRentalService
 from services.fuel_price_api import get_gas_price
 from services.geocoding import shared_geocoder as _shared_geocoder
+from services.interest_match import (
+    attraction_text_pool,
+    interest_score as _interest_component,
+    interests_from_preferences,
+    match_interests as _match_interests,
+    normalize_interests,
+)
+from services.destination_resolver import (
+    resolve_destination,
+    validate_point_for_scope,
+    within_country,
+    haversine_km,
+)
+from services.structured_parse import (
+    records_from_text,
+    clamp_rating,
+    clean_name,
+)
 
 def format_duration(seconds):
     """Format duration in seconds to a human-readable string (hours and minutes)."""
@@ -49,6 +68,9 @@ def format_distance(meters):
     return f"{km:.1f} km / {miles:.1f} miles"
 
 class InformationAgent:
+    # Public OSRM demo server: fail fast instead of hanging the itinerary.
+    OSRM_TIMEOUT_SECONDS = float(os.getenv("OSRM_TIMEOUT_SECONDS", "6"))
+
     def __init__(self, car_api_key=None, llm_model_name="gemini-flash-lite-latest"):
         """Initialize the InformationAgent with API keys and LLM model name."""
         from services.weather_api import WeatherService
@@ -140,137 +162,115 @@ class InformationAgent:
         return prompt
 
     def _heuristic_interest_match(self, attr, user_prefs):
-        """Returns a list of matched keyword groups."""
-        raw_hobbies = user_prefs.get('hobbies', '')
-        hobbies = str(raw_hobbies).lower().strip()
-        
-        if not hobbies or hobbies == 'none':
-            return []
-            
-        keyword_map = {
-            'nature': ['nature', 'forest', 'wildlife', 'national park', 'mountain', 'hill', 'trek', 'hike', 'valley', 'meadow', 'peak', 'ridge', 'sanctuary', 'reserve', 'jungle', 'river', 'lake', 'waterfall', 'beach', 'eco park'],
-            'history': ['historic', 'monument', 'fort', 'palace', 'tomb', 'archaeological', 'unesco', 'museum', 'castle', 'memorial', 'ruins', 'heritage', 'historical', 'ancient'],
-            'architecture': ['architecture', 'fortress', 'bastion', 'haveli', 'mahal', 'qila', 'minaret', 'gateway', 'darwaza', 'arch', 'pillar', 'stupa', 'baoli', 'stepwell', 'mausoleum', 'sculpture'],
-            'spiritual': ['temple', 'hindu temple', 'place of worship', 'religious', 'spiritual', 'mandir', 'shrine', 'mosque', 'church', 'gurudwara', 'masjid', 'dargah', 'buddhist temple', 'ashram', 'ghat'],
-            'culture': ['culture', 'art gallery', 'gallery', 'exhibition', 'cultural center', 'art', 'traditional'],
-            'food': ['food', 'restaurant', 'cafe', 'street food', 'dining', 'culinary', 'market', 'bazaar', 'chowk'],
-            'photography': ['photography', 'viewpoint', 'observation', 'lookout', 'panorama', 'scenic', 'picturesque', 'sunset', 'sunrise'],
-            'adventure': ['adventure', 'trekking', 'hiking', 'camping', 'safari', 'water sports', 'paragliding', 'climbing'],
-            'shopping': ['shopping', 'mall', 'bazaar', 'market', 'souvenir', 'boutique', 'crafts'],
-            'nightlife': ['nightlife', 'club', 'bar', 'pub', 'lounge', 'night market', 'evening'],
-            'family': ['family', 'zoo', 'aquarium', 'theme park', 'amusement park', 'water park', 'planetarium', 'kids'],
-            'offbeat': ['offbeat', 'hidden gem', 'unexplored', 'local secret', 'quiet', 'secluded']
-        }
-        
-        hobbies_cleaned = hobbies.replace(',', ' ').replace('&', ' ').replace('/', ' ').replace('with', ' ').replace('plus', ' ')
-        hobbies_parts = [p.strip() for p in hobbies_cleaned.split()]
-        hobbies_rejoined = " ".join(hobbies_parts)
-        
-        user_groups = []
-        for group_name, keywords in keyword_map.items():
-            if any(k in hobbies_rejoined for k in keywords):
-                user_groups.append(group_name)
-                
-        # Support for specific interest weights (e.g., 'photography:90')
-        interest_weights = {}
-        for part in hobbies_parts:
-            if ':' in part:
-                try:
-                    category, weight = part.split(':')
-                    interest_weights[category.lower()] = int(weight)
-                except:
-                    pass
-                    
-        a_name = str(attr.get('name', '')).lower()
-        a_category = str(attr.get('category', '')).lower()
-        a_desc = str(attr.get('description', '')).lower()
-        a_type = str(attr.get('type', '')).lower()
-        a_source = str(attr.get('source', '')).lower()
-        a_tags_raw = attr.get('tags', [])
-        a_osm_tags = attr.get('osm_tags', {})
-        a_types = attr.get('types', [])
-        
-        attr_text_pool = f"{a_name} {a_category} {a_desc} {a_type} {a_source} {str(a_tags_raw).lower()} {str(a_osm_tags).lower()} {str(a_types).lower()}"
-        
-        matched_groups = []
-        for group_name in user_groups:
-            keywords = keyword_map[group_name]
-            if any(k in attr_text_pool for k in keywords):
-                matched_groups.append(group_name)
-                
-        # Include weight mapping
-        attr['_interest_weights'] = interest_weights
-                
-        return matched_groups
+        """Return the canonical interest groups matched by this attraction.
+
+        Delegates to :mod:`services.interest_match`, which understands
+        multilingual names, OSM tags and category metadata.  The old English
+        name-only keyword list is intentionally gone: it produced zero matches
+        for "viewpoints and photography" in Japan even when the records carried
+        ``tourism=viewpoint``.
+        """
+        matched, reasons = _match_interests(attr, user_prefs or {})
+        attr["interest_match_reasons"] = reasons
+        # Kept for backwards compatibility with callers that read the weights.
+        requested = interests_from_preferences(user_prefs or {})
+        attr["_interest_weights"] = dict(requested)
+        return matched
 
     def _evaluate_attraction_quality(self, attr):
         """Evaluate base data quality to filter out incidental OSM nodes."""
         a_name = str(attr.get('name', '')).lower()
         a_category = str(attr.get('category', '')).lower()
-        
+
         # Extremely low quality or irrelevant entities
         low_value_keywords = ['bank', 'atm', 'hospital', 'clinic', 'pharmacy', 'dentist', 'office', 'company', 'factory', 'industrial', 'road junction', 'traffic', 'parking', 'supermarket', 'grocery', 'travel agency']
-        
+
         if any(k in a_category or k in str(attr.get('types', [])).lower() for k in low_value_keywords):
             return "low"
-            
+
         if any(f"amenity': '{k}'" in str(attr.get('osm_tags', {})) for k in low_value_keywords):
             return "low"
-            
+
         return "medium"
 
     def _calculate_score(self, attr, user_prefs, llm_score=0):
-        """Calculate normalized Match Percentage (0-100)."""
-        score = 0
-        max_possible_score = 100
-        
-        # 1. Quality (0-20 points)
+        """Calculate a transparent 0-100 relevance score.
+
+        The score is deliberately split into auditable components:
+
+        * interest    0-40  (deterministic, evidence-based)
+        * quality     0-20  (real provider metadata only)
+        * popularity  0-15  (real rating/review count only)
+        * completeness 0-15 (description/coordinates/source)
+        * LLM review  0-10  (advisory only; never authoritative)
+
+        A strong interest mismatch cannot be rescued by popularity: an
+        attraction with no matched interest receives 0 interest points.
+        """
         quality = self._evaluate_attraction_quality(attr)
         if quality == "low":
-            return -1, [] # Discard
-        
-        quality_score = 10
-        metadata = attr.get('metadata', {})
-        if metadata.get("wikidata_id") or metadata.get("wikipedia") or attr.get('wikidata_id'):
-            quality_score = 20
-        if attr.get("description") and len(attr.get("description")) > 20:
-            quality_score += 5
-            
-        score += min(20, quality_score)
-            
-        # 2. Interest Compatibility (0-40 points)
-        matched_groups = self._heuristic_interest_match(attr, user_prefs)
-        interest_score = 0
-        weights = attr.get('_interest_weights', {})
-        
-        if matched_groups:
-            for group in matched_groups:
-                weight = weights.get(group, 50) # Default weight 50
-                interest_score += (weight / 100) * 20
-        else:
-            interest_score = 5 # Baseline for generic attractions
-            
-        score += min(40, interest_score)
-        
-        # 3. Popularity & Rating (0-20 points)
-        rating_score = 0
+            return -1, []
+
+        matched_groups, reasons = _match_interests(attr, user_prefs or {})
+        attr["interest_match_reasons"] = reasons
+        attr["matched_interests"] = matched_groups
+        attr["_interest_weights"] = dict(interests_from_preferences(user_prefs or {}))
+
+        # 1. Interest relevance (0-40)
+        interest_points, _, _ = _interest_component(attr, user_prefs or {})
+
+        # 2. Data quality (0-20) — only facts the provider supplied.
+        quality_points = 8.0
+        metadata = attr.get("metadata") if isinstance(attr.get("metadata"), dict) else {}
+        if metadata.get("wikidata_id") or metadata.get("wikipedia") or attr.get("wikidata_id"):
+            quality_points += 6.0
+        if attr.get("source") in ("geoapify", "google", "rag", "web_rag", "openstreetmap", "overpass"):
+            quality_points += 2.0
+        if attr.get("description") and len(str(attr["description"])) > 20:
+            quality_points += 4.0
+        quality_points = min(20.0, quality_points)
+
+        # 3. Verified popularity (0-15) — no invented rating.
+        popularity_points = 0.0
         rating = attr.get("rating")
-        if rating and isinstance(rating, (int, float)):
-            rating_score = (rating / 5.0) * 15
-        
-        if attr.get("source") == "rag":
-            rating_score += 5 # RAG sources are highly curated
-            
-        score += min(20, rating_score)
-            
-        # 4. LLM AI Score (0-20 points)
-        llm_normalized = (llm_score / 100.0) * 20 if isinstance(llm_score, (int, float)) else 0
-        score += min(20, llm_normalized)
-        
-        # Normalize to 0-100
-        match_percentage = min(100, max(0, int((score / max_possible_score) * 100)))
-        attr['match_percentage'] = match_percentage
-        
+        if isinstance(rating, (int, float)) and 0 < float(rating) <= 5:
+            popularity_points += (float(rating) / 5.0) * 10.0
+        review_count = attr.get("review_count") or attr.get("user_ratings_total")
+        if isinstance(review_count, (int, float)) and review_count > 0:
+            # log10(1000) = 3 -> max 5 points; huge review counts do not dominate.
+            popularity_points += min(5.0, math.log10(float(review_count) + 1) * 1.25)
+        popularity_points = min(15.0, popularity_points)
+
+        # 4. Completeness (0-15)
+        completeness = 0.0
+        if attr.get("name"):
+            completeness += 3.0
+        loc = attr.get("location") if isinstance(attr.get("location"), dict) else {}
+        if loc.get("lat") is not None and loc.get("lng") is not None:
+            completeness += 5.0
+        if attr.get("address"):
+            completeness += 2.0
+        if attr.get("image_url"):
+            completeness += 1.0
+        if attr.get("tags") or attr.get("osm_tags") or attr.get("types"):
+            completeness += 4.0
+        completeness = min(15.0, completeness)
+
+        # 5. LLM advisory (0-10) — clamped, never the whole score.
+        llm_points = 0.0
+        if isinstance(llm_score, (int, float)):
+            llm_points = max(0.0, min(10.0, float(llm_score) / 10.0))
+
+        score = interest_points + quality_points + popularity_points + completeness + llm_points
+        match_percentage = int(round(min(100.0, max(0.0, score))))
+        attr["match_percentage"] = match_percentage
+        attr["score_components"] = {
+            "interest": round(interest_points, 2),
+            "quality": round(quality_points, 2),
+            "popularity": round(popularity_points, 2),
+            "completeness": round(completeness, 2),
+            "llm": round(llm_points, 2),
+        }
         return match_percentage, matched_groups
 
     def _rerank_attractions_with_llm(self, attractions_list: list, user_prefs: dict, weather_summary: str = None):
@@ -302,40 +302,42 @@ class InformationAgent:
                 ]
                 try:
                     response = self.llm.invoke(messages)
-                    llm_output_content = response.content.strip()
-                    if llm_output_content.startswith("```json"):
-                        llm_output_content = llm_output_content[7:]
-                        if llm_output_content.endswith("```"):
-                            llm_output_content = llm_output_content[:-3]
-                            
-                    llm_parsed = json.loads(llm_output_content.strip())
+                    llm_parsed = records_from_text(getattr(response, "content", response))
                     self.llm_rerank_cache[cache_key] = llm_parsed
                 except Exception as e:
                     print(f"[INFO_AGENT_LLM_ERROR] LLM parsing failed: {e}")
                     llm_parsed = []
                     
-            if isinstance(llm_parsed, list):
-                for item in llm_parsed:
+            if isinstance(llm_parsed, (list, dict)):
+                items = llm_parsed if isinstance(llm_parsed, list) else [llm_parsed]
+                for item in items:
                     if isinstance(item, dict) and "id" in item:
-                        llm_results_map[item["id"]] = item
+                        llm_results_map[str(item["id"])] = item
 
         # 2. Compute final deterministic scores
         scored_attractions = []
+        requested_interests = interests_from_preferences(user_prefs or {})
         for attr in attractions_list:
-            llm_info = llm_results_map.get(attr.get("id"), {})
+            llm_info = llm_results_map.get(str(attr.get("id")), {})
             llm_score = llm_info.get("relevance_score", 0)
-            if isinstance(llm_score, str) and llm_score.isdigit(): llm_score = int(llm_score)
-            if not isinstance(llm_score, (int, float)): llm_score = 0
+            if isinstance(llm_score, str) and llm_score.strip().isdigit():
+                llm_score = int(llm_score)
+            if not isinstance(llm_score, (int, float)):
+                llm_score = 0
             
             final_score, matched_groups = self._calculate_score(attr, user_prefs, llm_score)
             attr["_internal_score"] = final_score
             attr["matched_interests"] = matched_groups
-            
-            # Use LLM tourist_value if high
-            if llm_info.get("tourist_value", "").lower() == "high":
-                attr["_internal_score"] += 20
-                
-            attr["recommendation_type"] = "interest_based" if matched_groups else "popular"
+
+            # The model's "tourist_value" is advisory only and cannot rescue a
+            # genuine interest mismatch; _calculate_score already clamps the
+            # whole LLM contribution to 10 points.
+            if not requested_interests:
+                attr["recommendation_type"] = "discovery"
+            elif matched_groups:
+                attr["recommendation_type"] = "interest_based"
+            else:
+                attr["recommendation_type"] = "outside_interests"
             scored_attractions.append(attr)
 
         # 3. Sort by score
@@ -421,7 +423,96 @@ class InformationAgent:
 
         print(f"[GEOCODER] city2geocode('{city}') → None (all providers failed)")
         return None
-    
+
+    def _country_code_for(self, city_name: str) -> str:
+        """Best-effort ISO country code for a destination (never a guess)."""
+        resolved = getattr(self, "resolved_destination", None)
+        if resolved is not None and getattr(resolved, "country_code", ""):
+            return str(resolved.country_code).lower()
+        try:
+            result = self.geocoder.geocode(city_name)
+            if result is not None and result.country_code:
+                return str(result.country_code).lower()
+        except Exception:
+            pass
+        return ""
+
+    def _validate_generated_pois(self, pois, city, dest_lat, dest_lng,
+                                 country_code: str = "", max_km: float = 80.0):
+        """Geocode model-suggested POIs and keep only real, in-scope places.
+
+        Returns ``(validated, dropped)``.  A generated POI without a verified
+        coordinate is never presented as a routable attraction.
+        """
+        validated = []
+        dropped = []
+        for poi in pois or []:
+            name = clean_name(poi.get("name"))
+            if not name:
+                continue
+            query = f"{name}, {city}".strip(", ")
+
+            # Already geocoded by a previous stage? Validate it instead of
+            # calling the provider again.
+            existing_lat = self._coerce_coord(
+                poi.get("latitude", poi.get("lat"))
+            )
+            existing_lng = self._coerce_coord(
+                poi.get("longitude", poi.get("lng"))
+            )
+            if existing_lat is not None and existing_lng is not None:
+                in_scope = True
+                if dest_lat is not None and dest_lng is not None:
+                    in_scope = haversine_km(dest_lat, dest_lng, existing_lat, existing_lng) <= max_km
+                if in_scope:
+                    poi.update({
+                        "location": {"lat": existing_lat, "lng": existing_lng},
+                        "latitude": existing_lat,
+                        "longitude": existing_lng,
+                        "coords_verified": True,
+                        "verified": False,
+                        "verification_source": "reported",
+                    })
+                    validated.append(poi)
+                else:
+                    dropped.append({"name": name, "reason": "outside_city"})
+                continue
+
+            result = None
+            try:
+                result = self.geocoder.geocode(query, expected_country=country_code or None)
+            except Exception as exc:
+                print(f"[INFO_AGENT] Geocode failed for generated POI '{query}': {exc}")
+
+            if result is None:
+                dropped.append({"name": name, "reason": "geocode_failed"})
+                continue
+
+            lat, lng = float(result.lat), float(result.lng)
+            result_cc = str(getattr(result, "country_code", "") or "").lower()
+            if country_code and result_cc and result_cc != country_code.lower():
+                dropped.append({"name": name, "reason": f"country_mismatch:{result_cc}"})
+                continue
+            if dest_lat is not None and dest_lng is not None:
+                distance = haversine_km(dest_lat, dest_lng, lat, lng)
+                if distance > max_km:
+                    dropped.append({"name": name, "reason": f"outside_city:{distance:.0f}km"})
+                    continue
+
+            poi.update({
+                "location": {"lat": lat, "lng": lng},
+                "latitude": lat,
+                "longitude": lng,
+                "coords_verified": True,
+                "verified": False,
+                "verification_source": getattr(result, "provider", "geocoder"),
+            })
+            if not poi.get("address"):
+                poi["address"] = getattr(result, "display_name", "") or ""
+            validated.append(poi)
+
+        return validated, dropped
+
     def get_attractions(self, lat: float, lng: float, user_prefs: dict, weather_summary: str = None,
                         number: int = 30, 
                         poi_type: str = "tourist_attraction", 
@@ -450,150 +541,155 @@ class InformationAgent:
         required_pois = max(10, duration_days * 3)
         city = user_prefs.get('city') if user_prefs else None
         
-        # RAG / Intelligent LLM Fallback if primary providers fail or return too few
-        if len(initial_pois) < required_pois and city:
-            deficit = required_pois - len(initial_pois)
-            print(f"[INFO_AGENT] POI providers returned {len(initial_pois)} for '{city}'. Need {required_pois} (deficit: {deficit}).")
-            
-            # 1. Try RAG first (only if initial_pois is empty to avoid double-fetching if we just need generic top-ups)
-            if not initial_pois:
+        # ── Fallback discovery ────────────────────────────────────────────────
+        # Live providers are authoritative. Model output is used only to *top
+        # up* a thin provider result and every suggested place must then be
+        # geocoded and checked against the requested city, so a hallucinated or
+        # foreign POI cannot enter the trip.
+        provider_pois = list(initial_pois or [])
+        generated: list = []
+        generated_dropped: list = []
+
+        def _extract_pois(raw_content, source, id_prefix):
+            records = []
+            for record in records_from_text(raw_content):
+                name = clean_name(record.get("name") or record.get("title"))
+                if not name:
+                    continue
+                category = str(record.get("category") or record.get("type") or "attraction")
+                description = str(record.get("description") or record.get("summary") or "").strip()
+                poi = {
+                    "id": f"{id_prefix}_{hashlib.md5(name.encode()).hexdigest()[:12]}",
+                    "name": name,
+                    "category": category,
+                    "description": description,
+                    "source": source,
+                    # Ratings/prices are never accepted from a model.  Only a
+                    # value explicitly present in retrieved source text could be
+                    # trusted, and the prompt tells the model not to invent one.
+                    "rating": clamp_rating(record.get("rating")),
+                    "price_level": record.get("price_level"),
+                    "location": None,
+                    "coords_verified": False,
+                    "verified": False,
+                }
+                if record.get("address"):
+                    poi["address"] = record["address"]
+                records.append(poi)
+            return records
+
+        if len(provider_pois) < required_pois and city:
+            deficit = required_pois - len(provider_pois)
+            print(f"[INFO_AGENT] POI providers returned {len(provider_pois)} for '{city}'. Need {required_pois} (deficit: {deficit}).")
+
+            # 1. Grounded extraction from retrieved knowledge (RAG).
+            if not provider_pois:
                 print(f"[INFO_AGENT] Triggering RAG Fallback for '{city}'.")
                 try:
                     from agents.retrieval_agent import RetrievalAgent
                     if not hasattr(self, 'retrieval_agent') or self.retrieval_agent is None:
                         self.retrieval_agent = RetrievalAgent()
-                    
+
                     rag_context = self.retrieval_agent.retrieve_context(user_prefs, city)
-                    
+
                     if rag_context and "No additional background knowledge found" not in rag_context and "No destination provided" not in rag_context:
                         print(f"[INFO_AGENT] RAG Context found for {city}. Asking LLM to extract POIs.")
                         if self.llm:
                             prompt = f"""
-                            Extract tourist attractions from the following text about {city}.
-                            Return a valid JSON array of objects.
-                            Each object must have exactly these keys:
-                            - "name": string
+                            Extract only the tourist attractions that are EXPLICITLY named in the
+                            text below about {city}. Do not add places from your own knowledge.
+
+                            Return a valid JSON array of objects with exactly these keys:
+                            - "name": string (the name exactly as written in the text)
                             - "category": string (e.g. "heritage", "nature", "museum", "temple", "sightseeing")
-                            - "description": string (short description)
-                            - "rating": float (approximate rating out of 5.0, e.g. 4.5)
-                            - "price_level": int (1 to 4)
-                            
+                            - "description": string (only details stated in the text)
+
+                            Do NOT output a rating, review count, price or opening hours unless the
+                            text itself states it. Never guess those values.
+
                             Text:
                             {rag_context}
-                            
-                            Respond ONLY with the JSON array. Do not include any other text.
+
+                            Respond ONLY with the JSON array.
                             """
-                            response = self.llm.invoke([HumanMessage(content=prompt)])
-                            content = response.content.strip()
-                            if content.startswith("```json"):
-                                content = content[7:-3].strip()
-                            elif content.startswith("```"):
-                                content = content[3:-3].strip()
-                            
                             try:
-                                parsed_pois = json.loads(content)
-                                if isinstance(parsed_pois, list) and len(parsed_pois) > 0:
-                                    print(f"[INFO_AGENT] Successfully extracted {len(parsed_pois)} POIs from RAG.")
-                                    for p in parsed_pois:
-                                        p['source'] = 'rag_fallback'
-                                        p['id'] = p.get('name')
-                                        p['location'] = {'lat': lat, 'lng': lng} 
-                                    initial_pois.extend(parsed_pois)
-                            except json.JSONDecodeError as e:
-                                print(f"[INFO_AGENT] LLM RAG extraction failed JSON parse: {e}")
+                                response = self.llm.invoke([HumanMessage(content=prompt)])
+                                rag_pois = _extract_pois(
+                                    getattr(response, "content", response), "rag", "rag"
+                                )
+                                if rag_pois:
+                                    print(f"[INFO_AGENT] Successfully extracted {len(rag_pois)} POIs from RAG.")
+                                    generated.extend(rag_pois)
+                            except Exception as e:
+                                print(f"[INFO_AGENT] LLM RAG extraction failed: {e}")
                 except Exception as e:
                     print(f"[INFO_AGENT] RAG Fallback failed: {e}")
-            
-            # 2. Intelligent LLM Fallback (to guarantee we meet `required_pois`)
-            deficit = required_pois - len(initial_pois)
-            if deficit > 0 and self.llm:
-                print(f"[INFO_AGENT] Still need {deficit} POIs for '{city}'. Triggering Intelligent LLM Generation.")
-                # We cap generation at 25 to avoid massive token usage/timeouts
-                gen_count = min(25, deficit + 5) 
+
+            # 2. Model suggestions — only when providers AND RAG produced
+            #    nothing. These are unverified suggestions and are kept only if
+            #    the geocoder can place them inside the requested city.
+            if not provider_pois and not generated and self.llm:
+                print(f"[INFO_AGENT] Triggering unverified LLM suggestion pass for '{city}'.")
+                gen_count = min(25, deficit + 5)
                 llm_prompt = f"""
-                You are a travel expert. Generate a list of exactly {gen_count} famous, real tourist attractions, landmarks, and highly-rated places to visit in {city}.
-                Do not include places that are just "City Center" or fake names. Ensure they are geographically located in or very near {city}.
-                
-                Return a valid JSON array of objects.
-                Each object must have exactly these keys:
-                - "name": string (Real name of the place)
-                - "category": string (e.g. "heritage", "nature", "museum", "temple", "sightseeing", "entertainment")
-                - "description": string (A very short, engaging 1-sentence description)
-                - "rating": float (approximate real-world rating out of 5.0, e.g. 4.7)
-                - "price_level": int (1 to 4)
-                
-                Respond ONLY with the JSON array. Do not include any other text or markdown wrappers.
+                List up to {gen_count} real, well-known tourist attractions in or immediately
+                around {city}. Never invent a place and never use generic entries such as
+                "City Center" or "Local Market".
+
+                Return a valid JSON array of objects with exactly these keys:
+                - "name": string (the real name of the place)
+                - "category": string (e.g. "heritage", "nature", "museum", "temple", "sightseeing")
+                - "description": string (one short factual sentence)
+
+                Do NOT invent ratings, review counts, prices or coordinates. They will be
+                verified separately.
+
+                Respond ONLY with the JSON array.
                 """
                 try:
                     response = self.llm.invoke([HumanMessage(content=llm_prompt)])
-                    content = response.content.strip()
-                    if content.startswith("```json"):
-                        content = content[7:-3].strip()
-                    elif content.startswith("```"):
-                        content = content[3:-3].strip()
-                    
-                    parsed_pois = json.loads(content)
-                    if isinstance(parsed_pois, list):
-                        print(f"[INFO_AGENT] LLM generated {len(parsed_pois)} POIs.")
-                        for p in parsed_pois:
-                            p['source'] = 'llm_fallback'
-                            p['id'] = f"llm_{p.get('name', '').replace(' ', '_')}"
-                            p['location'] = {'lat': lat, 'lng': lng} 
-                        initial_pois.extend(parsed_pois)
+                    llm_pois = _extract_pois(
+                        getattr(response, "content", response), "llm_suggested", "llm"
+                    )
+                    if llm_pois:
+                        print(f"[INFO_AGENT] LLM suggested {len(llm_pois)} POIs (unverified).")
+                        generated.extend(llm_pois)
                 except Exception as e:
                     print(f"[INFO_AGENT] LLM Generation failed: {e}")
 
-            # De-duplicate by name in case RAG and LLM generated the same
-            seen_names = set()
-            deduped = []
-            for p in initial_pois:
-                n = p.get('name', '').lower().strip()
-                if n not in seen_names:
-                    seen_names.add(n)
-                    deduped.append(p)
-            initial_pois = deduped
-            
-            # Geographic Validation: Enforce backend-side geographic validation to prevent invalid POI results
-            if initial_pois and city and self.llm:
-                poi_names = [p.get('name') for p in initial_pois if p.get('source') in ('rag_fallback', 'llm_fallback', 'rag')]
-                if poi_names:
-                    print(f"[INFO_AGENT] Validating {len(poi_names)} LLM/RAG POIs geographically for '{city}'.")
-                    val_prompt = f"""
-                    You are a strict geographic validator. The target city is {city}.
-                    Review the following list of tourist attractions. Identify any attractions that are definitely NOT located in or near {city} (e.g., they belong to a different city like Hyderabad, Delhi, etc.).
-                    
-                    Attractions: {json.dumps(poi_names)}
-                    
-                    Return a JSON array containing ONLY the names of the invalid attractions. If all are valid, return []. Do not output markdown or any other text.
-                    """
-                    try:
-                        val_res = self.llm.invoke([HumanMessage(content=val_prompt)])
-                        val_content = val_res.content.strip()
-                        if val_content.startswith("```json"): val_content = val_content[7:-3].strip()
-                        elif val_content.startswith("```"): val_content = val_content[3:-3].strip()
-                        invalid_names = json.loads(val_content)
-                        if invalid_names and isinstance(invalid_names, list):
-                            invalid_lower = [str(n).lower() for n in invalid_names]
-                            initial_pois = [p for p in initial_pois if p.get('name', '').lower() not in invalid_lower]
-                            print(f"[INFO_AGENT] Geographic validation removed {len(invalid_names)} invalid POIs: {invalid_names}")
-                    except Exception as e:
-                        print(f"[INFO_AGENT] Geographic validation failed: {e}")
-            
-            # Absolute worst-case scenario static fallback (if LLM is down)
-            if not initial_pois:
-                print(f"[INFO_AGENT] All fallbacks failed for '{city}'. Triggering Static Fallback.")
-                initial_pois = [
-                    {
-                        "id": f"{city}_center", "name": f"{city.title()} City Center", "category": "sightseeing", 
-                        "description": f"The vibrant main center of {city.title()}.", "rating": 4.0, "price_level": 2,
-                        "location": {'lat': lat, 'lng': lng}, "source": "static_fallback"
-                    },
-                    {
-                        "id": f"{city}_heritage", "name": f"{city.title()} Historical District", "category": "heritage", 
-                        "description": f"Explore the rich heritage and culture of {city.title()}.", "rating": 4.5, "price_level": 2,
-                        "location": {'lat': lat, 'lng': lng}, "source": "static_fallback"
-                    }
-                ]
+            # 3. Geocode and scope-check every generated record.
+            if generated:
+                validated, dropped = self._validate_generated_pois(
+                    generated, city, lat, lng, country_code=self._country_code_for(city)
+                )
+                generated = validated
+                generated_dropped = dropped
+                if dropped:
+                    print(f"[INFO_AGENT] Dropped {len(dropped)} generated POIs that could not be "
+                          f"verified inside '{city}': {[d['name'] for d in dropped][:8]}")
+
+        # De-duplicate provider + generated records by normalised name.
+        seen_names = set()
+        deduped = []
+        for p in provider_pois + generated:
+            n = str(p.get('name', '')).lower().strip()
+            if n and n not in seen_names:
+                seen_names.add(n)
+                deduped.append(p)
+        initial_pois = deduped
+        if not initial_pois:
+            print(f"[INFO_AGENT] No live or verifiable POIs for '{city}'. "
+                  "Returning an empty list instead of fabricated attractions.")
+
+        self.last_discovery_status = {
+            "city": city,
+            "provider_count": len(provider_pois),
+            "generated_count": len(generated),
+            "dropped_generated": generated_dropped,
+            "used_llm_suggestions": any(p.get("source") == "llm_suggested" for p in generated),
+            "used_rag_extraction": any(p.get("source") == "rag" for p in generated),
+            "empty": not initial_pois,
+        }
         
         # Add estimated_duration if missing and validate image_url
         initial_pois = self.enrich_attractions(initial_pois, city)
@@ -728,6 +824,114 @@ class InformationAgent:
         print(f"[STATE_SEARCH] Returning all {len(all_pois)} state-wide POIs.")
         return all_pois
 
+    def get_attractions_for_cities(self, cities, user_prefs, weather_summary: str = None,
+                                   radius: int = 20000, total_number: int = 80,
+                                   rerank_with_llm: bool = True):
+        """Discover attractions across several verified city centres.
+
+        Country- and region-level requests are handled here instead of being
+        collapsed onto one geocoder centroid.  Each city is searched
+        independently, every record is tagged with the city it came from, and a
+        POI is kept only when its coordinates really are near that city (or a
+        genuine day-trip radius around it).
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        hobbies = user_prefs.get('hobbies') if user_prefs else None
+        cities = [c for c in (cities or []) if c and c.get('name')]
+        if not cities:
+            self.last_discovery_status = {"cities": [], "empty": True, "reason": "no_city_scope"}
+            return []
+
+        def _fetch_city(city):
+            name = city.get('name')
+            try:
+                pois = self.poi_manager.get_attractions(
+                    lat=float(city['lat']), lng=float(city['lng']),
+                    radius=radius, hobbies=hobbies, poi_type="tourist_attraction",
+                )
+                return name, city, (pois or [])
+            except Exception as e:
+                print(f"[CITY_SEARCH] city={name} status=provider_failure error={e}")
+                return name, city, []
+
+        results = {}
+        max_workers = min(5, len(cities))
+        print(f"[CITY_SEARCH] Fetching POIs for {len(cities)} cities concurrently "
+              f"(max_workers={max_workers}).")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_fetch_city, c) for c in cities]
+            for future in as_completed(futures):
+                try:
+                    name, city, pois = future.result()
+                    results[name] = (city, pois)
+                except Exception as e:
+                    print(f"[CITY_SEARCH] worker error: {e}")
+
+        all_pois = []
+        seen = set()
+        per_city = {}
+        for city in cities:  # original order keeps the proposal deterministic
+            name = city['name']
+            _, pois = results.get(name, (city, []))
+            per_city[name] = {"provider_count": len(pois), "kept": 0}
+            for poi in pois:
+                lat = self._coerce_coord(poi.get('latitude', poi.get('lat')))
+                lng = self._coerce_coord(poi.get('longitude', poi.get('lng')))
+                if lat is None or lng is None:
+                    continue
+                distance = haversine_km(city['lat'], city['lng'], lat, lng)
+                # A 20 km provider radius plus a small tolerance; this rejects
+                # results from a different prefecture/city entirely.
+                if distance > max(30.0, radius / 1000.0 + 10.0):
+                    continue
+                poi['city'] = name
+                poi['region'] = city.get('region') or ''
+                poi['city_distance_km'] = round(distance, 2)
+                if city.get('country'):
+                    poi['country'] = city['country']
+                key = poi.get('id') or (str(poi.get('name', '')).lower(), round(lat, 4), round(lng, 4))
+                if key in seen:
+                    continue
+                seen.add(key)
+                all_pois.append(poi)
+                per_city[name]["kept"] += 1
+
+        print(f"[CITY_SEARCH] {sum(v['kept'] for v in per_city.values())} unique POIs "
+              f"from {len(cities)} cities.")
+
+        if not all_pois:
+            self.last_discovery_status = {
+                "cities": per_city, "empty": True, "reason": "all_cities_failed",
+            }
+            return []
+
+        try:
+            duration_days = int((user_prefs or {}).get('duration_days') or 0)
+        except (TypeError, ValueError):
+            duration_days = 0
+        dynamic_cap = max(total_number, duration_days * 6) if duration_days else total_number
+        dynamic_cap = min(dynamic_cap, 160)
+        all_pois.sort(key=lambda x: (x.get('rating') is None,
+                                     -(float(x.get('rating') or 0))))
+        all_pois = all_pois[:dynamic_cap]
+
+        all_pois = self.enrich_attractions(
+            all_pois, ", ".join(c['name'] for c in cities[:3])
+        )
+
+        if user_prefs and self.llm and rerank_with_llm and all_pois:
+            print(f"[CITY_SEARCH] Running single LLM rerank on {len(all_pois)} POIs.")
+            all_pois = self._rerank_attractions_with_llm(all_pois, user_prefs, weather_summary)
+
+        self.last_discovery_status = {
+            "cities": per_city,
+            "empty": False,
+            "total": len(all_pois),
+            "multi_city": len(cities) > 1,
+        }
+        return all_pois
+
     def get_accommodations(self, lat: float, lng: float, budget: str, number: int = 4):
         """Fetch accommodation options based on user budget."""
         return self.poi_manager.get_accommodations(lat, lng, budget, number)
@@ -792,7 +996,7 @@ class InformationAgent:
         try:
             import urllib.request, json
             req = urllib.request.Request(url)
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=self.OSRM_TIMEOUT_SECONDS) as res:
                 data = json.loads(res.read())
                 if data.get('code') == 'Ok':
                     route = data['routes'][0]
@@ -804,10 +1008,15 @@ class InformationAgent:
                         'duration': format_duration(dur_s),
                         'distance_meters': dist_m,
                         'duration_seconds': dur_s,
-                        'fare': None
+                        'fare': None,
+                        'routing_source': 'osrm_route',
+                        'routing_status': 'ok',
                     })
+                else:
+                    print(f"[OSRM][WARN] plan_routes non-Ok code: {data.get('code')}")
         except Exception as e:
-            print(f"OSRM plan_routes error: {e}")
+            print(f"[OSRM][WARN] plan_routes unavailable ({type(e).__name__}: {e}); "
+                  "caller will use the local distance heuristic.")
             
         return routes
 
@@ -832,7 +1041,10 @@ class InformationAgent:
                     'total_duration_in_traffic_seconds': None,
                     'total_distance_text': driving_route['distance'],
                     'total_distance_meters': driving_route['distance_meters'],
-                    'fare': driving_route.get('fare')
+                    'fare': driving_route.get('fare'),
+                    'routing_source': driving_route.get('routing_source', 'osrm_route'),
+                    'routing_status': driving_route.get('routing_status', 'ok'),
+                    'optimized': False,
                  }
             else:
                 print(f"Could not find a driving route from {origin} to {destination} in fallback.")
@@ -861,7 +1073,7 @@ class InformationAgent:
         try:
             import urllib.request, json
             req = urllib.request.Request(url)
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=self.OSRM_TIMEOUT_SECONDS) as res:
                 data = json.loads(res.read())
                 if data.get('code') == 'Ok':
                     trip = data['trips'][0]
@@ -891,10 +1103,16 @@ class InformationAgent:
                         'total_duration_in_traffic_seconds': None,
                         'total_distance_text': format_distance(dist_m),
                         'total_distance_meters': dist_m,
-                        'fare': None
+                        'fare': None,
+                        'routing_source': 'osrm_trip',
+                        'routing_status': 'ok',
+                        'optimized': True,
                     }
+                else:
+                    print(f"[OSRM][WARN] plan_with_waypoints non-Ok code: {data.get('code')}")
         except Exception as e:
-            print(f"An unexpected error occurred during OSRM optimized route planning: {e}")
+            print(f"[OSRM][WARN] Optimized route unavailable "
+                  f"({type(e).__name__}: {e}); caller will use the local distance heuristic.")
             
         return None
 
@@ -1242,84 +1460,145 @@ out 15 tags center;
         except Exception as e:
             print(f"Error getting fuel prices: {str(e)}")
             return None
+    # Fields that must survive enrichment untouched.  The old implementation
+    # rebuilt the dict and silently deleted the very evidence the interest
+    # matcher needed (OSM tags, provider types, Wikidata links).
+    _PRESERVED_POI_FIELDS = (
+        "tags", "types", "osm_tags", "metadata", "wikidata_id", "wikipedia",
+        "wikidata", "wikipedia_url", "osm_id", "osm_type", "place_id",
+        "provider", "source", "country", "country_code", "city", "region",
+        "state_city", "city_name", "opening_hours", "entry_fee", "fee",
+        "price_level", "currency", "rating_status", "price_status",
+        "amenities", "amenities_status", "feature_type", "categories",
+        "interest_match", "matched_interests", "interest_match_reasons",
+        "score_components", "match_percentage", "verified",
+    )
+
+    @staticmethod
+    def _coerce_coord(value):
+        """Return a finite float or ``None`` — never 0.0 for a missing value."""
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        return number
+
+    @staticmethod
+    def _first_real_url(*values):
+        for value in values:
+            if isinstance(value, str) and value.startswith("http"):
+                return value
+        return None
+
     def enrich_attractions(self, pois, city_name):
-        """ONE centralized attraction enrichment function."""
+        """Normalise POIs without inventing facts.
+
+        What changed vs. the previous version:
+
+        * an unreported ``rating`` stays ``None`` (it used to become ``4.0``);
+        * an unreported ``review_count`` / ``price`` stays ``None``;
+        * a missing image stays ``None`` — no random Unsplash photo is attached
+          and presented as if it were the place;
+        * a description is derived only from provider facts (name/category/city)
+          and never claims the place is "popular" or "highly rated";
+        * the address is never synthesised from name + city;
+        * structured tags/types/metadata/Wikidata links are preserved;
+        * missing coordinates stay ``None`` instead of ``(0.0, 0.0)``.
+        """
         from concurrent.futures import ThreadPoolExecutor
         import hashlib
-        
-        # We need a global image cache to persist across instances but keyed safely
-        global _GLOBAL_IMAGE_CACHE
-        if '_GLOBAL_IMAGE_CACHE' not in globals():
-            globals()['_GLOBAL_IMAGE_CACHE'] = {}
 
         def _enrich_single(poi):
+            if not isinstance(poi, dict):
+                return None
             raw_id = poi.get('place_id') or poi.get('id')
-            name = poi.get('name', 'Unknown Attraction')
+            name = str(poi.get('name') or '').strip() or 'Unknown Attraction'
             poi_id = str(raw_id) if raw_id else hashlib.md5(name.encode()).hexdigest()
-            
-            lat = float(poi.get('latitude') or poi.get('location', {}).get('lat', 0))
-            lng = float(poi.get('longitude') or poi.get('location', {}).get('lng', 0))
+
+            loc = poi.get('location') if isinstance(poi.get('location'), dict) else {}
+            lat = self._coerce_coord(
+                poi.get('latitude', poi.get('lat', loc.get('lat', loc.get('latitude'))))
+            )
+            lng = self._coerce_coord(
+                poi.get('longitude', poi.get('lng', loc.get('lng', loc.get('longitude'))))
+            )
+            if lat is not None and not (-90 <= lat <= 90):
+                lat = None
+            if lng is not None and not (-180 <= lng <= 180):
+                lng = None
+
             rating = poi.get('rating')
-            if rating is None: rating = 4.0
-            else: rating = float(rating)
-            
-            # Fetch Image
-            cache_key = f"{city_name.lower().strip()}_{name.lower().strip()}"
-            img_url = poi.get('image_url')
-            if not img_url or not str(img_url).startswith("http"):
-                if cache_key in globals()['_GLOBAL_IMAGE_CACHE']:
-                    img_url = globals()['_GLOBAL_IMAGE_CACHE'][cache_key]
-                else:
-                    try:
-                        img_url = self.poi_manager._fetch_pexels_image(name)
-                        if not img_url:
-                            img_url = self.poi_manager._fetch_pexels_image(f"{name} {city_name}")
-                    except Exception:
-                        img_url = None
-                    
-                    if not img_url:
-                        hash_val = int(hashlib.md5(name.encode()).hexdigest(), 16)
-                        placeholders = [
-                            "https://images.unsplash.com/photo-1502602898657-3e9076113801",
-                            "https://images.unsplash.com/photo-1564507592333-c60657eea523",
-                            "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf",
-                            "https://images.unsplash.com/photo-1537996194471-e657df975ab4",
-                            "https://images.unsplash.com/photo-1512453979798-5ea266f8880c",
-                            "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9"
-                        ]
-                        img_url = placeholders[hash_val % len(placeholders)] + "?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"
-                    
-                    globals()['_GLOBAL_IMAGE_CACHE'][cache_key] = img_url
+            try:
+                rating = float(rating) if rating not in (None, "", False) else None
+            except (TypeError, ValueError):
+                rating = None
+            if rating is not None and not (0 < rating <= 5):
+                rating = None
 
-            # Description Generation
-            desc = poi.get('description', '').strip()
-            if not desc or len(desc) < 20:
-                cat = str(poi.get('category', 'tourist attraction')).replace('_', ' ')
-                desc = f"A popular {cat} located in {city_name}, highly rated by visitors for its experience and atmosphere."
-                
-            duration = poi.get('estimated_duration')
+            review_count = poi.get('review_count', poi.get('user_ratings_total'))
+            try:
+                review_count = int(review_count) if review_count not in (None, "", False) else None
+            except (TypeError, ValueError):
+                review_count = None
+            if review_count is not None and review_count < 0:
+                review_count = None
+
+            metadata = poi.get('metadata') if isinstance(poi.get('metadata'), dict) else {}
+            img_url = self._first_real_url(
+                poi.get('image_url'), poi.get('image'), poi.get('photo'),
+                metadata.get('image'), metadata.get('image_url'),
+                metadata.get('thumbnail'),
+            )
+
+            description = str(poi.get('description') or '').strip()
+            if len(description) < 20:
+                cat = str(poi.get('category') or 'attraction').replace('_', ' ').strip()
+                description = f"{cat.title()} in {city_name}." if city_name else f"{cat.title()}."
+
+            duration = poi.get('estimated_duration') or poi.get('duration')
             if not duration:
-                duration = self.estimate_duration(poi.get('category', 'tourist_attraction'), {})
+                duration = self.estimate_duration(
+                    poi.get('category', 'tourist_attraction'),
+                    {'rating': rating} if rating is not None else {},
+                )
 
-            return {
+            enriched = {
                 "id": poi_id,
                 "name": name,
-                "description": desc,
-                "address": poi.get('address') or f"{name}, {city_name}",
+                "description": description,
+                # No synthetic address: the UI shows "Address not provided".
+                "address": poi.get('address') or poi.get('formatted') or "",
                 "latitude": lat,
                 "longitude": lng,
                 "rating": rating,
-                "review_count": int(poi.get('review_count') or poi.get('user_ratings_total', 0)),
-                "price": poi.get('price_level', 0),
+                "review_count": review_count,
+                "price": poi.get('price_level') if poi.get('price_level') is not None else poi.get('price'),
                 "duration": duration,
                 "category": poi.get('category', 'tourist_attraction'),
                 "image_url": img_url,
                 "source": poi.get('source', 'unknown'),
-                "match_percentage": poi.get('match_percentage', 100)
+                "match_percentage": poi.get('match_percentage', 100),
             }
-            
-        with ThreadPoolExecutor(max_workers=min(8, max(1, len(pois)))) as executor:
-            enriched = list(executor.map(_enrich_single, pois))
-            
+            if lat is not None and lng is not None:
+                enriched["location"] = {"lat": lat, "lng": lng}
+            else:
+                enriched["location"] = None
+
+            for field in self._PRESERVED_POI_FIELDS:
+                if field in poi and poi.get(field) is not None:
+                    enriched.setdefault(field, poi[field])
+            # Explicitly preserve structured evidence even when falsy-but-real.
+            for field in ("tags", "types", "osm_tags", "metadata"):
+                if field in poi and poi[field] not in (None, {}, []):
+                    enriched[field] = poi[field]
+            return enriched
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(pois or [])))) as executor:
+            enriched = [item for item in executor.map(_enrich_single, pois or []) if item]
+
         return enriched
 

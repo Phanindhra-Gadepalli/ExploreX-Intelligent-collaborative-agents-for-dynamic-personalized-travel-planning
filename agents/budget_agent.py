@@ -135,6 +135,45 @@ class BudgetAgent:
     # ── Currency / entry fees ─────────────────────────────────────────────────
     _USD_TO_INR: float = 84.0
 
+    # Static, documented assumptions used only when a provider quote is in a
+    # foreign currency.  They are surfaced in ``currency_assumptions`` so a user
+    # can see that the INR figure is a conversion, not a live FX quote.
+    _CURRENCY_TO_INR: dict = {
+        "USD": 84.0, "EUR": 91.0, "GBP": 107.0, "JPY": 0.56,
+        "AED": 22.9, "SGD": 63.0, "THB": 2.40, "KRW": 0.060,
+        "AUD": 55.0, "CAD": 61.0, "CHF": 95.0, "NZD": 51.0,
+        "MYR": 19.0, "IDR": 0.0053, "VND": 0.0033, "LKR": 0.29,
+        "NPR": 0.62, "TRY": 2.40, "EGP": 1.70,
+    }
+    _CURRENCY_ASSUMPTION_NOTE = (
+        "Foreign-currency quotes are converted with a static reference rate "
+        "bundled with ExploreX; they are indicative, not a live FX quote."
+    )
+
+    # ── International cost index ──────────────────────────────────────────────
+    # Multiplier applied to the Indian Tier-1 baseline (accommodation, food,
+    # local transport and entry fees).  Values are destination *indices*, not
+    # prices: the actual daily figures are still derived from the auditable
+    # Indian baseline and disclosed in the breakdown.
+    _COUNTRY_COST_INDEX: dict = {
+        "japan": 3.2, "south korea": 2.6, "singapore": 3.0, "uae": 2.4,
+        "united arab emirates": 2.4, "united kingdom": 3.0, "france": 2.9,
+        "italy": 2.7, "spain": 2.5, "germany": 2.7, "netherlands": 2.8,
+        "switzerland": 3.8, "portugal": 2.3, "greece": 2.2, "turkey": 1.3,
+        "egypt": 1.0, "usa": 3.1, "united states": 3.1,
+        "united states of america": 3.1, "canada": 2.7, "australia": 2.7,
+        "new zealand": 2.5, "thailand": 1.2, "indonesia": 1.0,
+        "malaysia": 1.1, "vietnam": 0.9, "sri lanka": 0.85, "nepal": 0.8,
+    }
+    _INTERNATIONAL_DEFAULT_INDEX: float = 2.2
+
+    # International entry fees are higher than Indian monument tickets.  The
+    # multiplier is applied to the Indian tier map and shown in the breakdown.
+    _INTERNATIONAL_ENTRY_MULTIPLIER: float = 2.6
+
+    # Petrol/diesel reference used for self-drive fuel estimates (INR/litre).
+    _INTERNATIONAL_FUEL_INR_PER_LITRE: float = 115.0
+
     # price_level 0 = free, 1 = budget spot, 2 = moderate, 3 = significant,
     #             4 = premium (international-grade tourist site)
     # Fees are per person in INR (realistic Indian ticket prices 2024)
@@ -182,19 +221,24 @@ class BudgetAgent:
             budget_level, budget_amount, budget_strictness, budget_warning,
             budget_infeasible, remaining, rooms, days, people, breakdown
         """
-        # ── 1. Resolve budget metadata ────────────────────────────────────────
-        budget_level, budget_amount, budget_strictness = self._resolve_budget_level(user_prefs)
+        # ── 1. Destination profile + budget metadata ─────────────────────────
+        self._last_min_viable = 0.0
+        city_name_pre = str((user_prefs or {}).get("city") or "")
+        if not city_name_pre or city_name_pre.lower() == "any":
+            city_name_pre = (spots[0].get("city", "") if spots else "") or "India"
+        profile = self._destination_profile(user_prefs or {}, city_name_pre, spots)
+        budget_level, budget_amount, budget_strictness = self._resolve_budget_level(
+            user_prefs or {}, profile["cost_index"]
+        )
 
         # ── 2. Trip dimensions ────────────────────────────────────────────────
         num_people = max(1, int(user_prefs.get("people", 1)))
         num_days   = max(1, int(user_prefs.get("days", 1)))
         rooms      = max(1, (num_people + 1) // 2)   # 2 pax per room, rounded up
-        city_name  = user_prefs.get("city", "") or ""
-        if not city_name or city_name.lower() == "any":
-            city_name = spots[0].get("city", "India") if spots else "India"
+        city_name  = city_name_pre
 
         # ── 3. Destination-aware per-day costs (static-primary, LLM-optional) ─
-        acc_ppd, food_ppd, trans_ppd = self._get_per_day_costs(budget_level, city_name)
+        acc_ppd, food_ppd, trans_ppd = self._get_per_day_costs(budget_level, city_name, profile)
 
         # ── 4. Calculate each budget component ────────────────────────────────
         total_acc   = self._calculate_accommodation_cost(acc_ppd, rooms, num_days)
@@ -207,7 +251,7 @@ class BudgetAgent:
         driving_mode = rental_recommended          # covers both real + fallback pricing
         total_trans = self._calculate_local_transport_cost(trans_ppd, num_people, num_days, driving_mode)
 
-        attraction_cost = self._calculate_attraction_cost(spots, num_people)
+        attraction_cost = self._calculate_attraction_cost(spots, num_people, profile)
 
         car_rental_cost = 0.0
         fuel_cost       = 0.0
@@ -215,15 +259,20 @@ class BudgetAgent:
         car_rental_source = None                   # None | "provider" | "fallback_estimate"
         rental_daily_estimate = 0.0
         if driving_mode:
-            fuel_cost, fuel_km = self._calculate_fuel_cost(spots, budget_level, num_days)
+            fuel_cost, fuel_km = self._calculate_fuel_cost(
+                spots, budget_level, num_days,
+                fuel_inr_per_litre=profile["fuel_inr_per_litre"],
+            )
             if actual_rent_car:
                 car_rental_cost, daily_car_rate = self._calculate_car_rental_cost(
-                    car_info, budget_level, num_days
+                    car_info, budget_level, num_days, profile=profile
                 )
                 car_rental_source = "provider"
             else:
                 # Provider returned nothing: estimate per-vehicle per-day rate.
                 default_daily = float(self._RENTAL_DAILY_INR.get(budget_level, 2_500))
+                if profile.get("is_international"):
+                    default_daily *= float(profile.get("cost_index", 1.0))
                 rental_daily_estimate = default_daily
                 car_rental_cost = round(default_daily * num_days, 2)
                 car_rental_source = "fallback_estimate"
@@ -237,7 +286,8 @@ class BudgetAgent:
         )
 
         intercity_transport_cost, intercity_mode = self._calculate_intercity_transport_cost(
-            transit_options, budget_level, num_people, budget_amount, subtotal_without_transit
+            transit_options, budget_level, num_people, budget_amount, subtotal_without_transit,
+            user_prefs=user_prefs,
         )
 
         subtotal = subtotal_without_transit + intercity_transport_cost
@@ -247,9 +297,13 @@ class BudgetAgent:
         budget_infeasible = False
 
         if budget_amount is not None:
-            budget_infeasible, budget_warning = self._check_budget_feasibility(
-                budget_amount, intercity_transport_cost, num_people, num_days, rooms
+            budget_infeasible, budget_warning, min_viable = self._check_budget_feasibility(
+                budget_amount, intercity_transport_cost, num_people, num_days, rooms,
+                profile=profile, attraction_cost=attraction_cost,
+                driving_mode=driving_mode, car_rental_cost=car_rental_cost,
+                fuel_cost=fuel_cost,
             )
+            self._last_min_viable = min_viable
 
             if not budget_infeasible and (subtotal * 1.1) > budget_amount:
                 (
@@ -263,7 +317,24 @@ class BudgetAgent:
                     num_people, num_days, rooms,
                     driving_mode,
                     attraction_cost, car_rental_cost, fuel_cost, intercity_transport_cost,
-                    budget_amount, budget_strictness, spots
+                    budget_amount, budget_strictness, spots,
+                    profile=profile,
+                )
+            elif budget_infeasible and budget_strictness == "strict":
+                # Keep the realistic minimum plan, but never pretend it fits.
+                (
+                    total_acc, total_food, total_trans,
+                    acc_ppd, food_ppd, trans_ppd,
+                    subtotal, _, _,
+                ) = self._optimize_for_budget(
+                    acc_ppd, food_ppd, trans_ppd,
+                    total_acc, total_food, total_trans,
+                    subtotal,
+                    num_people, num_days, rooms,
+                    driving_mode,
+                    attraction_cost, car_rental_cost, fuel_cost, intercity_transport_cost,
+                    budget_amount, budget_strictness, spots,
+                    profile=profile,
                 )
 
         # ── 6. Miscellaneous buffer (10 % of subtotal) ────────────────────────
@@ -282,6 +353,7 @@ class BudgetAgent:
             fuel_cost, fuel_km, budget_level,
             intercity_transport_cost, intercity_mode,
             subtotal, miscellaneous_cost, total,
+            profile=profile,
         )
         if car_rental_source == "fallback_estimate":
             breakdown["car_rental"] = (
@@ -295,10 +367,14 @@ class BudgetAgent:
             )
 
         utilization_percentage = round((total / budget_amount * 100), 1) if budget_amount else 0.0
-        within_budget = total <= budget_amount if budget_amount else True
+        if budget_amount is None:
+            within_budget = None
+        else:
+            within_budget = (total <= budget_amount) and not budget_infeasible
         
         return {
             "budget_type":         budget_strictness or "flexible",
+            "budget_strictness":   budget_strictness or "flexible",
             "budget_limit":        budget_amount,
             "estimated_total":     round(total, 2),
             "remaining_budget":    remaining,
@@ -307,6 +383,10 @@ class BudgetAgent:
             "accommodation":       round(total_acc, 2),
             "food":                round(total_food, 2),
             "activities":          round(attraction_cost, 2),
+            # `local_transport` is the canonical sum-category and therefore
+            # already includes car_rental + fuel.  car_rental/fuel are exposed
+            # separately for information only (budget_norm treats them that way),
+            # so no consumer should add them again.
             "local_transport":     round(total_trans + car_rental_cost + fuel_cost, 2),
             
             # Additional fields needed by system
@@ -318,10 +398,19 @@ class BudgetAgent:
             "budget_category":     budget_level,
             "budget_warning":      budget_warning,
             "budget_infeasible":   budget_infeasible,
+            "min_viable_cost":     round(getattr(self, "_last_min_viable", 0.0) or 0.0, 2),
             "utilization_percentage": utilization_percentage,
             "rooms":               rooms,
             "days":                num_days,
             "people":              num_people,
+            "nights":              num_days,
+            "destination_profile": dict(profile),
+            "cost_index":          profile["cost_index"],
+            "currency":            "INR",
+            "currency_assumptions": (
+                [self._CURRENCY_ASSUMPTION_NOTE]
+                + ([profile["assumption"]] if profile.get("assumption") else [])
+            ),
             "breakdown":           breakdown,
         }
 
@@ -329,7 +418,7 @@ class BudgetAgent:
     # PRIVATE COMPONENT CALCULATORS
     # ═════════════════════════════════════════════════════════════════════════
 
-    def _resolve_budget_level(self, user_prefs: dict) -> tuple:
+    def _resolve_budget_level(self, user_prefs: dict, cost_index: float = 1.0) -> tuple:
         """
         Determine budget level, numeric budget amount (or None), and strictness.
 
@@ -339,9 +428,13 @@ class BudgetAgent:
         days. We therefore derive an effective per-person-per-day figure when the
         group size and duration are known and classify on that:
 
-            <  ₹2,500 / person / day  -> low
-            <  ₹6,000 / person / day  -> medium
-            >= ₹6,000 / person / day  -> high
+            <  ₹2,500 / person / day  -> low      (India)
+            <  ₹6,000 / person / day  -> medium   (India)
+            >= ₹6,000 / person / day  -> high     (India)
+
+        ``cost_index`` scales those thresholds for international destinations
+        (e.g. Japan ≈ 3.2×), so ₹4,000/person/day in Japan is correctly
+        classified as a low budget rather than a comfortable medium one.
 
         When people/days are unknown we fall back to sensible absolute totals
         (<=₹30k low, <=₹1L medium, else high). A string budget ("luxury",
@@ -353,6 +446,11 @@ class BudgetAgent:
         budget_amount     = user_prefs.get("budget_amount")
         budget_strictness = user_prefs.get("budget_strictness")
 
+        if isinstance(budget_strictness, str):
+            budget_strictness = budget_strictness.strip().lower()
+            if budget_strictness not in ("strict", "flexible"):
+                budget_strictness = None
+
         if budget_amount is not None:
             try:
                 budget_amount = int(
@@ -360,6 +458,13 @@ class BudgetAgent:
                 )
             except (ValueError, TypeError):
                 budget_amount = None
+
+        try:
+            index = max(0.5, float(cost_index or 1.0))
+        except (TypeError, ValueError):
+            index = 1.0
+        low_threshold = 2_500 * index
+        medium_threshold = 6_000 * index
 
         if budget_amount is not None:
             # Derive effective per-person-per-day spend when dimensions are known.
@@ -376,15 +481,15 @@ class BudgetAgent:
             # Only trust the per-day model when the trip dimensions are actually
             # meaningful (a real group/length); otherwise use absolute totals.
             if (user_prefs.get("people") or user_prefs.get("days")) and per_person_per_day > 0:
-                if per_person_per_day < 2_500:
+                if per_person_per_day < low_threshold:
                     budget_level = "low"
-                elif per_person_per_day < 6_000:
+                elif per_person_per_day < medium_threshold:
                     budget_level = "medium"
                 else:
                     budget_level = "high"
-            elif budget_amount <= 30_000:
+            elif budget_amount <= 30_000 * index:
                 budget_level = "low"
-            elif budget_amount <= 1_00_000:
+            elif budget_amount <= 1_00_000 * index:
                 budget_level = "medium"
             else:
                 budget_level = "high"
@@ -413,7 +518,76 @@ class BudgetAgent:
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _get_per_day_costs(self, budget_level: str, city: str) -> tuple:
+    def _destination_profile(self, user_prefs: dict, city_name: str,
+                             spots: list | None = None) -> dict:
+        """Return the destination's cost model (national vs international).
+
+        The old code applied Indian Tier-2 prices to every destination, which
+        made a Japan trip look affordable on an Indian budget.  This helper
+        builds a transparent profile:
+
+        * national (India)  → existing tier logic, cost_index 1.0
+        * international     → country index applied to the Indian baseline
+        * unknown country   → explicit assumption flag, never silently cheap
+
+        No POI, price or availability is fabricated here; only the multiplier
+        used by the auditable baseline is chosen.
+        """
+        scope = user_prefs.get("destination_scope") if isinstance(user_prefs, dict) else {}
+        scope = scope if isinstance(scope, dict) else {}
+        country = str(scope.get("country") or "").strip()
+        if not country:
+            for spot in spots or []:
+                candidate = str((spot or {}).get("country") or "").strip()
+                if candidate:
+                    country = candidate
+                    break
+        if not country:
+            country = str(user_prefs.get("country") or "").strip()
+
+        country_key = country.lower().strip()
+        scope_says_intl = bool(scope.get("is_international"))
+        is_international = bool(user_prefs.get("is_international")) or scope_says_intl
+        if country and country_key not in ("india", "in", "bharat"):
+            # A named foreign country is authoritative even if a legacy flag is
+            # missing; this prevents Indian tier pricing from leaking in.
+            if country_key in self._COUNTRY_COST_INDEX:
+                is_international = True
+
+        assumption = None
+        cost_index = 1.0
+        if is_international:
+            cost_index = self._COUNTRY_COST_INDEX.get(country_key)
+            if cost_index is None:
+                cost_index = self._INTERNATIONAL_DEFAULT_INDEX
+                assumption = (
+                    f"No verified cost profile for '{country or city_name}'. "
+                    f"Using a conservative {cost_index:.1f}× international index "
+                    "applied to the Indian Tier-1 baseline."
+                )
+            entry_multiplier = self._INTERNATIONAL_ENTRY_MULTIPLIER
+            fuel_rate = self._INTERNATIONAL_FUEL_INR_PER_LITRE
+            tier = 1
+        else:
+            tier = self._get_city_tier(city_name)
+            entry_multiplier = 1.0
+            fuel_rate = self._PETROL_INR_PER_LITRE
+
+        return {
+            "is_international": bool(is_international),
+            "country": country or ("India" if not is_international else ""),
+            "country_key": country_key,
+            "tier": tier,
+            "cost_index": float(cost_index),
+            "entry_fee_multiplier": float(entry_multiplier),
+            "fuel_inr_per_litre": float(fuel_rate),
+            "assumption": assumption,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _get_per_day_costs(self, budget_level: str, city: str,
+                           profile: dict | None = None) -> tuple:
         """
         Return realistic per-day costs in INR for accommodation, food, and
         local transport, adjusted for the destination city's price tier.
@@ -429,8 +603,9 @@ class BudgetAgent:
 
         Returns (acc_ppd, food_ppd, trans_ppd) — all in INR
         """
-        tier       = self._get_city_tier(city)
-        multiplier = self._TIER_MULTIPLIER.get(tier, 0.80)
+        profile = profile or {}
+        tier       = self._get_city_tier(city) if not profile.get("is_international") else 1
+        multiplier = self._TIER_MULTIPLIER.get(tier, 0.80) * float(profile.get("cost_index", 1.0))
         base       = self._BASE_COSTS.get(budget_level, self._BASE_COSTS["medium"])
         caps       = self._COST_CAPS.get(budget_level, self._COST_CAPS["medium"])
 
@@ -447,14 +622,19 @@ class BudgetAgent:
         default_food  = base["food"]  * multiplier
         default_trans = base["trans"] * multiplier
 
-        # Attempt LLM refinement (secondary)
-        acc_ppd, food_ppd, trans_ppd = self._refine_with_llm(
-            budget_level, city, tier,
-            default_acc, default_food, default_trans,
-            tier_acc_min, tier_acc_max,
-            tier_food_min, tier_food_max,
-            tier_trans_min, tier_trans_max,
-        )
+        # Attempt LLM refinement (secondary). For international destinations the
+        # static country index is authoritative: the legacy prompt described
+        # Indian market rates, which would drag a Japan estimate back down.
+        if profile.get("is_international"):
+            acc_ppd, food_ppd, trans_ppd = default_acc, default_food, default_trans
+        else:
+            acc_ppd, food_ppd, trans_ppd = self._refine_with_llm(
+                budget_level, city, tier,
+                default_acc, default_food, default_trans,
+                tier_acc_min, tier_acc_max,
+                tier_food_min, tier_food_max,
+                tier_trans_min, tier_trans_max,
+            )
 
         # Final clamp to tier-adjusted range
         return (
@@ -602,7 +782,8 @@ class BudgetAgent:
                 return None
         return None
 
-    def _calculate_attraction_cost(self, spots: list, num_people: int) -> float:
+    def _calculate_attraction_cost(self, spots: list, num_people: int,
+                                   profile: dict | None = None) -> float:
         """
         Total attraction entry-fee cost.
 
@@ -617,13 +798,18 @@ class BudgetAgent:
             2 = ₹200       (state museums, mid-range monuments)
             3 = ₹400       (ASI monuments, wildlife reserves)
             4 = ₹750       (Taj Mahal, major national parks)
+
+        For international destinations the same tiers are scaled by
+        ``profile["entry_fee_multiplier"]`` and the scale is stated in the
+        breakdown, so a Japan temple is not priced at an Indian ₹50.
         """
+        multiplier = float((profile or {}).get("entry_fee_multiplier", 1.0) or 1.0)
         total = 0.0
-        for spot in spots:
+        for spot in spots or []:
             tier        = self._resolve_entry_tier(spot)
             per_person  = self._ENTRY_FEE_MAP.get(tier, self._ENTRY_FEE_DEFAULT)
-            total      += per_person * num_people
-        return total
+            total      += per_person * multiplier * num_people
+        return round(total, 2)
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -632,6 +818,7 @@ class BudgetAgent:
         car_info: list | None,
         budget_level: str,
         num_days: int,
+        profile: dict | None = None,
     ) -> tuple:
         """
         Total car rental cost.
@@ -653,7 +840,10 @@ class BudgetAgent:
         from utils import ask_openai, extract_number
 
         default_daily = float(self._RENTAL_DAILY_INR.get(budget_level, 2_500))
-        daily_max     = float(self._RENTAL_DAILY_MAX.get(budget_level, 3_500))
+        cost_index = float((profile or {}).get("cost_index", 1.0) or 1.0)
+        if (profile or {}).get("is_international"):
+            default_daily *= cost_index
+        daily_max     = float(self._RENTAL_DAILY_MAX.get(budget_level, 3_500)) * max(1.0, cost_index if (profile or {}).get("is_international") else 1.0)
 
         if not car_info:
             return 0.0, 0.0
@@ -677,14 +867,24 @@ class BudgetAgent:
             print(f"[BudgetAgent WARN] Car selection LLM failed ({e}); using first option.")
 
         raw_price = car_info[idx].get("price", 0)
-        currency  = str(car_info[idx].get("currency", "USD")).upper().strip()
+        currency  = str(car_info[idx].get("currency") or "").upper().strip()
 
         if raw_price and float(raw_price) > 0:
             price_val = float(raw_price)
 
-            # Convert foreign currency to INR
-            if currency not in ("INR", "RS", "RS.", "₹"):
-                price_val *= self._USD_TO_INR
+            # Convert foreign currency to INR with a documented static rate.
+            # The old code treated EVERY non-INR currency as USD, so a JPY or
+            # EUR quote became a wildly wrong rupee amount.
+            if currency not in ("INR", "RS", "RS.", "₹", ""):
+                rate = self._CURRENCY_TO_INR.get(currency)
+                if rate is None:
+                    print(f"[BUDGET][CAR_RENTAL][FX] Unknown currency '{currency}'; "
+                          "using the default daily estimate instead of assuming USD.")
+                    daily = min(default_daily, daily_max)
+                    return round(daily * num_days, 2), round(daily, 2)
+                price_val *= rate
+                print(f"[BUDGET][CAR_RENTAL][FX] {currency}→INR at static "
+                      f"{rate:.4g} ({self._CURRENCY_ASSUMPTION_NOTE})")
 
             # Determine whether this is a per-day or total price
             # Heuristic: if price_val / num_days falls in a plausible daily range (₹500–₹8,000),
@@ -714,6 +914,7 @@ class BudgetAgent:
         spots: list,
         budget_level: str,
         num_days: int,
+        fuel_inr_per_litre: float | None = None,
     ) -> tuple:
         """
         Total fuel cost for local driving when the user rents a car.
@@ -754,7 +955,8 @@ class BudgetAgent:
         total_km         = capped_daily_km * num_days
 
         litres_consumed  = total_km * consumption / 100.0
-        fuel_cost        = round(litres_consumed * self._PETROL_INR_PER_LITRE, 2)
+        fuel_rate = float(fuel_inr_per_litre or self._PETROL_INR_PER_LITRE)
+        fuel_cost        = round(litres_consumed * fuel_rate, 2)
 
         return fuel_cost, round(total_km, 1)
 
@@ -766,139 +968,132 @@ class BudgetAgent:
         budget_level: str,
         num_people: int,
         budget_amount: int | None = None,
-        subtotal: float = 0.0
+        subtotal: float = 0.0,
+        user_prefs: dict | None = None,
     ) -> tuple:
-        """
-        Round-trip intercity transport cost (origin → destination → origin).
+        """Round-trip intercity transport cost (origin → destination → origin).
 
-        Default selection strategy:
-        ─────────────────────────────────────────────────────────────────────
-        Trains are the default mode for Indian intercity travel — they are the
-        most economical and practical option.  The LOWEST available train fare
-        (sorted by price_inr ascending) is used as the reference cost unless:
+        Cost basis
+        ----------
+        A fare is either per person, per vehicle or per group.  The old code
+        multiplied every mode by ``num_people``, so one ₹4,000 taxi became
+        ₹8,000 for two travellers and ₹16,000 for four.  We now prefer the
+        already-normalised ``group_cost`` (one way, whole party) and multiply it
+        by two only for the return leg.  ``per_vehicle``/``per_group`` prices are
+        therefore no longer multiplied by the party size.
 
-            a) The user / Transit Agent explicitly recommends "flight" or "bus"
-               AND no train service is available for that route, OR
-            b) No trains are available at all for the route.
-
-        Selection order:
-            1. If trains available  → always pick the LOWEST train fare
-               (regardless of budget level or recommended_mode)
-            2. Only switch to flights/buses if the user/agent explicitly
-               selected that mode AND trains are not available.
-            3. Last-resort fallback: cheapest option from any available mode.
-
-        Formula: lowest_one_way_price_INR × 2 × num_people  (round trip)
+        Mode choice
+        -----------
+        1. An explicit user/UI transport preference wins.
+        2. Otherwise the TransitAgent's recommended mode is used when available.
+        3. Otherwise trains (the economical default) if present, else the
+           cheapest priced option.
 
         Returns (cost: float, mode_description: str)
         """
-        if not transit_options or "intercity_transport" not in transit_options:
+        if not transit_options or not isinstance(transit_options, dict):
+            return 0.0, "N/A"
+        if transit_options.get("same_city"):
             return 0.0, "N/A"
 
-        recommended_mode = str(transit_options.get("recommended_mode") or "").lower()
         raw_options = transit_options.get("intercity_transport") or []
+        if not isinstance(raw_options, list):
+            return 0.0, "N/A"
 
-        # Work on copies and price only genuinely-INR quotes. The old
-        # ``o["price_inr"] = float(o.get("estimated_cost", 0))`` both mutated the
-        # shared transit payload and silently read a USD/AED figure as rupees,
-        # which turned a Delhi->Dubai flight into a "320 INR" fare and then into
-        # a Rs 5,000 intercity budget line for ten people.
+        # Explicit user choice must never be overridden by the LLM's
+        # recommendation or by the cheapest-fare heuristic.
+        prefs = user_prefs or {}
+        explicit_choice = str(
+            prefs.get("transport_preference")
+            or prefs.get("selected_transport")
+            or transit_options.get("selected_mode")
+            or transit_options.get("user_selected_mode")
+            or ""
+        ).strip().lower()
+        recommended_mode = str(transit_options.get("recommended_mode") or "").strip().lower()
+
         options_list = []
         for o in raw_options:
             if not isinstance(o, dict):
                 continue
             o = dict(o)
             currency = str(o.get("currency") or transit_options.get("currency") or "INR").strip().upper()
-            if currency not in ("INR", "\u20b9", "RS", "RUPEE", "RUPEES"):
+            inr = currency in ("INR", "\u20b9", "RS", "RS.", "RUPEE", "RUPEES")
+            if not inr:
                 o["price_inr"] = None
-            else:
-                price = o.get("price_inr")
-                if price is None:
-                    price = o.get("estimated_cost")
-                try:
-                    price = float(price) if price not in (None, "") else None
-                except (TypeError, ValueError):
-                    price = None
-                o["price_inr"] = price if price and price > 0 else None
+                options_list.append(o)
+                continue
+
+            price = o.get("price_inr")
+            if price is None:
+                price = o.get("estimated_cost")
+            try:
+                price = float(price) if price not in (None, "") else None
+            except (TypeError, ValueError):
+                price = None
+            o["price_inr"] = price if price and price > 0 else None
+
+            # One-way cost for the whole party.
+            group = o.get("group_cost")
+            try:
+                group = float(group) if group not in (None, "") else None
+            except (TypeError, ValueError):
+                group = None
+            basis = str(o.get("cost_basis") or "").strip().lower()
+            if group is None and o["price_inr"] is not None:
+                if basis in ("per_person", ""):
+                    group = o["price_inr"] * max(1, num_people)
+                else:  # per_vehicle / per_group / per_day / per_trip
+                    group = o["price_inr"]
+            o["_one_way_group_inr"] = group if (group and group > 0) else None
             options_list.append(o)
 
-        priced = [o for o in options_list if o.get("price_inr")]
+        priced = [o for o in options_list if o.get("_one_way_group_inr")]
         if not priced:
             return 0.0, "N/A"
 
-        trains           = [o for o in priced if str(o.get("mode", "")).lower() == "train"]
-        flights          = [o for o in priced if str(o.get("mode", "")).lower() == "flight"]
-        buses            = [o for o in priced if str(o.get("mode", "")).lower() == "bus"]
+        def _mode_of(option):
+            return str(option.get("mode") or "").strip().lower()
 
-        options: list = []
-        mode_label    = "transport"
+        def _pick(mode_name):
+            matches = [o for o in priced if _mode_of(o) == mode_name]
+            return sorted(matches, key=lambda x: float(x["_one_way_group_inr"])) if matches else []
 
-        # ── Step 1: Gather all available options ──
-        all_options = []
-        if flights: all_options.append(("flight", sorted(flights, key=lambda f: float(f.get("price_inr", 0)))))
-        if trains:  all_options.append(("train",  sorted(trains, key=lambda t: float(t.get("price_inr", 0)))))
-        if buses:   all_options.append(("bus",    sorted(buses, key=lambda b: float(b.get("price_inr", 0)))))
+        def _round_trip(option):
+            return round(float(option["_one_way_group_inr"]) * 2, 2)
 
-        if not all_options:
-            return 0.0, "N/A"
+        preferred_modes = []
+        for candidate in (explicit_choice, recommended_mode):
+            for token in ("flight", "train", "bus", "taxi", "car", "ferry"):
+                if token in candidate and token not in preferred_modes:
+                    preferred_modes.append(token)
+        if not preferred_modes:
+            preferred_modes = ["train"] if _pick("train") else []
 
-        # ── Step 2: Determine preferred mode ──
-        preferred_mode = "train" # Default
-        if "flight" in recommended_mode and flights: preferred_mode = "flight"
-        elif "bus" in recommended_mode and buses: preferred_mode = "bus"
-        elif trains: preferred_mode = "train"
-        else: preferred_mode = all_options[0][0]
+        chosen = None
+        mode_label = "transport"
+        for mode_name in preferred_modes:
+            matches = _pick(mode_name)
+            if not matches:
+                continue
+            option = matches[0]
+            cost = _round_trip(option)
+            # An explicit choice is respected even if it exceeds the budget; the
+            # feasibility warning then explains the overrun. Only the *implicit*
+            # recommendation is allowed to fall back to an affordable mode.
+            if explicit_choice:
+                chosen, mode_label = option, mode_name
+                break
+            if budget_amount is None or (subtotal + cost) * 1.1 <= budget_amount:
+                chosen, mode_label = option, mode_name
+                break
 
-        # ── Step 3: Find the best affordable mode ──
-        options = []
-        mode_label = preferred_mode
+        if chosen is None:
+            # Cheapest option across every mode (still respecting the fare basis).
+            cheapest = sorted(priced, key=lambda x: float(x["_one_way_group_inr"]))[0]
+            chosen, mode_label = cheapest, _mode_of(cheapest) or "transport"
 
-        # Helper to check if a mode is affordable
-        def is_affordable(opts):
-            if not opts: return False
-            cost = float(opts[0].get("price_inr", 0)) * 2 * num_people
-            if budget_amount is None: return True
-            # Allow transport if it + subtotal fits within budget (allowing a 10% buffer for misc)
-            return (subtotal + cost) * 1.1 <= budget_amount
-
-        # Try preferred mode first
-        for mode, opts in all_options:
-            if mode == preferred_mode:
-                if is_affordable(opts) or budget_amount is None:
-                    options = opts
-                    mode_label = mode
-                    break
-
-        # If preferred mode is unaffordable or wasn't set properly, fallback to cheapest available
-        if not options:
-            # Flatten and sort all available options by price
-            flat_options = []
-            for mode, opts in all_options:
-                for opt in opts:
-                    flat_options.append((mode, opt))
-            
-            flat_options.sort(key=lambda x: float(x[1].get("price_inr", 0)))
-            
-            # Find cheapest affordable
-            for mode, opt in flat_options:
-                cost = float(opt.get("price_inr", 0)) * 2 * num_people
-                if budget_amount is None or (subtotal + cost) * 1.1 <= budget_amount:
-                    options = [opt]
-                    mode_label = mode
-                    break
-            
-            # If nothing is affordable, just pick the absolute cheapest
-            if not options and flat_options:
-                options = [flat_options[0][1]]
-                mode_label = flat_options[0][0]
-
-        if not options:
-            return 0.0, "N/A"
-
-        # Always use the first item in the sorted list (lowest fare)
-        one_way_inr = float(options[0].get("price_inr", 0))
-        total_cost  = one_way_inr * 2 * num_people  # round trip
-        return total_cost, mode_label
+        return _round_trip(chosen), mode_label
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -918,32 +1113,57 @@ class BudgetAgent:
         num_people: int,
         num_days: int,
         rooms: int,
+        profile: dict | None = None,
+        attraction_cost: float = 0.0,
+        driving_mode: bool = False,
+        car_rental_cost: float = 0.0,
+        fuel_cost: float = 0.0,
     ) -> tuple:
-        """
-        Determine whether the stated budget is feasible at all.
+        """Compare the stated budget with a realistic minimum viable cost.
 
-        A trip is considered infeasible when the budget is less than 65 % of
-        the minimum viable cost (cheapest low-budget trip possible).
+        The previous version declared a trip feasible whenever the budget was at
+        least 65 % of an Indian-priced minimum, then the optimiser could shave
+        variable costs until the displayed total "fit".  A strict ₹40,000 Japan
+        budget then appeared satisfied by an unrealistically cheap plan.
 
-        Returns (is_infeasible: bool, warning_message: str | None)
+        Now the minimum uses the *destination's* low-tier floor (country index
+        included) plus the selected paid attractions, rental/fuel and intercity
+        fare.  If the budget is below that floor, no optimisation can make the
+        trip feasible and we say so explicitly.
+
+        Returns ``(is_infeasible, warning, minimum_viable_cost)``.
         """
         caps = self._COST_CAPS["low"]
+        index = float((profile or {}).get("cost_index", 1.0) or 1.0)
+        is_intl = bool((profile or {}).get("is_international"))
+
+        min_acc = caps["acc_min"] * (index if is_intl else 1.0) * rooms * num_days
+        min_food = caps["food_min"] * (index if is_intl else 1.0) * num_people * num_days
+        if driving_mode:
+            min_local = float(car_rental_cost or 0.0) + float(fuel_cost or 0.0)
+        else:
+            min_local = caps["trans_min"] * (index if is_intl else 1.0) * num_people * num_days
+
         min_viable = (
-            caps["acc_min"]   * rooms      * num_days
-            + caps["food_min"]  * num_people * num_days
-            + caps["trans_min"] * num_people * num_days
-            + intercity_transport_cost
+            min_acc + min_food + min_local
+            + float(attraction_cost or 0.0) + float(intercity_transport_cost or 0.0)
         )
 
-        if budget_amount < min_viable * 0.65:
+        if budget_amount < min_viable:
+            shortfall = min_viable - budget_amount
             warning = (
-                f"Your budget of ₹{budget_amount:,} appears too low for a {num_days}-day trip "
-                f"for {num_people} person(s). Minimum realistic cost: ₹{int(min_viable * 1.1):,}. "
-                "Consider increasing your budget, reducing trip duration, or fewer paid attractions."
+                f"Your budget of ₹{budget_amount:,} does not cover the realistic minimum for "
+                f"a {num_days}-day trip for {num_people} person(s)"
+                + (f" to {profile.get('country')}" if profile and profile.get("country") else "")
+                + f" — the minimum is ₹{int(round(min_viable)):,}, a shortfall of "
+                f"₹{int(round(shortfall)):,}. "
+                "This estimate uses the destination's low-cost floor; transport, accommodation "
+                "and food are not free. Please increase the budget, reduce the number of days, "
+                "choose fewer paid attractions, or travel in a cheaper season."
             )
-            return True, warning
+            return True, warning, min_viable
 
-        return False, None
+        return False, None, min_viable
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -966,7 +1186,8 @@ class BudgetAgent:
         intercity_transport_cost: float,
         budget_amount: int,
         budget_strictness: str | None,
-        spots: list = None
+        spots: list = None,
+        profile: dict | None = None,
     ) -> tuple:
         """
         Iteratively reduce variable costs until the total fits the budget.
@@ -984,6 +1205,9 @@ class BudgetAgent:
                  new_total, budget_warning)
         """
         caps    = self._COST_CAPS["low"]
+        index   = float((profile or {}).get("cost_index", 1.0) or 1.0)
+        if (profile or {}).get("is_international"):
+            caps = {k: v * index for k, v in caps.items()}
         sa, sf, st = acc_ppd, food_ppd, trans_ppd
 
         new_total                  = current_total
@@ -1066,6 +1290,7 @@ class BudgetAgent:
         fuel_cost: float, fuel_km: float, budget_level: str,
         intercity_transport_cost: float, intercity_mode: str,
         subtotal: float, miscellaneous_cost: float, total: float,
+        profile: dict | None = None,
     ) -> dict:
         """
         Build human-readable calculation strings for every budget component.
@@ -1073,6 +1298,18 @@ class BudgetAgent:
         """
         consumption = self._CONSUMPTION_L_PER_100KM.get(budget_level, 8.0)
         mileage_kml = round(100.0 / consumption, 1)  # convert L/100km → km/L
+        profile = profile or {}
+        fuel_rate = float(profile.get("fuel_inr_per_litre", self._PETROL_INR_PER_LITRE) or self._PETROL_INR_PER_LITRE)
+        entry_multiplier = float(profile.get("entry_fee_multiplier", 1.0) or 1.0)
+        basis_note = ""
+        if profile.get("is_international"):
+            basis_note = (
+                f"International basis: {profile.get('country') or 'destination'} "
+                f"index ×{float(profile.get('cost_index', 1.0)):.2f} applied to the INR baseline; "
+                f"entry fees ×{entry_multiplier:.1f}."
+            )
+            if profile.get("assumption"):
+                basis_note += " " + str(profile["assumption"])
 
         acc_line = (
             f"₹{acc_ppd:,.0f}/room/night × {rooms} room(s) × {num_days} nights"
@@ -1101,7 +1338,7 @@ class BudgetAgent:
                 f"₹{daily_rate:,}/day × {num_days} days = ₹{car_rental_cost:,.0f}"
             )
             fuel_line  = (
-                f"{fuel_km:.0f} km ÷ {mileage_kml} km/L × ₹{self._PETROL_INR_PER_LITRE:.0f}/L"
+                f"{fuel_km:.0f} km ÷ {mileage_kml} km/L × ₹{fuel_rate:.0f}/L"
                 f" = ₹{fuel_cost:,.0f}"
             )
         else:
@@ -1109,13 +1346,14 @@ class BudgetAgent:
             fuel_line = "No fuel cost (no car rental)"
 
         if intercity_transport_cost > 0:
-            one_way    = round(intercity_transport_cost / (2 * num_people))
+            one_way_group = round(intercity_transport_cost / 2)
             transit_ln = (
-                f"₹{one_way:,} ({intercity_mode}) × 2 (round-trip) × {num_people} person(s)"
-                f" = ₹{intercity_transport_cost:,.0f}"
+                f"₹{one_way_group:,} ({intercity_mode}) for the party, one way × 2 "
+                f"(round-trip) = ₹{intercity_transport_cost:,.0f} "
+                f"[{num_people} traveller(s); per-vehicle fares are not multiplied by party size]"
             )
         else:
-            transit_ln = "Not applicable (same city) — ₹0"
+            transit_ln = "Not applicable (same city or no priced quote) — ₹0"
 
         misc_line = (
             f"10% of ₹{subtotal:,.0f} subtotal = ₹{miscellaneous_cost:,.0f}"
@@ -1135,6 +1373,7 @@ class BudgetAgent:
             "intercity_transport": transit_ln,
             "miscellaneous":       misc_line,
             "total":               total_line,
+            "cost_basis":          basis_note or "Indian domestic pricing (city tier applied to the INR baseline).",
         }
 
     # ═════════════════════════════════════════════════════════════════════════

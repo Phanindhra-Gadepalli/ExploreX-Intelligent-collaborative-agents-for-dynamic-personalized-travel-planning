@@ -1,28 +1,38 @@
 import json
 import random
+from typing import List, Optional
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 # langchain_google_genai only recognises langchain_core.pydantic_v1.BaseModel
 # schemas in convert_to_genai_function_declarations; a pydantic v2 model falls
 # through to the callable branch and raises "Value not declarable with JSON Schema".
 from langchain_core.pydantic_v1 import BaseModel, Field
-from typing import List
+
+from services.structured_parse import records_from_text, clamp_rating, clamp_int, clean_name
+from services.interest_match import match_interests
 
 class POILocation(BaseModel):
     lat: float
     lng: float
 
 class POIExtraction(BaseModel):
+    """Honest RAG POI schema.
+
+    Unknown values are ``None`` — the previous schema defaulted every record to
+    ``rating=4.5`` / ``user_ratings_total=100`` / ``price_level=2``, which made
+    model output look like verified provider data.
+    """
     id: str = ""
     name: str
-    rating: float = 4.5
-    user_ratings_total: int = 100
-    price_level: int = 2
-    address: str = ""
-    location: POILocation
     category: str = "tourist_attraction"
-    types: List[str] = ["tourist_attraction"]
     description: str = ""
+    address: str = ""
+    types: List[str] = Field(default_factory=list)
+    rating: Optional[float] = None
+    user_ratings_total: Optional[int] = None
+    price_level: Optional[int] = None
+    location: Optional[POILocation] = None
     source: str = "rag_extraction"
 
 class POIExtractionList(BaseModel):
@@ -250,11 +260,17 @@ class RecommendAgent:
             if attr['id'] in seen_ids:
                 continue
             
-            # If the score is high and it has decent semantic alignment (more than just popularity), it's interest_based
-            if score >= 50.0 and (self.embedder is None or score > popularity_score + 10.0):
+            # Label interest alignment with the shared deterministic matcher,
+            # never with popularity. A high rating cannot turn a shopping mall
+            # into a "photography" match. These labels mirror the workflow's
+            # canonical values (interest_based / outside_interests / discovery).
+            matched, _reasons = match_interests(attr, user_prefs or {})
+            if matched:
                 attr['recommendation_type'] = 'interest_based'
+            elif str((user_prefs or {}).get('hobbies') or '').strip():
+                attr['recommendation_type'] = 'outside_interests'
             else:
-                attr['recommendation_type'] = 'popular'
+                attr['recommendation_type'] = 'discovery'
                 
             final_attractions.append(attr)
             seen_ids.add(attr['id'])
@@ -365,35 +381,45 @@ class RecommendAgent:
         return None
         
     def extract_pois_from_text(self, text, city, lat, lng):
-        """Extracts structured POI dictionaries from RAG text using LLM."""
+        """Extract POIs that are explicitly named in retrieved text.
+
+        Coordinates are optional: when the text does not state them the caller
+        (``TravelGraph._process_retrieval``) geocodes the name inside the
+        destination and drops anything it cannot verify.  Ratings, review counts
+        and prices are only kept when the text states them.
+        """
         if not text or "No additional background knowledge" in text or len(text) < 20:
             return []
-            
+
         prompt = f"""
-        Extract all tourist attractions, points of interest, and famous places mentioned in the following text about {city}.
-        
+        Extract every tourist attraction or point of interest that is EXPLICITLY
+        named in the text below about {city}. Do not add places from your own
+        knowledge and do not invent details.
+
+        Return JSON of the form:
+        {{"pois": [
+          {{"name": "...", "category": "...", "description": "...",
+            "address": "...", "latitude": null, "longitude": null,
+            "rating": null, "user_ratings_total": null, "price_level": null}}
+        ]}}
+
+        Rules:
+        - "description" may only summarise what the text says.
+        - Include latitude/longitude (decimal degrees) ONLY if the text states
+          coordinates; otherwise leave both null. Never guess a position.
+        - Include rating/review count/price only if the text states them.
+        - Never return generic entries such as "City Center" or "Local Market".
+
         Text:
         {text}
-        
-        Extract the attractions and return them as a JSON list.
         """
-        
+
         pois = []
         try:
-            # The installed google-genai converter cannot express array fields
-            # inside a Gemini function declaration (it omits `items`, producing
-            # "properties[pois].items: missing field"), so with_structured_output
-            # fails for any schema that contains a list. Native JSON mode
-            # (response_mime_type=application/json + response_schema) accepts the
-            # same schema reliably, so we use it here and parse the returned JSON
-            # into the Pydantic model ourselves.
             json_model = ChatGoogleGenerativeAI(
                 model=self.model_name,
                 temperature=0,
-                model_kwargs={
-                    "response_mime_type": "application/json",
-                    "response_schema": POIExtractionList,
-                },
+                model_kwargs={"response_mime_type": "application/json"},
             )
             raw = json_model.invoke([HumanMessage(content=prompt)]).content
             if isinstance(raw, list):  # some versions return multimodal parts
@@ -401,36 +427,74 @@ class RecommendAgent:
                     part.get("text", "") for part in raw
                     if isinstance(part, dict) and "text" in part
                 )
-            text = (raw or "").strip()
-            # Strip markdown code fences (```json ... ```) if present.
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-
-            data = json.loads(text)
-            items = data.get("pois", []) if isinstance(data, dict) else data
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                loc = item.get("location")
-                if not isinstance(loc, dict) or loc.get("lat") is None or loc.get("lng") is None:
-                    continue  # skip POIs the route/map cannot place
-                try:
-                    pois.append(POIExtraction(**item).dict())
-                except Exception:
-                    continue
+            records = records_from_text(raw)
+            pois = self._normalize_extracted_pois(records, city, lat, lng)
         except Exception as e2:
             print(f"[RECOMMEND_AGENT] RAG POI extraction failed (non-fatal): {e2}. Falling back to empty list.")
             pois = []
 
-        if isinstance(pois, list):
-            import uuid
-            for p in pois:
-                if "id" not in p or not p["id"]:
-                    p["id"] = f"rag_{uuid.uuid4().hex[:8]}"
+        if pois:
             print(f"[RECOMMEND_AGENT] Successfully extracted {len(pois)} POIs from RAG knowledge.")
-            return pois
-            
-        return []
+        return pois
+
+    @staticmethod
+    def _normalize_extracted_pois(records, city, lat, lng):
+        """Validate, de-duplicate and normalise raw extracted records."""
+        import uuid
+
+        normalized = []
+        seen = set()
+        for item in records or []:
+            if not isinstance(item, dict):
+                continue
+            name = clean_name(item.get("name") or item.get("title"))
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+
+            item_lat = item.get("latitude", item.get("lat"))
+            item_lng = item.get("longitude", item.get("lng", item.get("lon")))
+            loc = item.get("location") if isinstance(item.get("location"), dict) else {}
+            if item_lat is None:
+                item_lat = loc.get("lat", loc.get("latitude"))
+            if item_lng is None:
+                item_lng = loc.get("lng", loc.get("longitude"))
+            location = None
+            try:
+                if item_lat is not None and item_lng is not None:
+                    item_lat, item_lng = float(item_lat), float(item_lng)
+                    if -90 <= item_lat <= 90 and -180 <= item_lng <= 180:
+                        location = {"lat": item_lat, "lng": item_lng}
+            except (TypeError, ValueError):
+                location = None
+
+            rating = clamp_rating(item.get("rating"))
+            review_count = clamp_int(item.get("user_ratings_total", item.get("review_count")))
+            price_level = clamp_int(item.get("price_level"))
+
+            poi = {
+                "id": str(item.get("id") or f"rag_{uuid.uuid4().hex[:8]}"),
+                "name": name,
+                "category": str(item.get("category") or "tourist_attraction"),
+                "description": str(item.get("description") or "").strip(),
+                "address": str(item.get("address") or "").strip(),
+                "latitude": location["lat"] if location else None,
+                "longitude": location["lng"] if location else None,
+                "location": location,
+                "coords_verified": bool(location),
+                "verified": False,
+                "rating": rating,
+                "review_count": review_count,
+                "rating_status": "reported_by_source" if rating is not None else "unavailable",
+                "price_level": price_level,
+                "price_status": "reported_by_source" if price_level is not None else "unavailable",
+                "types": item.get("types") if isinstance(item.get("types"), list) else [],
+                "city": city,
+                "source": "rag",
+            }
+            poi["id"] = poi["id"] if poi["id"] else f"rag_{uuid.uuid4().hex[:8]}"
+            normalized.append(poi)
+        return normalized

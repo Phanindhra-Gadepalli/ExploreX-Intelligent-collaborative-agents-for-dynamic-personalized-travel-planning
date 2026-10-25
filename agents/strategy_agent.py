@@ -19,19 +19,165 @@ class DailyPlanOutput(BaseModel):
     plan: Dict[str, List[str]] = Field(description="A dictionary mapping day names like 'day1', 'day2' to lists of attraction names.")
 
 class StrategyAgent:
+    # Free-time labels the planner may emit instead of a real POI.  They are
+    # deliberately *not* attractions and are excluded from the flat attraction
+    # list, the budget and the map.  The set mirrors RouteAgent.SEMANTIC_LABELS.
+    FILLER_LABELS = {
+        "relaxation", "leisure", "free time", "rest", "rest day", "spare time",
+        "lunch break", "lunch", "dinner", "breakfast", "acclimatization",
+        "acclimatisation", "shopping", "local exploration", "walking tour",
+    }
+
     def __init__(self, model_name="gemini-flash-lite-latest"):
         """Initialize StrategyAgent with AI model for planning"""
         self.model = ChatGoogleGenerativeAI(model=model_name, temperature=0.7, streaming=True)
-    
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Deterministic daily-plan cleanup
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _day_number(key):
+        match = re.search(r"(\d+)", str(key))
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _norm_name(name):
+        return re.sub(r"\s+", " ", str(name or "")).strip().lower()
+
+    @staticmethod
+    def _strip_numbering(name):
+        return re.sub(r"^\s*\d+[).\-]\s*", "", str(name or "")).strip()
+
+    def _resolve_selected(self, name, selected_by_norm, selected_order):
+        """Resolve a planner name to one of the traveller's selected places.
+
+        Exact and case/whitespace-insensitive matches are preferred.  A
+        substring match is accepted only when it identifies exactly one place,
+        so "Tiger" cannot silently become "Tiger Hill" and a different POI.
+        """
+        cleaned = self._strip_numbering(name)
+        key = self._norm_name(cleaned)
+        if not key:
+            return None
+        if key in selected_by_norm:
+            return selected_by_norm[key]
+
+        hits = [
+            selected_by_norm[n]
+            for n in selected_order
+            if len(key) > 5 and (
+                key in n or n in key
+            )
+        ]
+        if len(hits) == 1:
+            return hits[0]
+        return None
+
+    def _finalize_daily_plan(self, raw_plan, selected_spots, total_days):
+        """Make a model-proposed plan safe, complete and deterministic.
+
+        Guarantees:
+          * only the traveller's selected places and explicit free-time labels
+            survive — nothing invented reaches the itinerary;
+          * a selected place appears at most once across the whole trip;
+          * every selected place appears on exactly one day, even when the model
+            omitted it or the model call failed completely;
+          * every day 1..N exists, so the UI always renders N days;
+          * filler labels are never returned as attractions.
+        """
+        try:
+            days_int = max(1, int(total_days))
+        except (TypeError, ValueError):
+            days_int = 1
+
+        selected = [
+            spot for spot in (selected_spots or [])
+            if isinstance(spot, dict) and str(spot.get("name") or "").strip()
+        ]
+        selected_by_norm = {}
+        selected_order = []
+        for spot in selected:
+            norm = self._norm_name(spot.get("name"))
+            if norm and norm not in selected_by_norm:
+                selected_by_norm[norm] = spot
+                selected_order.append(norm)
+
+        plan = {f"day{d}": [] for d in range(1, days_int + 1)}
+        placed = set()
+        seen_labels = set()
+
+        # Group raw entries by integer day.  Unknown/out-of-range day keys are
+        # ignored; their names are re-inserted below if they were selected.
+        raw_by_day = {}
+        for raw_key, names in (raw_plan or {}).items():
+            day_num = self._day_number(raw_key)
+            if day_num is None or not (1 <= day_num <= days_int):
+                continue
+            if not isinstance(names, list):
+                continue
+            raw_by_day.setdefault(day_num, []).extend(names)
+
+        for day_num in range(1, days_int + 1):
+            day_key = f"day{day_num}"
+            for raw_name in raw_by_day.get(day_num, []):
+                if not isinstance(raw_name, str) or not raw_name.strip():
+                    continue
+                label = self._norm_name(self._strip_numbering(raw_name))
+                if label in self.FILLER_LABELS:
+                    # Keep one instance of each free-time label; repeating
+                    # "Relaxation" on every day is not useful itinerary data.
+                    if label not in seen_labels:
+                        seen_labels.add(label)
+                        plan[day_key].append(self._strip_numbering(raw_name))
+                    continue
+
+                spot = self._resolve_selected(raw_name, selected_by_norm, selected_order)
+                if spot is None:
+                    print(f"[STRATEGY] Dropping planner name '{raw_name}': "
+                          "not one of the selected attractions.")
+                    continue
+                norm = self._norm_name(spot.get("name"))
+                if norm in placed:
+                    print(f"[STRATEGY] Removing duplicate across days: '{spot.get('name')}'")
+                    continue
+                placed.add(norm)
+                plan[day_key].append(spot.get("name"))
+
+        # Place every selected attraction that the model missed.  The lightest
+        # day (earliest on ties) always receives the next one, which balances a
+        # 10-place selection over 3 days as 4/3/3 instead of dumping them on
+        # day 1.  This is deterministic for identical inputs.
+        missing = [
+            selected_by_norm[norm]
+            for norm in selected_order
+            if norm not in placed
+        ]
+        for spot in missing:
+            target = min(
+                (f"day{d}" for d in range(1, days_int + 1)),
+                key=lambda k: (len(plan[k]), self._day_number(k) or 999),
+            )
+            plan[target].append(spot.get("name"))
+            placed.add(self._norm_name(spot.get("name")))
+            print(f"[STRATEGY] Re-inserted selected attraction "
+                  f"'{spot.get('name')}' into {target}.")
+
+        # Flat attraction list in itinerary order.  Filler labels are excluded.
+        ordered_details = []
+        emitted = set()
+        for day_num in range(1, days_int + 1):
+            for name in plan[f"day{day_num}"]:
+                norm = self._norm_name(name)
+                spot = selected_by_norm.get(norm)
+                if spot is None or norm in emitted:
+                    continue
+                emitted.add(norm)
+                ordered_details.append(spot)
+
+        return plan, ordered_details
+
     def plan_remaining_time(self, selected_spots, total_days, all_attractions, user_prefs, weather_summary, retrieved_knowledge=None):
-        with open("input of strategy.txt", "w") as f: #for debug
-            json.dump({
-                "selected_spots": selected_spots,
-                "total_days": total_days,
-                "all_attractions": all_attractions,
-                "user_prefs": user_prefs,
-                "weather_summary": weather_summary
-            }, f, indent=4)
         print("now in plan_remaining_time")
         try:
             """Calculate remaining time and suggest additional attractions"""
@@ -54,17 +200,7 @@ class StrategyAgent:
                     "location": location
                 })
             
-            all_attractions_data = []
-            for spot in all_attractions:
-                all_attractions_data.append({
-                    "id": spot["id"],
-                    "name": spot["name"],
-                    "estimated_duration": spot.get("estimated_duration", 2),
-                })
-            name_to_all_map = {i["name"]:i for i in selected_spots} # Map name to full attraction object using ONLY selected spots
-            
             max_try = 5
-            final_planned_attractions_names = []
             daily_plan_raw = {}
 
             user_prefs_str = json.dumps(user_prefs, indent=2, ensure_ascii=False)
@@ -78,7 +214,6 @@ class StrategyAgent:
                 Additional specific requirements/constraints from user:
                 {specific_requirements}
                 
-                Please consider these specific requirements when creating the itinerary.
                 Please consider these specific requirements when creating the itinerary.
                 """
             
@@ -185,113 +320,38 @@ class StrategyAgent:
                     continue
 
 
-                #: attractions_name
-                current_plan_attraction_names = []
-                for day_key in sorted(daily_plan_raw.keys()): # Ensure consistent order for validation
-                    if isinstance(daily_plan_raw[day_key], list):
-                        current_plan_attraction_names.extend(daily_plan_raw[day_key])
-                
-                # Validation: Check if all selected spots are in the plan.
-                # Also, check for hallucinated POIs and replace/remove them.
-                valid_plan = True
-                
-                # Check for missed spots
-                missed_spots = []
-                for selected_spot_info in selected_data:
-                    if selected_spot_info["name"] not in current_plan_attraction_names:
-                        print(f"Validation Warning: Selected spot '{selected_spot_info['name']}' not in the generated plan.")
-                        missed_spots.append(selected_spot_info["name"])
-                
-                # Check for hallucinated spots
-                valid_selected_names = {s["name"] for s in selected_data}
-                # Allow standard filler labels
-                allowed_labels = {"Relaxation", "Leisure"}
-                
-                cleaned_plan = {}
-                for day_key, names in daily_plan_raw.items():
-                    cleaned_names = []
-                    for name in names:
-                        if name in valid_selected_names or name in allowed_labels:
-                            cleaned_names.append(name)
-                        else:
-                            print(f"Validation Warning: Removing hallucinated or unapproved POI: '{name}'")
-                            valid_plan = False # Not strictly perfect, but we can fix it!
-                    
-                    # Fill in missed spots if any
-                    while missed_spots and len(cleaned_names) < 3:
-                        cleaned_names.append(missed_spots.pop(0))
-                        
-                    cleaned_plan[day_key] = cleaned_names
-                    
-                daily_plan_raw = cleaned_plan
-                
-                # If there are still missed spots, just append them to the last day or any day
-                if missed_spots:
-                    for day_key in sorted(daily_plan_raw.keys()):
-                        if missed_spots:
-                            daily_plan_raw[day_key].append(missed_spots.pop(0))
-                            
-                valid_plan = True # We fixed it!
-                
-                current_plan_attraction_names = []
-                for day_key in sorted(daily_plan_raw.keys()):
-                    if isinstance(daily_plan_raw[day_key], list):
-                        current_plan_attraction_names.extend(daily_plan_raw[day_key])
-                
-                if valid_plan:
-                    final_planned_attractions_names = current_plan_attraction_names
-                    print(f"Valid plan found: {daily_plan_raw}")
-                    break # Exit loop if a valid plan is found
-                else:
-                    print(f"Invalid plan on attempt {i+1}, retrying...")
+                # Reject an empty model response and retry; final cleanup below
+                # handles partial, duplicate or invented entries.
+                if isinstance(daily_plan_raw, dict) and any(
+                    isinstance(v, list) and v for v in daily_plan_raw.values()
+                ):
+                    print(f"[STRATEGY] LLM proposed daily plan: {daily_plan_raw}")
+                    break
 
-            if not final_planned_attractions_names: # If no valid plan after max_try
-                print("Failed to generate a valid plan after multiple attempts. Returning selected spots as fallback.")
-                # Fallback: use selected spots if planning fails, or handle error appropriately
-                additional_attractions_details = [spot for spot in selected_spots]
-                
-                # Create a fallback daily plan to ensure the UI renders correctly
-                daily_plan_raw = {}
-                days_int = int(total_days)
-                for d in range(1, days_int + 1):
-                    daily_plan_raw[f"day{d}"] = []
-                
-                for idx, spot in enumerate(selected_spots):
-                    day_idx = (idx % days_int) + 1
-                    daily_plan_raw[f"day{day_idx}"].append(spot["name"])
+            # ONE deterministic cleanup path, used whether the model succeeded,
+            # partially succeeded or failed after every retry.  The selected
+            # attractions are authoritative, so a planner outage still produces
+            # a balanced itinerary instead of an empty one.
+            if not isinstance(daily_plan_raw, dict) or not daily_plan_raw:
+                print("[STRATEGY] No usable model plan; distributing the selection deterministically.")
 
-            else:
-                # Map names back to full attraction details
-                additional_attractions_details = []
-                for name in final_planned_attractions_names:
-                    if name in name_to_all_map:
-                        additional_attractions_details.append(name_to_all_map[name])
-                    else:
-                        # Handle case where a planned attraction name might not be in our initial list
-                        # Try fuzzy matching (case-insensitive, substring)
-                        name_lower = name.lower().strip()
-                        matched_obj = None
-                        for key, obj in name_to_all_map.items():
-                            key_lower = key.lower().strip()
-                            if name_lower == key_lower:
-                                matched_obj = obj
-                                break
-                            if len(name_lower) > 5 and (name_lower in key_lower or key_lower in name_lower):
-                                matched_obj = obj
-                                break
-                        if matched_obj:
-                            print(f"[STRATEGY] Fuzzy matched '{name}' -> '{matched_obj['name']}'")
-                            additional_attractions_details.append(matched_obj)
-                        else:
-                            print(f"[STRATEGY WARNING] Planned attraction '{name}' not found even with fuzzy match. Skipping.")
-
+            daily_plan_raw, additional_attractions_details = self._finalize_daily_plan(
+                daily_plan_raw, selected_spots, total_days
+            )
+            if selected_spots and not additional_attractions_details:
+                # Defensive: _finalize_daily_plan always inserts the selection,
+                # but never return an empty trip due to an unexpected shape.
+                additional_attractions_details = [
+                    spot for spot in selected_spots
+                    if isinstance(spot, dict) and spot.get("name")
+                ]
 
             # The function needs to return "additional_attractions" which is used later as the primary list of attractions.
             # And "remaining_hours" which seems less critical if the AI does full daily planning.
             return {
-                "remaining_hours": total_available_hours, # This might need re-evaluation or can be a dummy value.
-                "additional_attractions": additional_attractions_details, # This should be the flat list of all planned attractions.
-                "daily_plan": daily_plan_raw # Optionally return the structured daily plan if needed elsewhere
+                "remaining_hours": total_available_hours,
+                "additional_attractions": additional_attractions_details,
+                "daily_plan": daily_plan_raw,
             }
         except Exception as e:
             print(f"Error in plan_remaining_time: {e}")
@@ -329,9 +389,22 @@ class StrategyAgent:
                 total_duration += duration  
         return result
     
-    def extract_rental_recommendation(self, recommendation_text):
-        """Extract car rental recommendation from AI response"""
+    def extract_rental_recommendation(self, recommendation_text, explicit_decision=None):
+        """Extract car rental recommendation from AI response.
+
+        ``explicit_decision`` is the traveller's own choice (from the UI or
+        chat).  When present it is authoritative: a free-form
+        ``[car_rental:YES/NO]`` marker in the model output must never override
+        it.
+        """
+        if explicit_decision is not None:
+            explicit_bool = bool(explicit_decision)
+            print(f"[DEBUG] Explicit traveller rental decision={explicit_bool}; "
+                  "ignoring model marker.")
+            return explicit_bool
         try:
+            if not isinstance(recommendation_text, str):
+                return False
             original_text = recommendation_text
             recommendation_text = recommendation_text.lower()
             
@@ -427,6 +500,18 @@ class StrategyAgent:
         name = user_name if user_name else "Traveler"
         spot_names = [spot["name"] for spot in selected_spots]
         days = total_days
+
+        # The traveller's own choice wins over any model recommendation.  Accept
+        # both booleans and the yes/no strings the chat/UI layer can produce.
+        explicit_decision = user_prefs.get("rental_choice")
+        if isinstance(explicit_decision, str):
+            explicit_decision = explicit_decision.strip().lower()
+            if explicit_decision in ("yes", "true", "1", "y"):
+                explicit_decision = True
+            elif explicit_decision in ("no", "false", "0", "n"):
+                explicit_decision = False
+            else:
+                explicit_decision = None
         
         # Extract specific preferences
         people = user_prefs.get('people', 1)
@@ -520,7 +605,15 @@ class StrategyAgent:
         4. Don't mention car rental if you don't recommend it.
         5. Keep language friendly, helpful and India-focused.
         """
-        
+
+        if explicit_decision is not None:
+            decision_word = "YES" if explicit_decision else "NO"
+            prompt += (
+                f"\n\nThe traveller has already explicitly chosen rental_choice={decision_word}. "
+                f"This is authoritative: use [car_rental:{decision_word}] and do not argue "
+                "against their choice. You may still explain practical considerations."
+            )
+
         messages = [
             SystemMessage(content=f"You are a travel advisor helping {name} plan their trip. Address them directly using second person (you/your). Format your response as requested with the car rental marker."),
             HumanMessage(content=prompt)
@@ -537,7 +630,9 @@ class StrategyAgent:
             print(f"[DEBUG] Raw AI recommendation text: {recommendation_text[:200]}...")
             
             # Analyze the recommendation to determine if car rental is recommended
-            should_rent_car = self.extract_rental_recommendation(recommendation_text)
+            should_rent_car = self.extract_rental_recommendation(
+                recommendation_text, explicit_decision=explicit_decision
+            )
             
             # Update the user_prefs with the new should_rent_car value
             user_prefs['should_rent_car'] = should_rent_car

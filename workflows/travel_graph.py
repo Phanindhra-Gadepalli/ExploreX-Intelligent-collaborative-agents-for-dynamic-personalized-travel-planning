@@ -40,6 +40,12 @@ from utils import extract_number
 from services.email_service import send_trip_email
 from services.budget_norm import normalize_budget
 from services.transit_norm import normalize_transit_options
+from services.destination_resolver import (
+    resolve_destination,
+    disclosure_text as scope_disclosure_text,
+    scope_city_names,
+    haversine_km,
+)
 
 import traceback
 
@@ -389,6 +395,55 @@ class TravelGraph:
         print(f"[DEBUG] Destination detection completed")
         # ---- end destination detection ----
 
+        # ---- Scope validation (country / region / unknown) -----------------
+        # Detect a country-level or unresolvable destination *before* declaring
+        # the chat complete. A country is never silently reduced to one point,
+        # and an unknown place asks for clarification instead of guessing.
+        scope_payload = None
+        city_for_scope = self.state["user_info"].get("city", "")
+        city_scope_key = city_for_scope.strip().lower()
+        # A curated Indian city is already a confidently known single-city
+        # scope. Do not turn a temporary geocoder outage into a clarification
+        # loop for it (states were already excluded).
+        known_local_indian = city_scope_key in _INDIA_LOCAL_CITY_SET
+        if city_for_scope and city_scope_key not in INDIA_STATE_KEYS and not known_local_indian:
+            try:
+                resolved = resolve_destination(city_for_scope, geocoder=self.info_agent.geocoder)
+            except Exception as scope_err:
+                print(f"[SCOPE] resolution failed in chat (non-fatal): {scope_err}")
+                resolved = None
+            if resolved is not None:
+                scope_payload = resolved.to_dict()
+                self.state["user_info"]["destination_scope"] = scope_payload
+                self.state["user_info"]["scope_status"] = resolved.scope_status
+                if resolved.cities:
+                    self.state["user_info"]["scope_cities"] = scope_city_names(resolved)
+                if resolved.needs_clarification():
+                    print(f"[SCOPE] '{city_for_scope}' needs clarification ({resolved.scope_status}).")
+                    self.state["user_info"]["requested_destination"] = city_for_scope
+                    # Clearing the field makes the chat agent genuinely ask for
+                    # the missing destination on the next turn instead of
+                    # immediately re-running the pipeline.
+                    self.state["user_info"]["city"] = ""
+                    self.state["user_info"]["city_validated"] = False
+                    self.state["user_info"]["is_international"] = False
+                    message = scope_disclosure_text(resolved)
+
+                    def scope_clarification_stream():
+                        yield AIMessage(content=message)
+
+                    return {
+                        "state": self.state.copy(),
+                        "stream": scope_clarification_stream(),
+                        "missing_fields": ["city"],
+                        "next_step": "chat",
+                        "destination_scope": scope_payload,
+                    }
+                if not self.state["user_info"].get("city_validated"):
+                    # Resolver succeeded where the legacy validator was unsure.
+                    self.state["user_info"]["city_validated"] = True
+                    self.state["user_info"]["is_international"] = resolved.is_international
+
         print(f"[DEBUG] Building response_data")
         try:
             response_data = {
@@ -396,6 +451,8 @@ class TravelGraph:
                 "stream": chat_result.get("stream"),
                 "missing_fields": chat_result.get("missing_fields", [])
             }
+            if scope_payload is not None:
+                response_data["destination_scope"] = scope_payload
         except Exception:
             import traceback
             traceback.print_exc()
@@ -499,6 +556,46 @@ class TravelGraph:
         is_state_search = (not is_international) and (city_lower in INDIA_STATE_KEYS)
         state_info = INDIA_STATES_MAP.get(city_lower) if is_state_search else None
 
+        # ── Destination scope resolution ─────────────────────────────────────
+        # A country request ("Japan") must not be silently reduced to the single
+        # point a geocoder returns.  The resolver classifies the destination and,
+        # for a country/region, produces a transparent editable city proposal.
+        resolved_scope = None
+        scope_cities = []
+        city_scope_key = city.strip().lower()
+        known_local_indian = city_scope_key in _INDIA_LOCAL_CITY_SET
+        if not is_state_search and not known_local_indian:
+            try:
+                resolved_scope = resolve_destination(city, geocoder=self.info_agent.geocoder)
+            except Exception as exc:
+                print(f"[SCOPE] Destination resolution failed (non-fatal): {exc}")
+                resolved_scope = None
+
+            if resolved_scope is not None:
+                self.state["user_info"]["destination_scope"] = resolved_scope.to_dict()
+                self.state["user_info"]["scope_status"] = resolved_scope.scope_status
+                if resolved_scope.needs_clarification():
+                    clarification = scope_disclosure_text(resolved_scope)
+                    print(f"[SCOPE] Clarification required for '{city}': {resolved_scope.scope_status}")
+                    self.state["information_processed"] = False
+
+                    def scope_clarification_message():
+                        yield AIMessage(content=clarification)
+
+                    return {
+                        "next_step": "chat",
+                        "stream": scope_clarification_message(),
+                        "missing_fields": ["city"],
+                        "destination_scope": resolved_scope.to_dict(),
+                        "state": self.state.copy(),
+                    }
+                scope_cities = list(resolved_scope.cities or [])
+                self.state["user_info"]["scope_cities"] = scope_city_names(resolved_scope)
+                self.state["user_info"]["is_international"] = resolved_scope.is_international
+                is_international = resolved_scope.is_international
+                print(f"[SCOPE] kind={resolved_scope.kind} status={resolved_scope.scope_status} "
+                      f"cities={self.state['user_info']['scope_cities']}")
+
         if is_state_search:
             display_name = state_info["display"]
             state_cities  = state_info["cities"]
@@ -507,13 +604,27 @@ class TravelGraph:
             geocode_city = f"{state_cities[0]}, {display_name}, India"
             expected_country = "in"
         else:
-            display_name = city
+            display_name = resolved_scope.display_name if resolved_scope is not None and resolved_scope.display_name else city
             expected_country = "in" if not is_international else None
             geocode_city = f"{city}, India" if not is_international else city
 
-        print(f"[DEBUG _process_information] Calling city2geocode with geocode_city={repr(geocode_city)} (type: {type(geocode_city)})")
-        city_coordinates = self.info_agent.city2geocode(geocode_city, expected_country=expected_country)
-        print(f"[DEBUG _process_information] city2geocode returned {repr(city_coordinates)}")
+        # For a multi-city scope, anchor weather/map on the first verified city
+        # instead of a synthetic country centroid.
+        scope_multi = bool(scope_cities) and (
+            resolved_scope is not None
+            and resolved_scope.kind in ("country", "region", "multi_city")
+        )
+        city_coordinates = None
+        if scope_cities:
+            anchor = scope_cities[0]
+            city_coordinates = {"lat": float(anchor["lat"]), "lng": float(anchor["lng"])}
+            print(f"[SCOPE] Anchoring weather/map on {anchor['name']} "
+                  f"({city_coordinates['lat']:.4f}, {city_coordinates['lng']:.4f})")
+        else:
+            print(f"[DEBUG _process_information] Calling city2geocode with geocode_city={repr(geocode_city)} (type: {type(geocode_city)})")
+            city_coordinates = self.info_agent.city2geocode(geocode_city, expected_country=expected_country)
+            print(f"[DEBUG _process_information] city2geocode returned {repr(city_coordinates)}")
+
         if not city_coordinates:
             if not is_international:
                 # Indian destination confirmed but all geocoders returned None.
@@ -540,6 +651,7 @@ class TravelGraph:
         # lat/lng bounding box India detection without an extra API call.
         self.state["user_info"]["_dest_lat"] = city_coordinates["lat"]
         self.state["user_info"]["_dest_lng"] = city_coordinates["lng"]
+        self.state["user_info"]["destination_display"] = display_name
 
         # ---- Weather (uses geocode_city for both city and state search) ----
         weather_summary_str = None
@@ -590,6 +702,13 @@ class TravelGraph:
         except (TypeError, ValueError):
             _days_int = 5
         discovery_target = max(30, min(120, _days_int * 6))
+
+        # Give the agents the resolved scope so later stages never geocode a
+        # bare POI name against the wrong city.
+        self.info_agent.resolved_destination = resolved_scope
+        self.info_agent.state = {"city": display_name}
+        self.recommend_agent.resolved_destination = resolved_scope
+
         if is_state_search:
             print(f"[STATE_SEARCH] Running state-wide search for {display_name}. target={discovery_target}")
             attractions_from_info_agent = self.info_agent.get_attractions_for_state(
@@ -598,6 +717,17 @@ class TravelGraph:
                 user_prefs=user_prefs,
                 weather_summary=self.state.get("weather_summary"),
                 total_number=discovery_target
+            )
+        elif scope_multi:
+            print(f"[SCOPE_SEARCH] Running multi-city search for {display_name} across "
+                  f"{[c['name'] for c in scope_cities]}. target={discovery_target}")
+            user_prefs["city"] = display_name
+            attractions_from_info_agent = self.info_agent.get_attractions_for_cities(
+                cities=scope_cities,
+                user_prefs=user_prefs,
+                weather_summary=self.state.get("weather_summary"),
+                total_number=discovery_target,
+                rerank_with_llm=True,
             )
         else:
             print(f"[DEBUG] Calling info_agent.get_attractions for city '{city}'. target={discovery_target}")
@@ -609,6 +739,11 @@ class TravelGraph:
                 number=discovery_target,
                 poi_type="tourist_attraction"
             )
+        self.state["discovery_status"] = getattr(self.info_agent, "last_discovery_status", None)
+        self.state["provider_status"] = (
+            self.info_agent.poi_manager.get_provider_status()
+            if hasattr(self.info_agent.poi_manager, "get_provider_status") else None
+        )
         
         self.state["attractions"] = [normalize_poi(p) for p in (attractions_from_info_agent or [])]
         self.state["information_processed"] = True
@@ -617,47 +752,81 @@ class TravelGraph:
         # ---- Accommodations ----
         import concurrent.futures
         all_accommodations = []
+        accommodation_centres = (
+            scope_cities[:4] if (scope_multi and len(scope_cities) > 1)
+            else [{"name": display_name, "lat": city_coordinates["lat"], "lng": city_coordinates["lng"],
+                   "region": ""}]
+        )
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                future_to_tier = {
+            tasks = [
+                (centre, tier)
+                for centre in accommodation_centres
+                for tier in ["budget", "medium", "luxury"]
+            ]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(tasks))) as executor:
+                future_to_task = {
                     executor.submit(
                         self.info_agent.get_accommodations,
-                        lat=city_coordinates["lat"],
-                        lng=city_coordinates["lng"],
+                        lat=centre["lat"],
+                        lng=centre["lng"],
                         budget=tier,
                         number=4
-                    ): tier for tier in ["budget", "medium", "luxury"]
+                    ): (centre, tier) for centre, tier in tasks
                 }
-                for future in concurrent.futures.as_completed(future_to_tier):
-                    tier = future_to_tier[future]
+                for future in concurrent.futures.as_completed(future_to_task):
+                    centre, tier = future_to_task[future]
                     try:
                         accs = future.result()
                         if accs:
+                            for acc in accs:
+                                acc.setdefault("city", centre["name"])
+                                acc.setdefault("region", centre.get("region", ""))
                             all_accommodations.extend(accs)
                     except Exception as exc:
-                        print(f"[ERROR] Failed to fetch {tier} accommodations: {exc}")
-                        
+                        print(f"[ERROR] Failed to fetch {tier} accommodations in {centre['name']}: {exc}")
+
             self.state["accommodations"] = [normalize_poi(a) for a in all_accommodations]
-            print(f"[DEBUG] Accommodations updated: {len(self.state.get('accommodations', []))} items across 3 tiers.")
+            print(f"[DEBUG] Accommodations updated: {len(self.state.get('accommodations', []))} items "
+                  f"across {len(accommodation_centres)} centres x 3 tiers.")
         except Exception as e:
             print(f"[ERROR] ThreadPoolExecutor failed for accommodations: {e}")
             self.state["accommodations"] = []
 
 
         try:
-            restaurants = self.info_agent.poi_manager.get_restaurants(
-                lat=city_coordinates["lat"],
-                lng=city_coordinates["lng"],
-                radius=4000,
-                number=30,
+            all_restaurants = []
+            restaurant_centres = (
+                scope_cities[:4] if (scope_multi and len(scope_cities) > 1)
+                else [{"name": display_name, "lat": city_coordinates["lat"],
+                       "lng": city_coordinates["lng"]}]
             )
-            self.state["restaurants"] = [normalize_poi(r) for r in (restaurants or [])]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(restaurant_centres))) as executor:
+                future_to_centre = {
+                    executor.submit(
+                        self.info_agent.poi_manager.get_restaurants,
+                        lat=centre["lat"],
+                        lng=centre["lng"],
+                        radius=4000,
+                        number=12 if len(restaurant_centres) > 1 else 30,
+                    ): centre for centre in restaurant_centres
+                }
+                for future in concurrent.futures.as_completed(future_to_centre):
+                    centre = future_to_centre[future]
+                    try:
+                        found = future.result() or []
+                        for item in found:
+                            item.setdefault("city", centre["name"])
+                        all_restaurants.extend(found)
+                    except Exception as exc:
+                        print(f"[ERROR] Restaurants failed for {centre['name']}: {exc}")
+            self.state["restaurants"] = [normalize_poi(r) for r in all_restaurants]
             print(f"[DEBUG] Restaurants updated: {len(self.state.get('restaurants', []))} items.")
         except Exception as e:
             print(f"[ERROR] Failed to fetch restaurants: {e}")
             self.state["restaurants"] = []
 
         # ---- User-facing response message ----
+        scope_message = scope_disclosure_text(resolved_scope) if resolved_scope is not None else ""
         def info_gen_message():
             if self.state["attractions"]:
                 if is_state_search:
@@ -667,6 +836,15 @@ class TravelGraph:
                         f"covering major destinations like **{cities_shown}**.\n\n"
                         f"Here are the **{len(self.state['attractions'])} best attractions** curated from across "
                         f"{display_name}, personalised to your preferences. Please browse and select your favourites!"
+                    ))
+                elif scope_multi:
+                    yield AIMessage(content=(
+                        f"{scope_message}\n\n"
+                        f"I've found **{len(self.state['attractions'])} attractions** across "
+                        f"**{', '.join(c['name'] for c in scope_cities[:3])}"
+                        f"{' and ' + str(len(scope_cities) - 3) + ' more' if len(scope_cities) > 3 else ''}**, "
+                        f"tailored to your preferences. Please browse and select your favorites — "
+                        f"you can tell me to change the proposed cities at any time."
                     ))
                 elif is_international:
                     yield AIMessage(content=(
@@ -681,10 +859,18 @@ class TravelGraph:
                         f"Please take a look and select your favorites!"
                     ))
             else:
+                provider_note = ""
+                if is_international:
+                    provider_note = (" Live attraction providers returned no verifiable records "
+                                     "for this scope; I have not invented any places.")
                 if is_state_search:
                     yield AIMessage(content=f"I couldn't find attractions across {display_name} right now. Try specifying a particular city within the state.")
                 else:
-                    yield AIMessage(content=f"I couldn't find attractions in {display_name} matching your preferences right now. Please try a different destination or broaden your interests.")
+                    yield AIMessage(content=(
+                        f"I couldn't find verifiable attractions in {display_name} matching your preferences right now."
+                        f"{provider_note} Please try a different destination, broaden your interests, "
+                        f"or retry in a moment."
+                    ))
 
         return {
             "next_step": "retrieval",
@@ -693,6 +879,8 @@ class TravelGraph:
             "accommodations": self.state.get("accommodations", []),
             "restaurants": self.state.get("restaurants", []),
             "map_data": self.recommend_agent.generate_map_data(self.state["attractions"]),
+            "destination_scope": self.state.get("user_info", {}).get("destination_scope"),
+            "provider_status": self.state.get("provider_status"),
             "state": self.state.copy()
         }
 
@@ -710,15 +898,37 @@ class TravelGraph:
         
         # Attempt to extract POIs from RAG knowledge
         rag_pois = []
+        rag_status = {"found": 0, "validated": 0, "dropped": []}
         if retrieved_knowledge and "No additional background knowledge" not in retrieved_knowledge:
-            lat = user_prefs.get("_dest_lat", 0.0)
-            lng = user_prefs.get("_dest_lng", 0.0)
+            lat = user_prefs.get("_dest_lat")
+            lng = user_prefs.get("_dest_lng")
             try:
                 rag_pois = self.recommend_agent.extract_pois_from_text(retrieved_knowledge, city, lat, lng)
             except Exception as rag_err:
                 print(f"[RETRIEVAL] POI extraction from RAG text failed (non-fatal): {rag_err}")
                 rag_pois = []
-            
+
+            # RAG-extracted names are unverified until the geocoder places them
+            # inside the destination. A model can name a real attraction from
+            # the wrong city; it must not reach the map or the itinerary.
+            if rag_pois:
+                rag_status["found"] = len(rag_pois)
+                try:
+                    validator = getattr(self.info_agent, "_validate_generated_pois", None)
+                    result = validator(
+                        rag_pois, city, lat, lng,
+                        country_code=self.info_agent._country_code_for(city) if hasattr(self.info_agent, "_country_code_for") else "",
+                    ) if validator else None
+                    if isinstance(result, tuple) and len(result) == 2:
+                        rag_pois, dropped = result
+                        rag_status["validated"] = len(rag_pois)
+                        rag_status["dropped"] = dropped
+                    else:
+                        rag_status["validated"] = len(rag_pois)
+                except Exception as exc:
+                    print(f"[RETRIEVAL] RAG POI validation failed (non-fatal): {exc}")
+                    rag_status["validated"] = len(rag_pois)
+
         if rag_pois:
             existing_pois = self.state.get("attractions", [])
             existing_names = {p.get("name", "").lower().strip() for p in existing_pois if p.get("name")}
@@ -749,11 +959,14 @@ class TravelGraph:
             if new_rag_pois:
                 print(f"[DEBUG] Adding {len(new_rag_pois)} RAG-extracted POIs to state['attractions']")
                 self.state["attractions"] = existing_pois + new_rag_pois
-                
+
+        self.state["rag_poi_status"] = rag_status
+
         return {
             "next_step": "recommend",
             "retrieved_knowledge": retrieved_knowledge,
             "rag_sources": self.state.get("rag_sources", []),
+            "rag_poi_status": rag_status,
             "state": self.state.copy()
         }
         
@@ -872,19 +1085,28 @@ class TravelGraph:
                         # Apply heuristic from InformationAgent
                         matched = self.info_agent._heuristic_interest_match(attr, user_prefs)
                         attr['matched_interests'] = matched
-                        attr['recommendation_type'] = 'interest_based' if matched else 'popular'
-                
+                        if matched:
+                            attr['recommendation_type'] = 'interest_based'
+                        elif hobbies:
+                            attr['recommendation_type'] = 'outside_interests'
+                        else:
+                            attr['recommendation_type'] = 'discovery'
+
                 recommended = attractions  # Already ranked and labelled by InformationAgent
-                
+
                 # Add specific logging for recommendations
                 interest_count = sum(1 for a in recommended if a.get('recommendation_type') == 'interest_based')
-                popular_count = sum(1 for a in recommended if a.get('recommendation_type') == 'popular')
+                discovery_count = sum(
+                    1 for a in recommended
+                    if a.get('recommendation_type') in ('discovery', 'popular')
+                )
                 print(f"[RECOMMENDATION DEBUG] destination={user_prefs.get('city')} interests={hobbies}")
                 print(f"[RECOMMENDATION DEBUG] total recommendations = {len(recommended)}")
                 print(f"[RECOMMENDATION DEBUG] interest based count = {interest_count}")
-                print(f"[RECOMMENDATION DEBUG] popular count = {popular_count}")
+                print(f"[RECOMMENDATION DEBUG] discovery count = {discovery_count}")
                 if interest_count == 0 and hobbies:
-                    print(f"[RECOMMENDATION WARNING] 0 interest-based matches despite hobbies='{hobbies}'. Check keyword_map in InformationAgent._heuristic_interest_match().")
+                    print(f"[RECOMMENDATION WARNING] 0 interest-based matches for hobbies='{hobbies}'. "
+                          "Every result is labelled outside_interests; popularity is not used as a rescue.")
                 
                 # Create a generator that yields the recommendation message
                 def recommendation_generator():
@@ -1231,6 +1453,9 @@ class TravelGraph:
         
         all_attractions_objects = self.state.get("attractions", [])
         selected_attractions = self.state.get("selected_attractions", [])
+        # The budget must price what the traveller actually chose, not every
+        # attraction the discovery stage happened to return.
+        budget_spots = selected_attractions or all_attractions_objects
         
         # Get transit options
         origin = self.state["user_info"].get("origin_city")
@@ -1327,7 +1552,7 @@ class TravelGraph:
                 fuel_price = None
 
         budget = self.budget_agent.estimate_budget(
-            all_attractions_objects,
+            budget_spots,
             self.state["user_info"],
             self.state.get("should_rent_car", False),
             car_info,
@@ -1352,32 +1577,50 @@ class TravelGraph:
                 rooms = max(1, (people_count + 1) // 2)
                 budget["accommodation"] = round(price_val * nights * rooms, 2)
                 budget["accommodation_source"] = "selected_accommodation"
-                budget["estimated_total"] = (
-                    budget.get("activities", 0) +
-                    budget.get("food", 0) +
-                    budget.get("local_transport", 0) +
-                    budget["accommodation"] +
-                    budget.get("car_rental", 0) +
-                    budget.get("fuel", 0) +
-                    budget.get("transport", 0)
+                # `local_transport` already includes car_rental + fuel. The old
+                # sum added car_rental/fuel a second time, inflating the total.
+                subtotal_after_selection = (
+                    budget.get("activities", 0)
+                    + budget.get("food", 0)
+                    + budget.get("local_transport", 0)
+                    + budget["accommodation"]
+                    + budget.get("transport", 0)
                 )
-                budget["miscellaneous"] = round(budget["estimated_total"] * 0.10, 2)
-                budget["estimated_total"] += budget["miscellaneous"]
-                budget["estimated_total"] = round(budget["estimated_total"], 2)
+                budget["miscellaneous"] = round(subtotal_after_selection * 0.10, 2)
+                budget["estimated_total"] = round(
+                    subtotal_after_selection + budget["miscellaneous"], 2
+                )
 
                 # Recalculate normalized fields
-                if budget.get("budget_limit"):
-                    budget["remaining_budget"] = round(budget["budget_limit"] - budget["estimated_total"], 2)
-                    budget["utilization_percentage"] = round((budget["estimated_total"] / budget["budget_limit"] * 100), 1)
-                    budget["within_budget"] = budget["estimated_total"] <= budget["budget_limit"]
-
-                    if not budget["within_budget"] and budget.get("budget_type") == "strict":
+                limit = budget.get("budget_limit")
+                if limit:
+                    budget["remaining_budget"] = round(limit - budget["estimated_total"], 2)
+                    budget["utilization_percentage"] = round((budget["estimated_total"] / limit * 100), 1)
+                    over = budget["estimated_total"] > limit
+                    budget["within_budget"] = (not over) and not budget.get("budget_infeasible", False)
+                    if over and not budget.get("budget_infeasible"):
+                        budget["budget_infeasible"] = True
                         budget["budget_warning"] = (
-                            f"Your requested trip cannot currently fit within ₹{budget['budget_limit']:,}. "
+                            f"Selecting this accommodation brings the trip to "
+                            f"₹{int(round(budget['estimated_total'])):,}, above your budget of "
+                            f"₹{int(limit):,}. The stay is kept in the plan but the budget is "
+                            "flagged as over; choose a cheaper stay, fewer days, or a cheaper "
+                            "transport mode to fit."
+                        )
+                    if not budget["within_budget"] and budget.get("budget_type") == "strict":
+                        # The traveller's strict cap is never relaxed or hidden: the
+                        # final selection is disclosed as infeasible with the closest
+                        # computed cost, and the itinerary is still produced.
+                        budget["budget_warning"] = (
+                            f"Your requested trip cannot currently fit within ₹{int(limit):,}. "
                             f"The closest feasible configuration is ₹{int(budget['estimated_total']):,}. "
                             "Consider reducing travel days, choosing fewer paid attractions, or selecting cheaper intercity transport to fit within your strict budget."
                         )
                         budget["budget_infeasible"] = True
+                budget.setdefault("breakdown", {})["total"] = (
+                    f"₹{subtotal_after_selection:,.0f} (subtotal) + "
+                    f"₹{budget['miscellaneous']:,.0f} (misc) = ₹{budget['estimated_total']:,.0f}"
+                )
             else:
                 budget["accommodation_source"] = "destination_average"
                 print("[BUDGET][ACCOMMODATION] Selected accommodation has no usable nightly price; "
@@ -1509,7 +1752,8 @@ class TravelGraph:
                     "end_time": "15:00",
                     "price_per_night": selected_acc.get("price_per_night", selected_acc.get("price")),
                     "currency": selected_acc.get("currency", "INR"),
-                    "is_accommodation": True
+                    "is_accommodation": True,
+                    "entry_type": "accommodation",
                 }
                 # Insert accommodation then re-sort the whole day by start_time
                 # so the displayed order is always chronological (e.g. 14:00

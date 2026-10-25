@@ -91,6 +91,74 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # Create a session store for workflows
 workflows = {}
 
+# Bounded in-process store. Sessions use random ids, so the oldest entries can
+# never be reused; dropping them keeps memory (and any per-workflow resources)
+# finite in a long-running process.
+MAX_WORKFLOWS = int(os.getenv("MAX_WORKFLOWS", "500"))
+APP_STARTED_AT = time.time()
+
+
+def prune_workflows(max_items=None):
+    """Drop the oldest workflow objects when the store exceeds its bound.
+
+    Returns the number of objects evicted. Safe to call on every session
+    creation; no other module keeps a strong reference to an evicted workflow.
+    """
+    limit = max(1, int(max_items if max_items is not None else MAX_WORKFLOWS))
+    evicted = 0
+    try:
+        while len(workflows) > limit:
+            oldest = next(iter(workflows))
+            workflows.pop(oldest, None)
+            evicted += 1
+    except Exception as exc:
+        print(f"[HEALTH][WARN] workflow pruning failed: {type(exc).__name__}")
+    if evicted:
+        print(f"[HEALTH] Evicted {evicted} stale workflow(s); active={len(workflows)}")
+    return evicted
+
+
+def _health_payload():
+    """Lightweight, secret-free liveness/readiness payload.
+
+    Deliberately does not call an LLM, geocoder or provider: a health probe must
+    be fast and must not consume quota. It reports configuration *presence*
+    only, never key values.
+    """
+    checks = {
+        "session_store": True,
+        "workflow_store": len(workflows) <= max(1, MAX_WORKFLOWS),
+        "llm_configured": bool(
+            os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        ),
+        "geocoder_configured": bool(
+            os.getenv("GEOAPIFY_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY")
+        ),
+        "email_configured": bool(
+            os.getenv("MAIL_SERVER") or os.getenv("SMTP_HOST") or os.getenv("EMAIL_HOST")
+        ),
+    }
+    # Only the in-process store is a hard readiness requirement; optional
+    # providers degrade features, they do not stop the app serving.
+    ready = checks["session_store"] and checks["workflow_store"]
+    return {
+        "status": "ok" if ready else "degraded",
+        "service": "explorex",
+        "version": os.getenv("APP_VERSION", "1.0"),
+        "uptime_seconds": round(time.time() - APP_STARTED_AT, 1),
+        "workflow_count": len(workflows),
+        "checks": checks,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+@app.route("/health", methods=["GET"])
+@app.route("/api/health", methods=["GET"])
+def health():
+    """Liveness/readiness probe (no authentication, no provider calls)."""
+    payload = _health_payload()
+    return jsonify(payload), (200 if payload["status"] == "ok" else 503)
+
 # Requirement 6: in-flight email guard keyed by session_id -> unix timestamp.
 # Prevents a double-click or a client retry storm from dispatching the same
 # itinerary multiple times to the SMTP provider. Entries expire after 30s.
@@ -427,6 +495,8 @@ def index():
     except FileNotFoundError:
         popular_attractions = []
     
+    prune_workflows()
+
     return render_template(
         'index.html',
         popular_attractions=popular_attractions,
@@ -467,12 +537,7 @@ def reset_session():
 
     # Bound the in-process workflow map: sessions are random ids, so a stale
     # entry can never be reused - dropping the oldest keeps memory finite.
-    try:
-        if len(workflows) > 500:
-            for stale_id in list(workflows.keys())[:-500]:
-                workflows.pop(stale_id, None)
-    except Exception:
-        pass
+    prune_workflows()
 
     return jsonify({"status": "success", "message": "Session reset", "session_id": new_session_id})
 
@@ -516,6 +581,8 @@ def get_state():
         "travel_tips": state.get("travel_tips"),
         "unscheduled_attractions": state.get("unscheduled_attractions") or [],
         "provider_status": state.get("provider_status") or {},
+        "destination_scope": (info.get("destination_scope") or state.get("destination_scope")),
+        "discovery_status": state.get("discovery_status"),
         "current_step": state.get("current_step"),
         "email_sent": bool(state.get("email_sent")),
     }

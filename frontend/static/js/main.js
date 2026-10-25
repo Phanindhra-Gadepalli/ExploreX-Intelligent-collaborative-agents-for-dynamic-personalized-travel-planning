@@ -20,6 +20,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // trip data
         attractions: [],
         selectedAttractionIds: new Set(),
+        // Country/region/multi-city scope proposed by the backend, plus the
+        // honest per-provider status. Both are rendered, never hidden.
+        destinationScope: null,
+        discoveryStatus: null,
+        providerStatus: null,
         accommodations: [],
         selectedAccommodationId: null,
         food: [],
@@ -387,6 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Re-render every view from the state model ──────────────────────────
     function renderAll() {
         applyInterestsToDom();
+        renderScopeDisclosure();
         if (state.attractions.length) renderRecommendations(state.attractions);
         if (state.accommodations.length) renderAccommodations(state.accommodations);
         if (state.weather && (Array.isArray(state.weather) ? state.weather.length : Object.keys(state.weather).length)) renderWeather(state.weather);
@@ -434,6 +440,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.budget.budget_normalized = t.budget_normalized;
             }
             state.unscheduledAttractions = Array.isArray(t.unscheduled_attractions) ? t.unscheduled_attractions : [];
+            state.destinationScope = t.destination_scope || state.destinationScope;
+            state.providerStatus = t.provider_status || state.providerStatus;
             state.transport = t.transit_options || [];
             state.selectedAttractionIds = new Set(
                 (Array.isArray(t.selected_attractions) ? t.selected_attractions : [])
@@ -790,6 +798,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (info.people != null) state.travelers.people = info.people;
         if (info.kids != null) state.travelers.kids = info.kids;
         if (info.email && !state.email) state.email = info.email;
+        if (info.destination_scope) state.destinationScope = info.destination_scope;
+        if (s.destination_scope) state.destinationScope = s.destination_scope;
+        if (s.provider_status) state.providerStatus = s.provider_status;
+        if (s.discovery_status) state.discoveryStatus = s.discovery_status;
         if (info.hobbies != null) {
             const h = info.hobbies;
             const list = Array.isArray(h) ? h : String(h).split(',');
@@ -818,6 +830,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.food = data.state.restaurants;
             }
         }
+        if (data.destination_scope) state.destinationScope = data.destination_scope;
+        if (data.provider_status) state.providerStatus = data.provider_status;
+        renderScopeDisclosure();
 
         // Recommendations ready -> render + let the user choose.
         if (data.ui_action === 'OPEN_EXPLORE' || ns === 'recommend' || (Array.isArray(data.recommended_attractions) && data.recommended_attractions.length)) {
@@ -922,22 +937,65 @@ document.addEventListener('DOMContentLoaded', () => {
         return fee;
     }
     function fieldImage(a) {
-        const img = a.image_url || a.image || a.photo;
-        if (img && String(img).startsWith('http')) return img;
-        
-        const hash = a.name ? a.name.charCodeAt(0) % 6 : 0;
-        const fallbacks = [
-            "https://images.unsplash.com/photo-1502602898657-3e9076113801",
-            "https://images.unsplash.com/photo-1564507592333-c60657eea523",
-            "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf",
-            "https://images.unsplash.com/photo-1537996194471-e657df975ab4",
-            "https://images.unsplash.com/photo-1512453979798-5ea266f8880c",
-            "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9"
-        ];
-        return fallbacks[hash] + '?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80';
+        const img = a && (a.image_url || a.image || a.photo);
+        if (img && (String(img).startsWith('http') || String(img).startsWith('data:image'))) {
+            return img;
+        }
+        // No photo was reported. Never borrow a random stock photo of a
+        // different place just to fill the card; show an explicit neutral
+        // placeholder instead.
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450">'
+            + '<rect width="100%" height="100%" fill="#e2e8f0"/>'
+            + '<text x="50%" y="50%" fill="#64748b" font-family="sans-serif" font-size="28" '
+            + 'text-anchor="middle" dominant-baseline="middle">No photo available</text></svg>';
+        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
     }
     function escapeHtml(s) {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function renderScopeDisclosure() {
+        const box = document.getElementById('scope-disclosure');
+        if (!box) return;
+        const scope = state.destinationScope || null;
+        const providers = state.providerStatus || null;
+        const parts = [];
+
+        if (scope && scope.kind) {
+            const cities = Array.isArray(scope.cities) ? scope.cities.map(c => c.name).filter(Boolean) : [];
+            if (scope.kind === 'country') {
+                parts.push(`<strong>Country-level request:</strong> ${escapeHtml(scope.display_name || scope.raw)} is not one town. `
+                    + `This plan uses an editable city proposal${cities.length ? ': <strong>' + escapeHtml(cities.join(', ')) + '</strong>' : ''}. `
+                    + 'Tell the assistant if you want different cities.');
+            } else if (scope.kind === 'region' || scope.kind === 'multi_city') {
+                parts.push(`<strong>Search scope:</strong> ${escapeHtml(cities.join(', ') || scope.display_name || scope.raw)}.`);
+            } else if (scope.kind === 'unknown' || scope.scope_status === 'needs_clarification') {
+                parts.push('<strong>Scope unclear:</strong> add a city or region before searching.');
+            }
+            (Array.isArray(scope.notes) ? scope.notes : []).slice(0, 3).forEach(note => {
+                if (note && !parts.some(p => p.includes(escapeHtml(note)))) {
+                    parts.push(escapeHtml(note));
+                }
+            });
+        }
+
+        if (providers && typeof providers === 'object') {
+            const failed = Object.entries(providers)
+                .filter(([, v]) => v && ['error', 'disabled', 'empty'].includes(String(v.state || '').toLowerCase()))
+                .map(([k, v]) => `${k}${v.detail ? ' (' + v.detail + ')' : ''}`);
+            if (failed.length) {
+                parts.push('<span class="text-warning-emphasis"><strong>Partial data:</strong> '
+                    + escapeHtml(failed.join(', ')) + '. Places from the working providers are still shown.</span>');
+            }
+        }
+
+        if (!parts.length) {
+            box.classList.add('d-none');
+            box.innerHTML = '';
+            return;
+        }
+        box.innerHTML = '<i class="fas fa-circle-info me-2"></i>' + parts.join('<br>');
+        box.classList.remove('d-none');
     }
 
     function renderRecommendations(attrs) {
@@ -970,23 +1028,14 @@ document.addEventListener('DOMContentLoaded', () => {
             div.setAttribute('data-testid', `attraction-card-${testIdName}`);
 
             const selected = state.selectedAttractionIds.has(id);
-            const hash = a.name ? a.name.charCodeAt(0) % 6 : 0;
-            const fallbacks = [
-                "https://images.unsplash.com/photo-1502602898657-3e9076113801",
-                "https://images.unsplash.com/photo-1564507592333-c60657eea523",
-                "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf",
-                "https://images.unsplash.com/photo-1537996194471-e657df975ab4",
-                "https://images.unsplash.com/photo-1512453979798-5ea266f8880c",
-                "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9"
-            ];
-            const fallbackUrl = escapeHtml(fallbacks[hash] + '?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80');
             const primaryImg = escapeHtml(fieldImage(a));
-            
+
             div.innerHTML = `
                 <div class="skeleton-img-loader" style="width:100%; height:180px; background:var(--bg-alt); position:relative;">
-                    <img src="${primaryImg}" class="bento-img" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover;"
+                    <img src="${primaryImg}" class="bento-img" alt="${escapeHtml(a.name || 'Attraction')}"
+                        style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover;"
                         onload="this.parentElement.style.background='none';"
-                        onerror="this.src='${fallbackUrl}'; this.onerror=null;">
+                        onerror="this.style.display='none';">
                 </div>
                 <div class="bento-content">
                     <div class="d-flex justify-content-between align-items-start mb-2">
@@ -2025,14 +2074,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const warningContainer = document.getElementById('budget-warning-container');
         if (warningContainer) {
+            const infeasible = Boolean(
+                budget.budget_infeasible || (nb && nb.budget_infeasible)
+            );
+            const minViable = (nb && nb.min_viable_cost != null)
+                ? nb.min_viable_cost : budget.min_viable_cost;
             if (budget.budget_warning) {
                 warningContainer.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i> ${escapeHtml(budget.budget_warning)}`;
-                warningContainer.classList.remove('d-none');
-                
-                // Add adjustable alternatives hint
-                if (budget.budget_warning.toLowerCase().includes('exceeds')) {
+                if (infeasible && minViable) {
+                    warningContainer.innerHTML += `<div class="mt-2 small fw-bold">Minimum realistic cost for this scope: ₹${Math.round(minViable).toLocaleString('en-IN')}. `
+                        + 'The itinerary is complete, but it does not fit the stated budget; increase the budget, shorten the trip, or remove paid activities.</div>';
+                } else if (budget.budget_warning.toLowerCase().includes('exceeds')) {
                     warningContainer.innerHTML += '<div class="mt-2 small fw-bold">Tip: Try selecting a cheaper transport mode or budget accommodation in the Itinerary tabs.</div>';
                 }
+                warningContainer.classList.toggle('alert-danger', infeasible);
+                warningContainer.classList.toggle('alert-warning', !infeasible);
+                warningContainer.classList.remove('d-none');
             } else {
                 warningContainer.classList.add('d-none');
                 warningContainer.innerHTML = '';
@@ -2157,7 +2214,21 @@ document.addEventListener('DOMContentLoaded', () => {
                    ${escapeHtml(unknownList.join(', '))}. The total above excludes them.</div>`
             : '';
 
-        container.innerHTML = summaryHtml + legendHtml + unknownHtml;
+        // Cost-basis and FX assumptions are part of the estimate, not hidden
+        // implementation detail. They are shown verbatim from the server so a
+        // converted foreign quote is never mistaken for a live INR price.
+        const basis = budget.breakdown && budget.breakdown.cost_basis;
+        const assumptions = Array.isArray(budget.currency_assumptions)
+            ? budget.currency_assumptions.filter(Boolean) : [];
+        const basisLines = [];
+        if (basis) basisLines.push(escapeHtml(basis));
+        assumptions.forEach(a => basisLines.push(escapeHtml(a)));
+        const basisHtml = basisLines.length
+            ? `<div class="small text-secondary mt-3" data-testid="budget-basis">
+                   <i class="fas fa-calculator me-2"></i>${basisLines.join('<br>')}</div>`
+            : '';
+
+        container.innerHTML = summaryHtml + legendHtml + unknownHtml + basisHtml;
 
         // Requirement 5: render the personalised closing greeting + destination
         // tips immediately below the existing breakdown. Never overwrites the

@@ -39,6 +39,10 @@ class RouteAgent:
         """Initialise RouteAgent with optional API key for distance calculations."""
         self.api_key = api_key
         self.distances_cache = {}
+        # Meal lookups are cached by ~1 km grid cell so two stops in the same
+        # neighbourhood do not trigger repeated restaurant provider calls.
+        self._restaurant_cache = {}
+        self._last_routing = {"source": "none", "optimized": False, "status": "not_attempted"}
         self.info_agent = None
         try:
             self.info_agent = InformationAgent()
@@ -140,7 +144,15 @@ class RouteAgent:
         Returns:
             List of the same attractions in optimal travel order
         """
+        self._last_routing = {
+            "source": "none", "optimized": False, "status": "not_attempted",
+            "note": "No routing was required.",
+        }
         if not attractions_for_day or len(attractions_for_day) <= 1:
+            self._last_routing = {
+                "source": "none", "optimized": False, "status": "not_required",
+                "note": "One or zero stops: no travel order to optimise.",
+            }
             return attractions_for_day  # No optimisation needed for 0 or 1 attraction
 
         # Resolve all locations and separate them
@@ -155,11 +167,19 @@ class RouteAgent:
 
         if len(valid_spots) <= 1:
             # Not enough valid spots for routing
+            self._last_routing = {
+                "source": "none", "optimized": False, "status": "insufficient_locations",
+                "note": "Fewer than two stops had verified coordinates; provider order kept.",
+            }
             return valid_spots + unresolved_spots
 
         # Check if we can use the InformationAgent
         if not self.info_agent:
             print("InformationAgent not available. Using fallback TSP solution.")
+            self._last_routing = {
+                "source": "local_tsp", "optimized": True, "status": "fallback",
+                "note": "Route order estimated with the local distance heuristic; OSRM was unavailable.",
+            }
             return self.get_optimal_route(valid_spots) + unresolved_spots
 
         try:
@@ -185,6 +205,10 @@ class RouteAgent:
 
             # Only two spots: nothing to optimise, keep the natural order.
             if not waypoints:
+                self._last_routing = {
+                    "source": "none", "optimized": False, "status": "two_stops",
+                    "note": "Two stops: provider order kept (no intermediate waypoints).",
+                }
                 return list(valid_spots) + unresolved_spots
 
             # Call plan_with_waypoints
@@ -200,8 +224,22 @@ class RouteAgent:
                 print(f"[ROUTE_AGENT][ERROR] OSRM routing failed: {e}")
 
             if not optimized_route_data:
-                print("Failed to get optimised route. Using fallback TSP solution.")
+                print("[ROUTE_AGENT][FALLBACK] OSRM unavailable; using the local TSP "
+                      "distance heuristic. The day's order is an estimate, not a live "
+                      "traffic route.")
+                self._last_routing = {
+                    "source": "local_tsp", "optimized": True, "status": "fallback",
+                    "note": "Route order estimated with the local distance heuristic; "
+                            "OSRM did not return a route.",
+                }
                 return self.get_optimal_route(valid_spots) + unresolved_spots
+
+            self._last_routing = {
+                "source": optimized_route_data.get("routing_source", "osrm_trip"),
+                "optimized": bool(optimized_route_data.get("optimized", True)),
+                "status": optimized_route_data.get("routing_status", "ok"),
+                "note": "Visit order optimised by OSRM.",
+            }
 
             # Extract the optimised waypoint order (indices are relative to the
             # intermediate waypoints list, i.e. valid_spots[1:-1]).
@@ -227,6 +265,11 @@ class RouteAgent:
         except Exception as e:
             print(f"Error optimising daily route: {e}")
             # Fallback to internal TSP solver
+            self._last_routing = {
+                "source": "local_tsp", "optimized": True, "status": "fallback",
+                "note": "Route order estimated with the local distance heuristic after "
+                        "an unexpected routing error.",
+            }
             return self.get_optimal_route(valid_spots) + unresolved_spots
 
     def get_optimal_route(self, spots, start_point=None):
@@ -408,6 +451,38 @@ class RouteAgent:
         if "24/7" in opening_hours_str: return (0, 24)
         return (9, 18) # Stub for advanced parsing
 
+    def _meal_place(self, location, fallback_name, fallback_description):
+        """Return a real nearby restaurant for a meal slot, cached per ~1 km cell.
+
+        When no restaurant can be confirmed we keep the neutral "Lunch Break" /
+        "Dinner" label and a generic description.  No restaurant name, rating or
+        price is ever invented.
+        """
+        if not location or not self.info_agent or not hasattr(self.info_agent, "poi_manager"):
+            return fallback_name, fallback_description
+        try:
+            lat = float(location.get("lat"))
+            lng = float(location.get("lng"))
+        except (TypeError, ValueError):
+            return fallback_name, fallback_description
+
+        key = (round(lat, 2), round(lng, 2), 2000)
+        if key not in self._restaurant_cache:
+            try:
+                rests = self.info_agent.poi_manager.get_restaurants(
+                    lat, lng, radius=2000, number=1
+                ) or []
+                first = rests[0] if rests and isinstance(rests[0], dict) else None
+                self._restaurant_cache[key] = (
+                    (first.get("name") or fallback_name,
+                     first.get("description") or fallback_description)
+                    if first else (fallback_name, fallback_description)
+                )
+            except Exception as e:
+                print(f"[ROUTE_AGENT][ERROR] Restaurant lookup failed: {e}")
+                self._restaurant_cache[key] = (fallback_name, fallback_description)
+        return self._restaurant_cache[key]
+
     # Labels the AI is explicitly allowed to use for unscheduled/free time.
     # These are *not* POIs, so they may be rendered without provider data;
     # anything else that cannot be resolved is reported as unscheduled instead
@@ -465,6 +540,9 @@ class RouteAgent:
         """
         itinerary = []
         unscheduled = unscheduled_out if isinstance(unscheduled_out, list) else []
+        # A place may appear on only one day: a model that repeats a highlight to
+        # "fill" the itinerary must not create a duplicate visit.
+        seen_attraction_names = set()
         try:
             current_date = datetime.strptime(start_date_str, "%Y-%m-%d")
             is_suggested = False
@@ -488,9 +566,29 @@ class RouteAgent:
             spot_names_for_day = daily_plan_name_dict.get(day_key, []) or []
 
             current_day_spot_objects_raw = []
+            day_unscheduled = []
             for name in spot_names_for_day:
                 resolved = self._lookup_spot(name, all_spots_object_map)
                 if resolved is not None:
+                    resolved_name = re.sub(
+                        r"\s+", " ", str(resolved.get("name") or name)).strip().lower()
+                    if resolved_name in seen_attraction_names:
+                        print(f"[ROUTE_AGENT][DUPLICATE] '{resolved.get('name')}' is already "
+                              f"scheduled on an earlier day; skipping the repeat.")
+                        # This is a planner repeat, not a place missing from the
+                        # trip: it is disclosed on the day but must NOT appear in
+                        # the global "selected but unscheduled" list, which drives
+                        # the user-facing "not in the final itinerary" warning.
+                        day_unscheduled.append({
+                            "name": str(resolved.get("name") or name).strip(),
+                            "id": str(resolved.get("id")) if resolved.get("id") is not None else None,
+                            "day": day_number,
+                            "reason": "duplicate_across_days",
+                            "detail": "This place was already scheduled on another day; "
+                                      "it is not visited twice.",
+                        })
+                        continue
+                    seen_attraction_names.add(resolved_name)
                     current_day_spot_objects_raw.append(resolved)
                     continue
                 label_key = re.sub(r"^\s*\d+[).\-]\s*", "", str(name)).strip().lower()
@@ -503,6 +601,7 @@ class RouteAgent:
                         "estimated_duration": 2,
                         "location": None,
                         "is_semantic_label": True,
+                        "entry_type": "free_time",
                         # Leisure labels ("Relaxation") are not real POIs — never geocode them.
                         "_location_resolved": True
                     })
@@ -521,12 +620,16 @@ class RouteAgent:
             for spot_obj in current_day_spot_objects_raw:
                 self._resolve_location(spot_obj)
 
+            routing_meta = {
+                "source": "none", "optimized": False, "status": "not_required",
+                "note": "No travel order to optimise for this day.",
+            }
             if current_day_spot_objects_raw and len(current_day_spot_objects_raw) > 1:
                 optimized_day_attractions = self.optimize_daily_route(current_day_spot_objects_raw)
                 current_day_spot_objects_raw = optimized_day_attractions
+                routing_meta = dict(self._last_routing)
 
             current_day_spots_timed = []
-            day_unscheduled = []
             # Start day at 9 AM
             current_time = datetime.strptime("09:00", "%H:%M")
             lunch_added = False
@@ -536,17 +639,11 @@ class RouteAgent:
                 # Add Lunch Break if it's past 12:30 and not yet added
                 if not lunch_added and current_time.hour >= 12 and current_time.hour <= 15:
                     lunch_end = current_time + timedelta(hours=1.5)
-                    rest_name, rest_desc = "Lunch Break", "Time for lunch at a local restaurant or cafe."
-                    if hasattr(self.info_agent, 'poi_manager') and spot_obj.get("location"):
-                        try:
-                            lat = spot_obj["location"].get("lat", 0)
-                            lng = spot_obj["location"].get("lng", 0)
-                            rests = self.info_agent.poi_manager.get_restaurants(lat, lng, radius=2000, number=1)
-                            if rests:
-                                rest_name = rests[0].get("name", "Lunch Break")
-                                rest_desc = rests[0].get("description", "Time for lunch at a local restaurant or cafe.")
-                        except Exception as e:
-                            print(f"[ROUTE_AGENT][ERROR] Restaurant lookup failed: {e}")
+                    rest_name, rest_desc = self._meal_place(
+                        spot_obj.get("location"),
+                        "Lunch Break",
+                        "Time for lunch at a local restaurant or cafe.",
+                    )
                     current_day_spots_timed.append({
                         "id": f"lunch_day_{day_number}",
                         "name": rest_name,
@@ -555,7 +652,8 @@ class RouteAgent:
                         "start_time": current_time.strftime("%H:%M"),
                         "end_time": lunch_end.strftime("%H:%M"),
                         "estimated_duration": 1.5,
-                        "is_meal": True
+                        "is_meal": True,
+                        "entry_type": "meal",
                     })
                     current_time = lunch_end
                     lunch_added = True
@@ -563,17 +661,11 @@ class RouteAgent:
                 # Add Dinner Break if it's past 19:00 and not yet added
                 if not dinner_added and current_time.hour >= 19:
                     dinner_end = current_time + timedelta(hours=1.5)
-                    rest_name, rest_desc = "Dinner", "Evening dinner to wrap up the day."
-                    if hasattr(self.info_agent, 'poi_manager') and spot_obj.get("location"):
-                        try:
-                            lat = spot_obj["location"].get("lat", 0)
-                            lng = spot_obj["location"].get("lng", 0)
-                            rests = self.info_agent.poi_manager.get_restaurants(lat, lng, radius=2000, number=1)
-                            if rests:
-                                rest_name = rests[0].get("name", "Dinner")
-                                rest_desc = rests[0].get("description", "Evening dinner to wrap up the day.")
-                        except Exception as e:
-                            print(f"[ROUTE_AGENT][ERROR] Restaurant lookup failed: {e}")
+                    rest_name, rest_desc = self._meal_place(
+                        spot_obj.get("location"),
+                        "Dinner",
+                        "Evening dinner to wrap up the day.",
+                    )
                     current_day_spots_timed.append({
                         "id": f"dinner_day_{day_number}",
                         "name": rest_name,
@@ -582,7 +674,8 @@ class RouteAgent:
                         "start_time": current_time.strftime("%H:%M"),
                         "end_time": dinner_end.strftime("%H:%M"),
                         "estimated_duration": 1.5,
-                        "is_meal": True
+                        "is_meal": True,
+                        "entry_type": "meal",
                     })
                     current_time = dinner_end
                     dinner_added = True
@@ -615,6 +708,10 @@ class RouteAgent:
                     continue
                 
                 spot_with_time = spot_obj.copy()
+                if not spot_with_time.get("entry_type"):
+                    spot_with_time["entry_type"] = (
+                        "free_time" if spot_with_time.get("is_semantic_label") else "attraction"
+                    )
                 activity_end = current_time + timedelta(hours=spot_duration)
                 
                 # Hard limit at midnight
@@ -676,7 +773,13 @@ class RouteAgent:
                 "transport": None,
                 "food": None,
                 "accommodation": None,
-                "cost": None
+                "cost": None,
+                # Provenance for the UI/email: was this day's order optimised by
+                # OSRM, or estimated locally because the router was unreachable?
+                "routing_source": routing_meta.get("source"),
+                "routing_status": routing_meta.get("status"),
+                "routing_optimized": bool(routing_meta.get("optimized")),
+                "routing_note": routing_meta.get("note"),
             })
 
         return itinerary

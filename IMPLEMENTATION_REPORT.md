@@ -462,3 +462,214 @@ LLM estimates, so the numbers only become observable with a real `GOOGLE_API_KEY
 (`python e2e_validate.py 200000`). What is now guaranteed by code and tests is that whatever is
 quoted is displayed in the currency it was quoted in, attached to the named origin→destination
 journey, and counted in the budget only when it is in rupees.
+
+---
+
+## 8. Repair round — reported Japan trip (destination scope → itinerary → strict budget)
+
+This round addressed the failures observed on the reported Japan trip. Everything below was
+implemented in the existing architecture (Flask + workflow state machine + agents + services);
+no endpoint, page, authentication flow, or agent was replaced. All edits remain uncommitted.
+
+### 8.1 Reported symptoms mapped to root causes
+
+| # | Symptom | Root cause found in code |
+|---|---|---|
+| 1 | A request for **Japan** returned places around Numata/Gunma, not Tokyo/Kyoto/Osaka. | `_process_information` geocoded the country name, received a centroid (~36.5748, 139.2394), and searched a 20 km radius around it. There was no country/region/multi-city concept. |
+| 2 | **"Viewpoints and photography" produced `interest_based = 0`** despite Japan having many observation decks. | Interest matching used an English-only keyword map on the display name. The enrichment layer rebuilt each POI and deleted `osm_tags`/`types`/`metadata`, so `tourism=viewpoint` and Japanese names could never match. Popularity then dominated the ranking. |
+| 3 | Web/RAG retrieval returned **0 POIs**, and when the model did answer, ratings/images were invented. | `json.loads` was called on the whole model response, so markdown fences/prose/concatenated JSON failed silently. The Pydantic schema required coordinates and defaulted `rating=4.5`, `review_count=100`, `price_level=2`; enrichment then added `4.0` ratings and random Unsplash place photos. |
+| 4 | A strict **₹40,000 Japan budget appeared to fit**. | Indian Tier-2 INR costs were applied to every destination, feasibility accepted 65 % of that unrealistic minimum, and the optimiser shaved variable costs until the displayed total "fit". Intercity fares were multiplied by party size regardless of `cost_basis`; car-rental prices in any non-INR currency were treated as USD. |
+| 5 | Provider failures either **erased valid results** or produced **fabricated places**. | The fallback path emitted static "City Center"/"Historical District" records and generic images whenever providers were empty. Partial provider success was not consistently exposed. |
+| 6 | The final itinerary repeated places, dropped selected places, or reported false "not in itinerary" warnings. | The planner output was trusted with light string checks; days could be missing/out of range; duplicates were detected globally but reported as missing selections; route-agent repeats landed in the global unscheduled list. OSRM had no timeout, restaurant lookups repeated per stop, and a rental-API failure cleared `should_rent_car`. |
+| 7 | No readiness endpoint; memory/socket growth risk. | No `/health`; the workflow dict was only loosely capped; `CarRentalService` leaked its SSL connection on 403/non-200/JSON errors. |
+| 8 | The UI hid scope and infeasibility, and showed stock photos as if they were the place. | The frontend had no destination-scope disclosure, read only the raw budget dict, and substituted random Unsplash images when `image_url` was absent. |
+
+### 8.2 Fixes by area
+
+**Destination scope** — new `services/destination_resolver.py`
+- Classifies `country / region / city / multi_city / unknown / invalid` from a curated,
+  geographically bounded reference list, then the geocoder's feature type (`country`,
+  `state`, `city`, …) when the name is not curated.
+- A country is **never** collapsed to its centroid. For a supported country it returns a
+  transparent, editable multi-city proposal (Japan → Tokyo, Kyoto, Osaka, Sapporo, Hakone,
+  Nara). An unsupported country returns `needs_clarification` instead of guessing.
+- `validate_point_for_scope()` checks the country bounding box **and** distance to a proposed
+  city, so a Gunma POI cannot enter a Tokyo/Kyoto/Osaka scope.
+- `workflows/travel_graph.py` uses the resolver in both chat and information steps, anchors
+  weather/map on the first verified city, searches each proposed city independently
+  (`InformationAgent.get_attractions_for_cities`), and returns `destination_scope` plus
+  `provider_status` to the client. Known curated Indian cities are not sent through the
+  geocoder-based scope path, so a temporary geocoder outage cannot turn them into a
+  clarification loop.
+
+**Interest matching** — new `services/interest_match.py`
+- Canonical groups with multilingual aliases and evidence terms (including Japanese
+  observation-deck/photo vocabulary), OSM tag evidence, category/type hints, and per-interest
+  weights.
+- Matching inspects structured fields (`osm_tags`, `tags`, `types`, `metadata`, category,
+  description), not just the English display name, and returns human-readable reasons.
+- `InformationAgent._calculate_score` is auditable: interest 0–40, provider quality 0–20,
+  verified popularity 0–15, completeness 0–15, LLM advisory 0–10. No interest evidence means
+  **0** interest points; popularity cannot rescue the mismatch. Labels are
+  `interest_based` / `discovery` / `outside_interests` (the legacy `popular` label is no longer
+  produced on the active or fallback recommendation paths).
+
+**Retrieval and POI parsing** — new `services/structured_parse.py`
+- Extracts JSON values from fenced blocks, prose-wrapped output, concatenated objects and
+  Python-style literals; repairs trailing commas and smart quotes. Invalid output returns
+  `[]` and never raises.
+- `RecommendAgent.POIExtraction` no longer requires coordinates and no longer defaults
+  rating/review/price values. `extract_pois_from_text` keeps unknown fields `None`, dedupes
+  names case-insensitively, and rejects `N/A`-style names.
+- Every model-suggested POI is geocoded and checked against the destination country/city
+  before it can reach the map or itinerary. Unverified records are dropped with a reason, not
+  silently converted into places.
+
+**Strict budget** — `agents/budget_agent.py`, `services/budget_norm.py`,
+`workflows/travel_graph.py`
+- A destination profile applies a documented country cost index (Japan ×3.2, etc.) and
+  international entry-fee/fuel/rental scaling to the existing INR baseline. Unknown countries
+  use a conservative default **and disclose the assumption**.
+- `_check_budget_feasibility` compares the stated cap with a realistic minimum built from the
+  destination's low-cost floor plus selected attractions, rental/fuel and intercity fare. If
+  the cap is below that floor, `budget_infeasible=True` and the warning names the minimum and
+  the shortfall. The user's `budget_amount` is never rewritten or relaxed.
+- Intercity cost uses the normalised one-way party `group_cost` (or `per_person` × travellers
+  only when that is the stated basis), doubles it for the return leg, and honours an explicit
+  user transport mode even when it is more expensive. Foreign rental quotes are converted with
+  a documented static currency table instead of being assumed to be USD.
+- `local_transport` is the single canonical category and already includes car rental + fuel;
+  the workflow no longer adds those components a second time when a selected accommodation is
+  applied.
+- `budget_norm.normalize_budget()` exposes `min_viable_cost`, `cost_index`,
+  `destination_profile`, `currency_assumptions` and `breakdown` so the UI/email can explain
+  the number rather than hiding it.
+
+**Providers and no-fabrication**
+- Removed the synthetic static fallback POIs, generic place images, default ratings, and
+  invented addresses. A missing value stays `None`/empty and is labelled unavailable.
+- Provider results survive partial failures; `provider_status` records each provider's state
+  and is returned to the client.
+- Model fallbacks are used only when providers **and** RAG are empty, are clearly marked
+  unverified, and must pass geocoding + scope validation.
+- Overpass/Geoapify behavior and the existing retry/cooldown logic were preserved.
+
+**Itinerary integrity** — `agents/strategy_agent.py`, `agents/route_agent.py`,
+`workflows/travel_graph.py`
+- `StrategyAgent._finalize_daily_plan()` deterministically creates days 1..N, removes
+  hallucinated names and cross-day duplicates, keeps one instance of a free-time label, and
+  re-inserts every selected attraction on the lightest day. The same path is used when the LLM
+  fails, so a planner outage no longer produces an empty itinerary.
+- `RouteAgent` dedupes places across days and records repeats as per-day
+  `duplicate_across_days`, **not** in the global "selected but unscheduled" list. Every
+  activity carries `entry_type` (`attraction` / `meal` / `free_time` / `accommodation`), and
+  each day carries `routing_source`, `routing_status`, `routing_optimized` and `routing_note`.
+- OSRM calls have a bounded timeout (`OSRM_TIMEOUT_SECONDS`, default 6 s) and fall back to the
+  local distance heuristic with explicit provenance. Restaurant lookups are cached per ~1 km
+  cell. `extract_rental_recommendation` and `get_ai_recommendation` now treat an explicit
+  `rental_choice` as authoritative; a dead rental provider cannot erase the decision, only its
+  live quote.
+- Final validation re-sequences each day after filtering and reports genuinely unknown POIs
+  with a reason.
+
+**Health and resource cleanup** — `main.py`, `services/car_rental_api.py`
+- Added `GET /health` and `GET /api/health`: secret-free configuration presence, uptime,
+  workflow count and readiness checks, with no provider/LLM calls.
+- `prune_workflows()` bounds the in-process workflow store (`MAX_WORKFLOWS`, default 500) and
+  runs on session creation/reset.
+- `CarRentalService` initialises `conn = None` and closes it in `finally` on every path,
+  including 403/non-200/timeout/JSON errors.
+
+**Frontend** — `frontend/static/js/main.js`, `frontend/templates/index.html`
+- Renders a destination-scope disclosure (country proposal / region / multi-city /
+  clarification) and partial-provider status instead of hiding them.
+- Renders the strict-budget infeasibility warning, the realistic minimum and the cost/FX
+  assumptions from the canonical normalized budget.
+- Removed random Unsplash fallbacks and the mock exchange-rate path; a missing image now shows
+  an explicit neutral "No photo available" placeholder.
+
+### 8.3 Files changed
+
+| File | Change |
+|---|---|
+| `services/destination_resolver.py` **(new, 798 lines)** | Country/region/city/multi-city classification, editable proposals, bbox + nearest-city scope validation, disclosure text. |
+| `services/interest_match.py` **(new, 453 lines)** | Canonical multilingual interest groups, OSM/category evidence, deterministic `match_interests` / `interest_score`. |
+| `services/structured_parse.py` **(new, 183 lines)** | Defensive JSON extraction, wrapper flattening, rating/name sanitisation. |
+| `agents/information_agent.py` | Shared interest matcher and auditable score; honest enrichment; verified multi-city discovery; geocode/scope validation of generated POIs; removed fabricated fallbacks; OSRM timeout and routing metadata. |
+| `agents/recommend_agent.py` | Honest POI schema/extraction; optional coordinates/ratings; dedupe; consistent interest labels. |
+| `agents/budget_agent.py` | Country cost model, strict minimum feasibility, intercity cost basis and explicit-mode precedence, currency table, international entry/fuel/rental scaling, canonical category sums. |
+| `agents/strategy_agent.py` | Deterministic daily-plan finalisation, day 1..N guarantee, duplicate/hallucination removal, selected-place re-insertion, rental-choice precedence. |
+| `agents/route_agent.py` | Cross-day dedupe with honest per-day reasons, entry types, routing provenance, meal cache. |
+| `workflows/travel_graph.py` | Scope resolution and multi-city search, per-city accommodation/restaurants, destination-aware budget integration, strict advisory without aborting, final validation, recommendation labels, known-Indian-city fallback. |
+| `services/budget_norm.py` | Normalized output carries minimum cost, cost index, destination profile, FX assumptions and breakdown. |
+| `services/geocoding.py` | `feature_type`, `place_type` and `bbox` from Geoapify/Nominatim/Photon for scope classification. |
+| `services/car_rental_api.py` | Socket closed on every path, including 403/non-200/timeout/JSON errors. |
+| `main.py` | `/health` and `/api/health`, bounded workflow pruning, `destination_scope`/`discovery_status` in `/api/state`, email-configured check covers `MAIL_SERVER`. |
+| `frontend/static/js/main.js` | Scope/provider disclosure, strict-budget minimum and assumptions, honest image placeholder, no mock FX. |
+| `frontend/templates/index.html` | `#scope-disclosure` container. |
+| `tests/test_repair_acceptance_a_h.py` **(new, 20 tests)** | Required A–H acceptance matrix, fully mocked/offline. |
+
+### 8.4 Verification (actual commands and results)
+
+Baseline before this round: **106 passed, 2 warnings**.
+
+After the fixes:
+
+```text
+python -m pytest tests -q
+126 passed, 2 warnings in 21.26s
+
+python -m pytest tests/test_repair_acceptance_a_h.py -q
+20 passed, 2 warnings in 3.06s
+
+python -m compileall -q agents services workflows main.py
+exit 0, no output
+
+git diff --check
+clean (only Git's LF→CRLF advisory warnings)
+```
+
+The two warnings are pre-existing and unrelated: `google.api_core` Python 3.11 EOL
+`FutureWarning`, and `flask_session.FileSystemSessionInterface` `DeprecationWarning`.
+
+### 8.5 Acceptance tests A–H
+
+| Group | Coverage |
+|---|---|
+| **A — Destination scope** | Japan is a `country` with a disclosed, editable Tokyo/Kyoto/Osaka/Sapporo/Hakone/Nara proposal; Tokyo/Kyoto/Paris scope validation; city/region/multi-city preservation; unknown country asks for a region/city instead of a centroid. |
+| **B — Interest matching** | "Viewpoints and photography" normalises to canonical groups; a Japanese observation deck matches through OSM tags; a highly rated shopping mall earns zero interest points; labels are honest. |
+| **C — Retrieval parsing** | Fenced/prose-wrapped JSON with trailing commas; concatenated JSON values; Python literals; nested wrappers; unknown rating/location remain `None`; `N/A` names and case duplicates removed. |
+| **D — Strict budget** | A ₹40,000 Japan trip is declared infeasible with a minimum and shortfall; no-limit trips report `within_budget=None`; explicit flight choice beats a cheaper train; the user's cap is unchanged. |
+| **E — Provider failure** | Total provider + LLM failure returns `[]` with no fabricated "City Center"; partial provider success survives with no invented fields; generated POIs are geometry/country checked. |
+| **F — Itinerary integrity** | Every selected place appears exactly once, days 1..N exist, hallucinated names are dropped, a repeat is reported per day not globally, routing provenance is present. |
+| **G — Health/resources** | `/health` is secret-free and 200; workflow pruning evicts oldest entries; car-rental socket closes on 403 and the provider is disabled. |
+| **H — Mocked Japan E2E** | Country proposal → Tokyo/Kyoto/Osaka POIs (Numata rejected) → strict ₹40,000 infeasible with complete itinerary → every selected spot scheduled once → transit and provider status preserved → normalized budget contract consistent. |
+
+### 8.6 Deliberate limitations / not verified live
+
+1. **Live providers and LLMs were not exercised.** Tests mock Gemini, Geoapify, Overpass,
+   RapidAPI and SMTP, so endpoint behavior is verified but real quota/latency/model-quality
+   behavior is not. Use `python e2e_validate.py 200000` with real keys for that.
+2. **Cost indices and FX rates are deliberately static and indicative.** They are disclosed in
+   the UI/report and are not live quotes. The ₹40,000 Japan trip is intentionally still
+   infeasible once realistic flights are included; the product now says so instead of
+   inventing a cheaper plan.
+3. **The country proposal list is curated, not exhaustive.** It contains well-known cities for
+   supported countries and is editable; it is not a complete tourism inventory.
+4. **Frontend was not browser-executed here.** Node.js is absent, so `main.js` was checked by
+   the existing source-level pytest guards plus Python syntax/brace checks of the edited
+   functions. A live browser smoke test is still worthwhile.
+5. **No bookings are made.** Accommodation, transit and car-rental figures remain planning
+   estimates; the UI/email never label them as confirmed bookings.
+6. **No commit was made.** All changes are in the working tree for review.
+
+### 8.7 Commands used
+
+```powershell
+python -m pytest tests -q
+python -m pytest tests/test_repair_acceptance_a_h.py -q
+python -m compileall -q agents services workflows main.py
+git diff --check
+git status --short
+```
+

@@ -161,6 +161,7 @@ class CarRentalService:
 
         print(f"Preparing request: {endpoint_with_params}")
 
+        conn = None
         try:
             # --- Send API request using http.client ---
             conn = http.client.HTTPSConnection(self.api_host, timeout=self.timeout)
@@ -180,7 +181,6 @@ class CarRentalService:
                 return None
                 
             data = response.read()
-            conn.close()
             
             # Parse JSON response
             raw_data = json.loads(data.decode('utf-8'))
@@ -196,3 +196,11 @@ class CarRentalService:
         except http.client.HTTPException as e: print(f"Error: HTTP connection issue - {e}"); return None
         except json.JSONDecodeError as e: print(f"Error: Failed to parse JSON response - {e}"); print(f"Received raw response text (first 500 chars): {data.decode('utf-8')[:500] if 'data' in locals() else 'No data'}"); return None
         except Exception as e: print(f"Unexpected error occurred: {e}"); return None
+        finally:
+            # Always release the SSL socket, including on a non-200 response
+            # (403/429), a timeout or a JSON decoding failure.
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass

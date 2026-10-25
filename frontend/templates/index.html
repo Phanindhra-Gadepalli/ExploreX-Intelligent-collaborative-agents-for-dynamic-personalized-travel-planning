@@ -27,6 +27,24 @@
             userEmail: {{ user_email|tojson }},
             isGuest: {{ 'true' if is_guest else 'false' }}
         };
+
+        // Auth-aware entry points. Defined here (before main.js) so they always
+        // exist even if the main app boot fails partway. Prevents the reported
+        // login -> landing -> /login -> landing redirect loop: an already
+        // authenticated user is taken straight into the app instead of being
+        // bounced through /login (which itself redirects authenticated users away).
+        window.explorexEnter = function (dest) {
+            var a = window.EXPLOREX || {};
+            if (dest) { try { sessionStorage.setItem('explorex_dest', dest); } catch (e) { } }
+            if (a.authenticated) {
+                window.location.href = dest ? ('/?dest=' + encodeURIComponent(dest)) : '/';
+            } else {
+                window.location.href = dest ? ('/login?dest=' + encodeURIComponent(dest)) : '/login';
+            }
+        };
+        if (!window.goToDestination) {
+            window.goToDestination = function (dest) { window.explorexEnter(dest); };
+        }
     </script>
 </head>
 <body>
@@ -35,7 +53,7 @@
     <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
     <!-- Sticky Navigation (Dashboard) -->
-    <nav class="navbar" id="main-nav" style="display: none;">
+    <nav class="navbar" id="main-nav" style="display: {{ 'flex' if authenticated else 'none' }};">
         <a class="brand-text" href="#" data-testid="login-earth-logo">
             Expl<span class="brand-earth-sm" aria-hidden="true"></span>reX
         </a>
@@ -71,15 +89,48 @@
     </div>
 
 
+    <!-- Persistent AI Travel Assistant (left rail on every trip page) ------
+         Rendered from the SERVER-side session state via /api/assistant, so the
+         facts it shows are the same ones the itinerary, map, budget and email
+         use. Navigating between tabs never re-runs the planning pipeline. -->
+    <aside id="assistant-panel" class="assistant-panel" aria-label="AI Travel Assistant"
+           data-testid="assistant-panel">
+        <header class="assistant-panel-header">
+            <span class="assistant-panel-title">
+                <i class="fas fa-paper-plane me-2" aria-hidden="true"></i>Travel Assistant
+            </span>
+            <button type="button" id="assistant-panel-collapse" class="assistant-panel-icon-btn"
+                    title="Hide assistant" aria-label="Hide assistant" data-testid="assistant-collapse">
+                <i class="fas fa-chevron-left" aria-hidden="true"></i>
+            </button>
+        </header>
+        <div id="assistant-panel-body" class="assistant-panel-body" aria-live="polite">
+            <div class="assistant-state">
+                <i class="fas fa-circle-notch fa-spin me-2" aria-hidden="true"></i>Loading your trip…
+            </div>
+        </div>
+        <footer class="assistant-panel-footer">
+            <button type="button" id="assistant-continue-chat" class="btn btn-sm btn-outline-primary w-100"
+                    data-testid="assistant-continue-chat">
+                <i class="fas fa-comment-dots me-1" aria-hidden="true"></i>Ask a follow-up in chat
+            </button>
+        </footer>
+    </aside>
+
+    <button type="button" id="assistant-panel-open" class="assistant-panel-open d-none"
+            title="Show assistant" aria-label="Show travel assistant" data-testid="assistant-open">
+        <i class="fas fa-paper-plane" aria-hidden="true"></i>
+    </button>
+
     <div class="app-container" id="app-container">
         
         <!-- 1. LANDING PAGE -->
-        <section id="view-landing" class="view-section active">
+        <section id="view-landing" class="view-section {{ 'active' if not authenticated else '' }}">
             <div class="hero-stage">
                 <header class="landing-header d-flex justify-content-end align-items-center w-100 p-4 p-md-5">
                     <nav class="landing-links">
                     </nav>
-                    <button class="btn btn-primary" data-testid="landing-get-started" onclick="window.location.href='/login'">Get Started</button>
+                    <button class="btn btn-primary" data-testid="landing-get-started" onclick="explorexEnter()">Get Started</button>
                 </header>
                 <!-- 3D Earth + orbiting destination cards -->
                 <div class="hero-body">
@@ -157,7 +208,7 @@
                     <h1 class="hero-title Bricolage">Plan less.<br>Explore more.</h1>
                     <p class="hero-subtitle">Your AI travel companion for personalized itineraries,<br class="d-none d-lg-inline"> real destinations and unforgettable experiences.</p>
                     <div class="mb-4">
-                        <button id="hero-explore-button" data-testid="hero-explore-button" class="btn btn-primary btn-lg px-5" onclick="window.location.href='/login'">Start Exploring <i class="fas fa-arrow-right ms-2"></i></button>
+                        <button id="hero-explore-button" data-testid="hero-explore-button" class="btn btn-primary btn-lg px-5" onclick="explorexEnter()">Start Exploring <i class="fas fa-arrow-right ms-2"></i></button>
                     </div>
                     <div class="hero-badges">
                         <span class="badge-tech"><i class="fas fa-wand-magic-sparkles"></i> Generative AI</span>
@@ -170,7 +221,7 @@
         </section>
 
         <!-- 2. CHAT DASHBOARD -->
-        <section id="view-chat" class="view-section pt-4">
+        <section id="view-chat" class="view-section pt-4 {{ 'active' if authenticated else '' }}">
             <div class="chat-wrapper mx-auto max-w-1000 d-flex flex-column h-100" style="min-height: 75vh;">
                 <div class="chat-history flex-grow-1 overflow-auto p-4" id="chat-container">
                     <div class="ai-msg">
@@ -388,6 +439,13 @@
                     <!-- Injected -->
                 </div>
             </div>
+
+            <!-- Requirement 5: personalised closing greeting + destination-specific tips.
+                 Kept OUTSIDE .budget-container on purpose: that container is a flex row
+                 (chart + legend side by side), so nesting the wrap-up inside it rendered
+                 the greetings beside the budget instead of below it. Hidden until a trip
+                 has been planned so the layout matches the empty state. -->
+            <div id="budget-closing" class="budget-closing d-none" data-testid="budget-closing"></div>
         </section>
 
     </div>
@@ -429,7 +487,20 @@
                         </div>
                         
                         <p class="text-secondary small mb-4" id="modal-desc" data-testid="attraction-description">Description</p>
-                        
+
+                        <!-- Requirement 2: verified attraction enrichment (Wikipedia, opening hours, official website).
+                             Populated by /api/attraction-details after the modal opens. Never fabricated — the
+                             section only shows links the backend actually validated. -->
+                        <div id="modal-enrichment" class="mb-3 small d-none" data-testid="attraction-enrichment">
+                            <div id="modal-source-badge" class="text-muted mb-2" style="font-size: 0.75rem;"></div>
+                            <div id="modal-hours" class="mb-1 d-none">
+                                <i class="fas fa-door-open text-accent me-1"></i>
+                                <span class="fw-bold me-1">Opening hours:</span>
+                                <span id="modal-hours-value"></span>
+                            </div>
+                            <div id="modal-links" class="d-flex gap-2 flex-wrap mt-2"></div>
+                        </div>
+
                         <div class="d-flex gap-2">
                             <button class="btn btn-primary flex-grow-1 rounded-pill" id="modal-add-btn" data-testid="modal-add-btn">Add to Itinerary</button>
                             <button class="btn btn-outline rounded-pill" id="modal-map-btn" data-testid="attraction-view-map"><i class="fas fa-map me-2"></i> View on Map</button>

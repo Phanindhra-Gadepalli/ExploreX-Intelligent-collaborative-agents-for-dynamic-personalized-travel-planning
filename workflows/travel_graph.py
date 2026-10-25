@@ -1,6 +1,23 @@
 import sys, io
 import logging
-logging.basicConfig(level=logging.DEBUG)
+# Keep the root logger at INFO so the ExploreX agent trace stays readable,
+# and silence third-party DEBUG chatter (HTTP clients, ChromaDB internals,
+# sentence-transformers/HF hub metadata probes). The HF 404s for optional
+# files such as 2_Normalize/config.json and additional_chat_templates are
+# harmless metadata probes — the model still loads and embeds correctly.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+for _noisy in (
+    "httpcore", "httpcore2", "httpx", "httpx2", "urllib3",
+    "chromadb", "posthog", "sentence_transformers", "huggingface_hub",
+    "filelock", "sentence_transformers.util.file_io",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+# The Google GenAI function-utils logger emits a per-field "Key 'title' is not
+# supported in schema, ignoring" WARNING when converting Pydantic JSON schemas.
+# This is cosmetic (only the human-readable title annotation is dropped; field
+# names, types, descriptions, enums and validation are preserved), so quiet it
+# without touching behaviour.
+logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
@@ -18,8 +35,11 @@ from agents.transit_agent import TransitAgent
 from datetime import datetime, timedelta
 from langchain_core.messages import AIMessage
 import json
+import re
 from utils import extract_number
 from services.email_service import send_trip_email
+from services.budget_norm import normalize_budget
+from services.transit_norm import normalize_transit_options
 
 import traceback
 
@@ -140,38 +160,73 @@ class TravelGraph:
         if user_email:
             self.default_user_info["email"] = user_email
             
-        self.state = { # Default state for a new session
+        self.state = self._fresh_state()  # Default state for a new session
+        self.session_states = {} # To store states for different sessions
+
+    def _fresh_state(self):
+        """Build a complete, clean trip state.
+
+        One factory is used for the default state AND for every new session, so
+        a fresh trip can never inherit a stale key from an earlier one, and no
+        code path has to remember to initialise a field (Phase 9).
+        """
+        return {
             "user_info": self.default_user_info.copy(),
-            "attractions": [], # This will hold LLM-ranked attractions from InfoAgent
-            "retrieved_knowledge": None, # Store RAG context
-            "weather_summary": None, # To store weather summary string
-            "selected_attractions": [],
+            "attractions": [],               # LLM-ranked POIs from InfoAgent
+            "retrieved_knowledge": None,     # RAG context
+            "weather_summary": None,
+            "selected_attractions": [],       # authoritative traveller choice
             "additional_attractions": [],
-            "should_rent_car": False, # Ensure this defaults to False
-            # "rental_post": None, # Intentionally removed from state
+            "planned_attractions": [],        # reconciled subset driving the plan
+            "unscheduled_attractions": [],    # selected-but-not-scheduled, w/ reason
+            "should_rent_car": False,
+            "rental_decision_source": None,   # user_selection|agent_recommendation|default
+            "car_rental_available": None,
+            "car_rental_source": None,
             "itinerary": [],
             "budget": {},
-            "ai_recommendation_generated": False, # Flag for strategy AI advice
+            "budget_normalized": {},
+            "ai_recommendation_generated": False,
             "transit_options": None,
-            "email_sent": False, # Prevent duplicate emails
+            "accommodations": [],
+            "restaurants": [],
+            "selected_accommodation": None,
+            "travel_tips": None,
+            "provider_status": None,           # per-provider health for observability
+            "email_sent": False,
+            "current_step": "chat",
         }
-        self.session_states = {} # To store states for different sessions
-    
+
     def get_session_state(self, session_id):
+        """Return the isolated per-session trip state, creating it when new."""
         if session_id not in self.session_states:
-            # Create a new state by copying the default state structure
-            self.session_states[session_id] = {
-                "user_info": self.default_user_info.copy(), "attractions": [], "retrieved_knowledge": None, "weather_summary": None,
-                "selected_attractions": [], "additional_attractions": [],
-                "should_rent_car": False, # Ensure this defaults to False
-                # "rental_post": None, # Intentionally removed from state
-                "itinerary": [], "budget": {},
-                "ai_recommendation_generated": False,
-                "transit_options": None,
-                "email_sent": False,
-            }
+            self.session_states[session_id] = self._fresh_state()
         return self.session_states[session_id]
-    
+
+    def new_trip_state(self, session_id=None):
+        """Reset ONLY trip data; keep identity/session wiring (Phase 9)."""
+        state = self._fresh_state()
+        if session_id:
+            self.session_states[session_id] = state
+            self.state = state
+        else:
+            self.state = state
+        return state
+
+    def set_state_field(self, key, value):
+        """Explicit single-field update on the live session state.
+
+        ``main.py`` has always called this (e.g. to record ``email_sent``) but
+        the method never existed, so those calls silently fell through to a
+        generic mutation path.
+        """
+        self.state[key] = value
+        return value
+
+    def get_state_snapshot(self):
+        """Shallow copy safe to hand to the API layer."""
+        return dict(self.state)
+
     def process_step(self, step_name, session_id=None, **kwargs):
         # print(f"[DEBUG] Processing step {step_name} for session_id: {session_id}")
         # print(f"[DEBUG] Initial kwargs: {kwargs}")
@@ -207,7 +262,19 @@ class TravelGraph:
             result = self._process_communication(**kwargs)
         else:
             result = {"error": f"Unknown step: {step_name}"}
-        
+
+        # Workflow progress is part of the persistent assistant context, so it
+        # must be recorded on the server, not inferred by the browser.
+        if not result.get("error"):
+            self.state["current_step"] = result.get("next_step") or step_name
+        if self.info_agent is not None and getattr(self.info_agent, "poi_manager", None) is not None:
+            status = getattr(self.info_agent.poi_manager, "get_provider_status", None)
+            if callable(status):
+                try:
+                    self.state["provider_status"] = status()
+                except Exception:
+                    pass
+
         self.session_states[session_id] = self.state.copy() # Save a copy of the modified state
         result["session_id"] = session_id # Ensure session_id is always in the result
         # print(f"[DEBUG] State after processing {step_name}: {self.state}")
@@ -514,24 +581,32 @@ class TravelGraph:
 
         # ================================================================
         # Fetch attractions — STATE path vs CITY path
+        # Discovery breadth is now scaled to trip duration rather than a
+        # fixed 20, so a 10-day trip genuinely sees more than 10-14 choices.
+        # Selection is still entirely the user's (Requirement 1C).
         # ================================================================
+        try:
+            _days_int = int(str(user_days_str or 5).split('-')[0])
+        except (TypeError, ValueError):
+            _days_int = 5
+        discovery_target = max(30, min(120, _days_int * 6))
         if is_state_search:
-            print(f"[STATE_SEARCH] Running state-wide search for {display_name}.")
+            print(f"[STATE_SEARCH] Running state-wide search for {display_name}. target={discovery_target}")
             attractions_from_info_agent = self.info_agent.get_attractions_for_state(
                 state_name=display_name,
                 state_cities=state_cities,
                 user_prefs=user_prefs,
                 weather_summary=self.state.get("weather_summary"),
-                total_number=20
+                total_number=discovery_target
             )
         else:
-            print(f"[DEBUG] Calling info_agent.get_attractions for city '{city}'.")
+            print(f"[DEBUG] Calling info_agent.get_attractions for city '{city}'. target={discovery_target}")
             attractions_from_info_agent = self.info_agent.get_attractions(
                 lat=city_coordinates["lat"],
                 lng=city_coordinates["lng"],
                 user_prefs=user_prefs,
                 weather_summary=self.state.get("weather_summary"),
-                number=20,
+                number=discovery_target,
                 poi_type="tourist_attraction"
             )
         
@@ -833,6 +908,126 @@ class TravelGraph:
                 "error": str(e)
             }
     
+    # ------------------------------------------------------------------
+    # Selection reconciliation (Phase 8 invariants 1, 2, 3, 12)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _day_key_num(key):
+        m = re.search(r"(\d+)", str(key))
+        return int(m.group(1)) if m else None
+
+    @staticmethod
+    def _norm_name(name):
+        return re.sub(r"\s+", " ", str(name or "")).strip().lower()
+
+    def _reconcile_plan_with_selection(self, selected_attractions, daily_plan,
+                                       planned_attractions, total_days):
+        """Guarantee the user's selection drives the plan, or is reported.
+
+        Returns ``(daily_plan, planned_attraction_objects, unscheduled)`` where
+        *daily_plan* contains every selected attraction name that could be
+        placed, *planned_attraction_objects* are the original provider records
+        (ids and coordinates preserved verbatim), and *unscheduled* lists what
+        could not be scheduled together with a machine-readable reason.
+        """
+        selected = [s for s in (selected_attractions or []) if isinstance(s, dict) and s.get("name")]
+        planned_objs = [p for p in (planned_attractions or []) if isinstance(p, dict) and p.get("name")]
+        plan = {}
+        for key, names in (daily_plan or {}).items():
+            if isinstance(names, list):
+                plan[str(key)] = list(names)
+
+        try:
+            days_int = max(1, int(total_days or 1))
+        except (TypeError, ValueError):
+            days_int = 1
+        existing_nums = {self._day_key_num(k) for k in plan}
+        for d in range(1, days_int + 1):
+            if d not in existing_nums:
+                plan[f"day{d}"] = []
+        if not plan:
+            plan = {f"day{d}": [] for d in range(1, days_int + 1)}
+
+        planned_names = set()
+        for names in plan.values():
+            planned_names.update(self._norm_name(n) for n in names)
+        planned_names.update(self._norm_name(p.get("name")) for p in planned_objs)
+        planned_names.discard("")
+
+        def already_planned(name):
+            n = self._norm_name(name)
+            if not n:
+                return False
+            if n in planned_names:
+                return True
+            # Tolerate small wording differences from the LLM.
+            for existing in planned_names:
+                if len(n) > 6 and len(existing) > 6 and (n in existing or existing in n):
+                    return True
+            return False
+
+        unscheduled = []
+        missing = [s for s in selected if not already_planned(s.get("name"))]
+        for spot in missing:
+            # Put it on the currently lightest day so a full day cannot hide it.
+            target = min(plan.keys(), key=lambda k: (len(plan[k]), self._day_key_num(k) or 999))
+            if len(plan[target]) >= 8:
+                unscheduled.append({
+                    "name": spot.get("name"),
+                    "id": str(spot.get("id")) if spot.get("id") is not None else None,
+                    "day": self._day_key_num(target),
+                    "reason": "all_days_already_full",
+                    "detail": "Every day already holds the maximum 8 activities; "
+                              "shorten the trip or select fewer places.",
+                })
+                print(f"[WORKFLOW][SELECTION] '{spot.get('name')}' could not be placed: all days full.")
+                continue
+            plan[target].append(spot.get("name"))
+            planned_names.add(self._norm_name(spot.get("name")))
+            print(f"[WORKFLOW][SELECTION] Re-inserted selected attraction "
+                  f"'{spot.get('name')}' into {target} (the planner had dropped it).")
+
+        # Resolve every planned name back to its authoritative provider record.
+        obj_map = {}
+        for p in planned_objs:
+            obj_map.setdefault(self._norm_name(p.get("name")), p)
+        for s in selected:  # selected records win: they carry ids/coords from the provider
+            obj_map[self._norm_name(s.get("name"))] = s
+
+        ordered_keys = sorted(plan.keys(), key=lambda k: (self._day_key_num(k) or 999, str(k)))
+        reconciled_plan = {k: plan[k] for k in ordered_keys}
+        merged_details = []
+        seen = set()
+        for key in ordered_keys:
+            cleaned_names = []
+            for name in plan[key]:
+                n = self._norm_name(name)
+                obj = obj_map.get(n)
+                if obj is None:
+                    # Free-time labels and unmatchable names: leave them in the
+                    # plan for RouteAgent, which reports them as unscheduled.
+                    cleaned_names.append(name)
+                    continue
+                cleaned_names.append(obj.get("name"))
+                if n not in seen:
+                    seen.add(n)
+                    merged_details.append(obj)
+            plan[key] = cleaned_names
+
+        # Anything selected that never made it into the merged list at all.
+        for s in selected:
+            n = self._norm_name(s.get("name"))
+            if n not in seen and not any(u.get("name") == s.get("name") for u in unscheduled):
+                unscheduled.append({
+                    "name": s.get("name"),
+                    "id": str(s.get("id")) if s.get("id") is not None else None,
+                    "day": None,
+                    "reason": "dropped_by_planner",
+                    "detail": "The daily planner did not include this selection on any day.",
+                })
+
+        return reconciled_plan, merged_details, unscheduled
+
     def _process_strategy(self, **kwargs):
         """Process strategy agent step"""
         # Check if this is a confirm selection request or a satisfaction confirmation
@@ -872,13 +1067,53 @@ class TravelGraph:
                 retrieved_knowledge=self.state.get("retrieved_knowledge") # Pass RAG context
             )
             
-            self.state["attractions"] = strategy_result["additional_attractions"]  ## 现在这里的attractions 是经过筛选的,也是最终的attractions
             self.state["daily_plan"] = strategy_result.get("daily_plan", {}) # Store the daily plan
 
-            # Initialize should_rent_car to False by default
-            self.state["should_rent_car"] = False
-            print("[DEBUG] Initialized should_rent_car to False")
-            
+            # ------------------------------------------------------------------
+            # Phase 8 invariant 1/2/3: the traveller's SELECTION is authoritative.
+            # ``plan_remaining_time`` returns the flat list of attractions the
+            # planner actually placed, which is a subset of the selection (it can
+            # drop items when a day fills up or a name does not match). Assigning
+            # that subset straight to state["attractions"] used to silently
+            # delete selected places from the trip, so they vanished from the
+            # map, budget and email with no explanation. We now reconcile the
+            # daily plan with the selection: anything missing is re-inserted on
+            # the lightest day, and whatever still cannot be placed is reported
+            # as unscheduled instead of disappearing.
+            # ------------------------------------------------------------------
+            reconciled_plan, planned_details, unscheduled = self._reconcile_plan_with_selection(
+                selected_attractions=selected_attractions,
+                daily_plan=self.state["daily_plan"],
+                planned_attractions=strategy_result["additional_attractions"],
+                total_days=total_days,
+            )
+            self.state["daily_plan"] = reconciled_plan
+            self.state["attractions"] = planned_details
+            self.state["additional_attractions"] = planned_details
+            self.state["unscheduled_attractions"] = unscheduled
+            if unscheduled:
+                print(f"[WORKFLOW][SELECTION] {len(unscheduled)} selected attraction(s) could not be "
+                      f"scheduled: {[u.get('name') for u in unscheduled]}")
+            # Preserve the discovery list for the Explore/map pages; the planned
+            # subset only drives the itinerary.
+            self.state["planned_attractions"] = planned_details
+
+            # ------------------------------------------------------------------
+            # Car rental decision — ONE authoritative state flag (Phase 4D/8).
+            # Priority: explicit user choice > planner/agent recommendation.
+            # Provider availability NEVER overwrites this flag; it only controls
+            # whether we have real quotes or must fall back to an estimate.
+            # ------------------------------------------------------------------
+            user_choice = self.state["user_info"].get("rental_choice")
+            if user_choice is not None:
+                self.state["should_rent_car"] = bool(user_choice)
+                self.state["rental_decision_source"] = "user_selection"
+            else:
+                self.state["should_rent_car"] = False
+                self.state["rental_decision_source"] = "default"
+            print(f"[DEBUG] should_rent_car initialised to {self.state['should_rent_car']} "
+                  f"(source={self.state['rental_decision_source']})")
+
             # Get AI recommendation about the overall plan
             # This will also analyze the recommendation and update should_rent_car in user_prefs
             ai_recommendation = self.strategy_agent.get_ai_recommendation(
@@ -886,14 +1121,16 @@ class TravelGraph:
                 selected_spots=selected_attractions,
                 total_days=total_days,
             )
-            
-            # Get the should_rent_car value from user_prefs after AI recommendation analysis
-            # This value is set by extract_rental_recommendation in strategy_agent.py
-            ai_should_rent_car = self.state["user_info"].get("should_rent_car", False)
-            self.state["should_rent_car"] = ai_should_rent_car
-            
-            print(f"[DEBUG] AI rental recommendation set should_rent_car to: {ai_should_rent_car}")
-            print(f"[DEBUG] Updated state should_rent_car value: {self.state['should_rent_car']}")
+
+            if self.state["rental_decision_source"] != "user_selection":
+                # Value written into user_prefs by extract_rental_recommendation()
+                ai_should_rent_car = bool(self.state["user_info"].get("should_rent_car", False))
+                if ai_should_rent_car != self.state["should_rent_car"]:
+                    self.state["should_rent_car"] = ai_should_rent_car
+                    self.state["rental_decision_source"] = "agent_recommendation"
+
+            print(f"[DEBUG] should_rent_car after AI recommendation: {self.state['should_rent_car']} "
+                  f"(source={self.state['rental_decision_source']})")
             
             # Create a copy of the state to return
             self.state["ai_recommendation_generated"] = True
@@ -903,7 +1140,8 @@ class TravelGraph:
                 "next_step": "strategy",
                 "stream": ai_recommendation,
                 "remaining_hours": strategy_result["remaining_hours"],
-                "additional_attractions": strategy_result["additional_attractions"],
+                "additional_attractions": planned_details,
+                "unscheduled_attractions": unscheduled,
                 "should_rent_car": self.state["should_rent_car"],
                 "state": state_copy,
                 "ai_recommendation_generated": True,
@@ -1001,22 +1239,67 @@ class TravelGraph:
         
         transit_options = None
         if origin and destination:
-            try:
-                print(f"[DEBUG] Fetching transit options from {origin} to {destination}...")
-                transit_options = self.transit_agent.get_transit_options(
-                    origin=origin,
-                    destination=destination,
-                    start_date=start_date,
-                    budget_level=budget_level,
-                    is_international=self.state["user_info"].get("is_international", False)
+            # Same-city trip (origin == destination): there is no intercity leg
+            # to plan, and asking for "Guwahati -> Guwahati" produced nonsense
+            # arrival/departure options that then leaked into the budget/email.
+            def _city_key(value):
+                return re.sub(r"[^a-z0-9 ]", "", str(value).strip().lower()).replace("  ", " ").strip()
+            same_city = _city_key(origin) == _city_key(destination)
+            if same_city:
+                print(f"[TRANSIT][SKIP] Origin and destination are the same city ({origin}); "
+                      f"no intercity transport needed.")
+                transit_options = normalize_transit_options(
+                    {
+                        "origin": origin,
+                        "destination": destination,
+                        "estimation_note": "You are already travelling within your destination city, so no "
+                                           "intercity journey was planned. Local transport is estimated below.",
+                        "currency": "INR",
+                        "intercity_transport": [],
+                        "local_transport": [],
+                        "recommended_mode": None,
+                        "recommended_local_mode": None,
+                    },
+                    origin=origin, destination=destination,
+                    num_people=self.state["user_info"].get("people") or 1,
+                    same_city=True,
                 )
-            except Exception as te:
-                print(f"[WARN] Failed to get transit options: {te}")
-                
-        # Estimate budget
+            else:
+                try:
+                    print(f"[DEBUG] Fetching transit options from {origin} to {destination}...")
+                    transit_options = self.transit_agent.get_transit_options(
+                        origin=origin,
+                        destination=destination,
+                        start_date=start_date,
+                        budget_level=budget_level,
+                        is_international=self.state["user_info"].get("is_international", False),
+                        num_people=self.state["user_info"].get("people") or 1
+                    )
+                    # Normalization is idempotent, so this only repairs payloads
+                    # that never went through TransitAgent (mocked agents, older
+                    # cached state) and guarantees the session's own origin and
+                    # destination are the ones the Transport tab displays.
+                    transit_options = normalize_transit_options(
+                        transit_options,
+                        origin=origin,
+                        destination=destination,
+                        num_people=self.state["user_info"].get("people") or 1,
+                    )
+                except Exception as te:
+                    print(f"[WARN] Failed to get transit options: {te}")
+                    transit_options = normalize_transit_options(
+                        None, origin=origin, destination=destination,
+                        num_people=self.state["user_info"].get("people") or 1,
+                    )
+
+        # ------------------------------------------------------------------
+        # Car rental: provider availability is DATA, not a decision. A failed
+        # rental API call must never flip should_rent_car back to False (that
+        # silently erased the recommendation from the trip and its budget).
+        # ------------------------------------------------------------------
         car_info = None
         fuel_price = None
-
+        self.state.setdefault("rental_decision_source", "state")
         if self.state.get("should_rent_car", False):
             try:
                 print(f"[DEBUG] Fetching local car rental options in {destination}...")
@@ -1026,18 +1309,22 @@ class TravelGraph:
                     end_date,
                     driver_age=self.state["user_info"].get("age", 30)
                 )
-                if not car_info:
-                    print(f"[PROVIDER][CAR_RENTAL][UNAVAILABLE] Car rental API returned empty or failed (403).")
-                    self.state["should_rent_car"] = False
-                    self.state["car_rental_available"] = False
-                else:
-                    self.state["car_rental_available"] = True
-                    
-                fuel_price = self.info_agent.get_fuel_price(self.state["user_info"].get("city", ""))
             except Exception as car_e:
                 print(f"[PROVIDER][CAR_RENTAL][UNAVAILABLE] Could not fetch car/fuel info: {car_e}")
-                self.state["should_rent_car"] = False
+                car_info = None
+            if car_info:
+                self.state["car_rental_available"] = True
+                self.state["car_rental_source"] = "provider"
+            else:
                 self.state["car_rental_available"] = False
+                self.state["car_rental_source"] = "fallback_estimate"
+                print("[PROVIDER][CAR_RENTAL][UNAVAILABLE] Rental provider returned no options; "
+                      "keeping the self-drive recommendation and using a fallback cost estimate.")
+            try:
+                fuel_price = self.info_agent.get_fuel_price(self.state["user_info"].get("city", ""))
+            except Exception as fuel_e:
+                print(f"[PROVIDER][FUEL][UNAVAILABLE] Fuel price lookup failed: {fuel_e}")
+                fuel_price = None
 
         budget = self.budget_agent.estimate_budget(
             all_attractions_objects,
@@ -1048,17 +1335,27 @@ class TravelGraph:
             transit_options
         )
         
-        # Integrate selected accommodation into budget early
+        # Integrate selected accommodation into budget early.
+        # Provider records use ``price_per_night``; the old ``"price" in`` check
+        # meant this block almost never ran, so the chosen stay was excluded.
         selected_acc = self.state.get("selected_accommodation")
-        if selected_acc and "price" in selected_acc:
-            price_val = extract_number(str(selected_acc["price"]))
+        if selected_acc:
+            acc_price_raw = selected_acc.get("price_per_night", selected_acc.get("price"))
+            price_val = None
+            if isinstance(acc_price_raw, (int, float)):
+                price_val = float(acc_price_raw)
+            elif acc_price_raw not in (None, ""):
+                price_val = extract_number(str(acc_price_raw))
             if price_val:
                 nights = max(1, days - 1)
-                budget["accommodation"] = price_val * nights
+                people_count = int(self.state["user_info"].get("people") or 1)
+                rooms = max(1, (people_count + 1) // 2)
+                budget["accommodation"] = round(price_val * nights * rooms, 2)
+                budget["accommodation_source"] = "selected_accommodation"
                 budget["estimated_total"] = (
-                    budget.get("activities", 0) + 
-                    budget.get("food", 0) + 
-                    budget.get("local_transport", 0) + 
+                    budget.get("activities", 0) +
+                    budget.get("food", 0) +
+                    budget.get("local_transport", 0) +
                     budget["accommodation"] +
                     budget.get("car_rental", 0) +
                     budget.get("fuel", 0) +
@@ -1066,13 +1363,14 @@ class TravelGraph:
                 )
                 budget["miscellaneous"] = round(budget["estimated_total"] * 0.10, 2)
                 budget["estimated_total"] += budget["miscellaneous"]
-                
+                budget["estimated_total"] = round(budget["estimated_total"], 2)
+
                 # Recalculate normalized fields
                 if budget.get("budget_limit"):
                     budget["remaining_budget"] = round(budget["budget_limit"] - budget["estimated_total"], 2)
                     budget["utilization_percentage"] = round((budget["estimated_total"] / budget["budget_limit"] * 100), 1)
                     budget["within_budget"] = budget["estimated_total"] <= budget["budget_limit"]
-                    
+
                     if not budget["within_budget"] and budget.get("budget_type") == "strict":
                         budget["budget_warning"] = (
                             f"Your requested trip cannot currently fit within ₹{budget['budget_limit']:,}. "
@@ -1080,23 +1378,28 @@ class TravelGraph:
                             "Consider reducing travel days, choosing fewer paid attractions, or selecting cheaper intercity transport to fit within your strict budget."
                         )
                         budget["budget_infeasible"] = True
+            else:
+                budget["accommodation_source"] = "destination_average"
+                print("[BUDGET][ACCOMMODATION] Selected accommodation has no usable nightly price; "
+                      "keeping the destination-average estimate.")
 
-        # Store in state so route doesn't have to re-fetch
+        # Store in state so route doesn't have to re-fetch. The normalized view
+        # is the single breakdown shared by the budget page, itinerary payload,
+        # API responses and the email (Phase 5/6).
         self.state["budget"] = budget
+        self.state["budget_normalized"] = normalize_budget(budget)
         self.state["transit_options"] = transit_options
 
-        if budget.get("budget_type") == "strict" and budget.get("budget_infeasible", False):
-            def strict_error_generator():
-                yield AIMessage(content=budget.get("budget_warning", "Your requested trip cannot fit within the strict budget."))
-            
-            return {
-                "next_step": "complete",
-                "stream": strict_error_generator(),
-                "state": self.state.copy(),
-                "itinerary": [],
-                "optimal_route": [],
-                "response": budget.get("budget_warning")
-            }
+        # NOTE: A strict budget that cannot be fully met is surfaced as an
+        # ADVISORY warning, never as a hard stop. Previously this step returned
+        # next_step="complete" with an EMPTY itinerary and no transit_options the
+        # moment the optimiser could not fit a strict budget, which skipped the
+        # route step entirely and left the traveler staring at a "0-Day
+        # Itinerary" and an empty Transport tab. We now always continue to the
+        # route step (via the normal "communication" pause below) so a complete
+        # day-by-day plan and the transit options are always produced; the
+        # over-budget warning is carried in state["budget"] and re-surfaced by
+        # _process_route alongside the finished itinerary.
 
         # Generate the communication text stream
         def tips_generator():
@@ -1139,18 +1442,28 @@ class TravelGraph:
             days = int(self.state["user_info"].get("days", 1))  # Ensure days is an integer
 
             itinerary = []
+            unscheduled = list(self.state.get("unscheduled_attractions") or [])
             if daily_plan_name_dict and isinstance(daily_plan_name_dict, dict) and all_attractions_objects:
-                all_spots_map = {spot["name"]: spot for spot in all_attractions_objects if spot and "name" in spot}
+                # Key the authoritative records by name, normalised name and id
+                # so the planned names resolve back to the SAME provider objects
+                # (stable ids/coordinates survive recommendation -> itinerary ->
+                # map -> email).
+                all_spots_map = {}
+                for spot in all_attractions_objects:
+                    if not spot or "name" not in spot:
+                        continue
+                    all_spots_map[spot["name"]] = spot
+                    all_spots_map[self._norm_name(spot["name"])] = spot
+                    if spot.get("id") is not None:
+                        all_spots_map[str(spot["id"])] = spot
                 itinerary = self.route_agent.format_daily_plan_to_itinerary(
                     daily_plan_name_dict,
                     all_spots_map,
-                    start_date 
+                    start_date,
+                    unscheduled_out=unscheduled,
                 )
             else:
                 print("[ERROR] Could not generate itinerary: daily_plan_name_dict or all_attractions_objects missing/invalid.")
-                # Fallback: Potentially use the old generate_itinerary if it was kept and makes sense
-                # For now, itinerary remains empty, leading to a response with no itinerary.
-                # self.state["itinerary"] will be empty, and confirmation will reflect that.
 
             
             # Fix: convert start_date to datetime if it's a string
@@ -1180,14 +1493,22 @@ class TravelGraph:
             selected_acc = self.state.get("selected_accommodation")
             if selected_acc and itinerary:
                 # Add to first day's itinerary
+                acc_loc = selected_acc.get("location") if isinstance(selected_acc.get("location"), dict) else {}
+                acc_lat = acc_loc.get("lat") or selected_acc.get("latitude")
+                acc_lng = acc_loc.get("lng") or selected_acc.get("longitude")
                 acc_spot = {
                     "id": f"acc_{selected_acc.get('id', 'hotel')}",
+                    "attraction_id": str(selected_acc.get("id")) if selected_acc.get("id") is not None else None,
                     "name": selected_acc.get("name", "Hotel"),
                     "category": "Accommodation",
                     "description": f"Check-in to your accommodation: {selected_acc.get('name', '')}",
-                    "location": {"lat": selected_acc.get("latitude"), "lng": selected_acc.get("longitude")},
+                    "location": {"lat": acc_lat, "lng": acc_lng},
+                    "latitude": acc_lat,
+                    "longitude": acc_lng,
                     "start_time": "14:00", # Standard check-in time
                     "end_time": "15:00",
+                    "price_per_night": selected_acc.get("price_per_night", selected_acc.get("price")),
+                    "currency": selected_acc.get("currency", "INR"),
                     "is_accommodation": True
                 }
                 # Insert accommodation then re-sort the whole day by start_time
@@ -1205,7 +1526,8 @@ class TravelGraph:
             # Ensure no dates repeat and no hallucinatory attractions persist.
             seen_dates = set()
             valid_attractions = {s["name"] for s in all_attractions_objects if "name" in s}
-            valid_attractions.update(["Lunch Break", "Dinner", "Accommodation", selected_acc.get("name", "Hotel") if selected_acc else ""])
+            valid_attractions.update([selected_acc.get("name", "Hotel") if selected_acc else ""])
+            valid_names_norm = {self._norm_name(v) for v in valid_attractions if v}
             allowed_labels = {"Relaxation", "Leisure", "Dinner", "Lunch Break", "Accommodation"}
             
             for day_idx, day_plan in enumerate(itinerary):
@@ -1223,32 +1545,53 @@ class TravelGraph:
                 # Attraction validation
                 valid_acts = []
                 for act in day_plan.get("activities", []):
-                    if act.get("name") in valid_attractions or act.get("name") in allowed_labels or act.get("is_meal") or act.get("is_accommodation"):
+                    name = act.get("name")
+                    is_known = (
+                        name in valid_attractions
+                        or self._norm_name(name) in valid_names_norm
+                        or name in allowed_labels
+                        or act.get("is_meal")
+                        or act.get("is_accommodation")
+                        or act.get("is_semantic_label")
+                    )
+                    if is_known:
                         valid_acts.append(act)
                     else:
-                        print(f"[WARN] Found hallucinated POI '{act.get('name')}' in final itinerary. Removing.")
+                        print(f"[WARN] Found hallucinated POI '{name}' in final itinerary. Removing.")
+                        entry = {
+                            "name": name,
+                            "id": str(act.get("id")) if act.get("id") is not None else None,
+                            "day": day_plan.get("day"),
+                            "reason": "removed_unknown_poi",
+                            "detail": "The planner referenced a place that no data provider confirmed; "
+                                      "it was removed rather than invented.",
+                        }
+                        unscheduled.append(entry)
+                        day_plan.setdefault("unscheduled", []).append(entry)
                 
                 day_plan["activities"] = valid_acts
+                # Re-issue the sequence after filtering so it stays 1..N.
+                for seq, act in enumerate(valid_acts, start=1):
+                    act["sequence"] = seq
+                    act["day"] = day_plan.get("day")
                     
             # Store in state
             self.state["itinerary"] = itinerary
+            self.state["unscheduled_attractions"] = unscheduled
             self.state["budget"] = budget
+            self.state["budget_normalized"] = normalize_budget(budget)
             self.state["transit_options"] = transit_options
+            if unscheduled:
+                print(f"[WORKFLOW][COMPLETE] {len(unscheduled)} selected/planned item(s) are NOT in the "
+                      f"final itinerary: {[u.get('name') for u in unscheduled]}")
             
-            # If budget is strict and could not be met, do not finalize itinerary.
+            # A strict budget that could not be fully met is surfaced as an
+            # ADVISORY warning alongside a COMPLETE itinerary (returned below),
+            # never as a hard stop that discards the plan. The budget_warning and
+            # budget_infeasible flags are already included in the final return so
+            # the UI can show "over budget" without hiding the day-by-day plan.
             if budget.get("budget_type") == "strict" and budget.get("budget_infeasible", False):
-                error_msg = budget.get("budget_warning", "Your requested trip cannot fit within the strict budget.")
-                print(f"[BUDGET][STRICT] {error_msg}")
-                return {
-                    "next_step": "complete",
-                    "response": error_msg,
-                    "itinerary": [],
-                    "budget": budget,
-                    "optimal_route": [],
-                    "transit_options": transit_options,
-                    "budget_warning": budget.get("budget_warning"),
-                    "budget_infeasible": True,
-                }
+                print(f"[BUDGET][STRICT][ADVISORY] {budget.get('budget_warning', 'Trip exceeds strict budget.')} Delivering full itinerary with warning.")
                 
             # Generate confirmation message (with fallback if it fails)
             try:
@@ -1273,16 +1616,22 @@ class TravelGraph:
                 if user_email:
                     try:
                         accs = self.state.get("accommodations") or []
+                        chosen_acc = self.state.get("selected_accommodation") or (accs[0] if accs else None)
                         auto_ctx = {
                             "origin": self.state["user_info"].get("origin_city"),
                             "days": self.state["user_info"].get("days"),
                             "people": self.state["user_info"].get("people"),
                             "kids": self.state["user_info"].get("kids"),
                             "start_date": self.state["user_info"].get("start_date"),
-                            "accommodation": self.state.get("selected_accommodation") or (accs[0] if accs else None),
+                            # Single source of truth: the accommodation the
+                            # traveller actually picked (recommendations are only
+                            # a fallback when nothing was selected).
+                            "accommodation": chosen_acc,
+                            "accommodation_is_selection": bool(self.state.get("selected_accommodation")),
                             "food": self.state.get("restaurants") or [],
                             "transport": self.state.get("transit_options") or transit_options,
                             "tips": self.state.get("travel_tips") or self.state.get("tips"),
+                            "unscheduled": unscheduled,
                         }
                         email_status = send_trip_email(
                             user_email,
@@ -1303,13 +1652,21 @@ class TravelGraph:
                     print("[EMAIL] No user email in state; skipping auto-send. "
                           "The traveler can send it on demand via the Email modal (/api/email).")
 
+            normalized_budget = normalize_budget(budget)
             return {
                 "next_step": "complete",
                 "response": confirmation,
                 "itinerary": itinerary,
                 "budget": budget,
+                # The normalized breakdown is what the budget page, itinerary
+                # page, API responses and the email all render from (Phase 5/6).
+                "budget_normalized": normalized_budget,
                 "optimal_route": optimal_route,
                 "transit_options": transit_options,
+                "unscheduled_attractions": unscheduled,
+                "provider_status": self.state.get("provider_status"),
+                "rental_decision_source": self.state.get("rental_decision_source"),
+                "car_rental_available": self.state.get("car_rental_available"),
                 "budget_warning": budget.get("budget_warning"),
                 "budget_infeasible": budget.get("budget_infeasible", False),
             }
@@ -1328,3 +1685,109 @@ class TravelGraph:
     def get_current_state(self):
         """Get the current state of the workflow"""
         return self.state
+
+    def get_assistant_context(self):
+        """Read-only assistant panel context built from REAL session state.
+
+        The persistent travel assistant on every page renders from this, so it
+        never re-runs an LLM or re-asks for information on navigation, and it can
+        never leak another session's trip (the state is session-scoped).
+        """
+        state = self.state
+        user_info = state.get("user_info") or {}
+        budget = normalize_budget(state.get("budget") or state.get("budget_normalized") or {})
+        itinerary = state.get("itinerary") or []
+        selected = state.get("selected_attractions") or []
+        transit = state.get("transit_options") or {}
+        unscheduled = state.get("unscheduled_attractions") or []
+
+        days_progressed = []
+        for day in itinerary:
+            if not isinstance(day, dict):
+                continue
+            days_progressed.append({
+                "day": day.get("day"),
+                "date": day.get("date"),
+                "activity_count": len(day.get("activities") or []),
+            })
+
+        warnings = []
+        if budget.get("status") == "over" and budget.get("budget_limit"):
+            warnings.append(
+                f"Estimated total ₹{budget['total']:,.0f} exceeds your "
+                f"₹{budget['budget_limit']:,.0f} limit."
+            )
+        elif budget.get("status") == "over":
+            warnings.append("The trip is currently estimated over your budget.")
+        if budget.get("status") == "incomplete":
+            warnings.append("Some cost data was unavailable, so the budget may be understated.")
+        if unscheduled:
+            warnings.append(
+                f"{len(unscheduled)} selected place(s) could not be scheduled: "
+                + ", ".join(str(u.get("name")) for u in unscheduled[:5])
+                + ("…" if len(unscheduled) > 5 else "")
+            )
+        if state.get("should_rent_car") and state.get("car_rental_available") is False:
+            warnings.append("Live car-rental quotes were unavailable; self-drive costs are estimates.")
+
+        return {
+            "step": state.get("current_step") or "chat",
+            "trip": {
+                "destination": user_info.get("city"),
+                "origin": user_info.get("origin_city"),
+                "days": user_info.get("days"),
+                "people": user_info.get("people"),
+                "kids": user_info.get("kids"),
+                "start_date": user_info.get("start_date"),
+                "budget_category": user_info.get("budget"),
+                "budget_amount": user_info.get("budget_amount"),
+                "budget_strictness": user_info.get("budget_strictness"),
+                "hobbies": user_info.get("hobbies"),
+                "health": user_info.get("health"),
+            },
+            "missing_fields": [
+                f for f in self.chat_agent.required_fields
+                if not self.chat_agent.is_valid_field(f, user_info.get(f))
+            ],
+            "selected_attractions": [
+                {"id": str(a.get("id")) if a.get("id") is not None else None, "name": a.get("name")}
+                for a in selected if isinstance(a, dict)
+            ],
+            "accommodation": state.get("selected_accommodation"),
+            "itinerary_days": days_progressed,
+            "unscheduled_attractions": unscheduled,
+            "transit": {
+                "recommended_mode": transit.get("recommended_mode") if isinstance(transit, dict) else None,
+                "recommended_local_mode": transit.get("recommended_local_mode") if isinstance(transit, dict) else None,
+                "intercity_options": (transit.get("intercity_transport") or []) if isinstance(transit, dict) else [],
+                "local_options": (transit.get("local_transport") or []) if isinstance(transit, dict) else [],
+                "same_city": bool(transit.get("same_city")) if isinstance(transit, dict) else False,
+            },
+            "self_drive_recommended": bool(state.get("should_rent_car")),
+            "rental_decision_source": state.get("rental_decision_source"),
+            "budget": budget,
+            "budget_warnings": warnings,
+            "weather_summary": state.get("weather_summary"),
+            "travel_tips": state.get("travel_tips"),
+            "provider_status": state.get("provider_status"),
+            "email_sent": bool(state.get("email_sent")),
+            "conversation": self.get_conversation_history(),
+        }
+
+    def get_conversation_history(self, limit=40):
+        """Return the real chat transcript persisted on the ChatAgent."""
+        history = getattr(self.chat_agent, "conversation_history", []) or []
+        turns = []
+        for msg in history[-limit:]:
+            role = "assistant"
+            if hasattr(msg, "type"):
+                role = "user" if msg.type == "human" else "assistant"
+            content = getattr(msg, "content", msg)
+            if isinstance(content, list):
+                content = "".join(
+                    p.get("text", "") if isinstance(p, dict) else str(p) for p in content
+                )
+            content = str(content).strip()
+            if content:
+                turns.append({"role": role, "content": content})
+        return turns

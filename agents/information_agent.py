@@ -423,13 +423,21 @@ class InformationAgent:
         return None
     
     def get_attractions(self, lat: float, lng: float, user_prefs: dict, weather_summary: str = None,
-                        number: int = 20, 
+                        number: int = 30, 
                         poi_type: str = "tourist_attraction", 
                         sort_by: str = "rating", 
-                        radius: int = 10000,
+                        radius: int = 20000,
                         rerank_with_llm: bool = True):
-        """Get a list of attractions for a given location, ranked by LLM based on user preferences and weather.
-        
+        """Get a comprehensive list of attractions for a given location, ranked
+        by LLM based on user preferences and weather.
+
+        `number` is now a soft display target used only to size the LLM/RAG
+        fallback deficit — the function returns the full deduplicated set so
+        the Explore UI can offer users genuine selection breadth instead of
+        stopping at an arbitrary 10-14. Default radius widened from 10km to
+        20km so dispersed destinations (hill stations, backwater regions,
+        heritage corridors) are properly covered.
+
         Args:
             rerank_with_llm: If False, skip LLM re-ranking (used for multi-city state searches
                              where a single combined rerank is done after merging all cities).
@@ -608,9 +616,16 @@ class InformationAgent:
             return initial_pois
 
     def get_attractions_for_state(self, state_name: str, state_cities: list, user_prefs: dict,
-                                  weather_summary: str = None, total_number: int = 20):
-        """
-        Fetch and rank attractions across an entire Indian state using POIManager.
+                                  weather_summary: str = None, total_number: int = 80):
+        """Comprehensive state-wide attraction discovery.
+
+        The previous hard cap of 40 (and the per-city 15km radius) truncated
+        hill-station and backwater itineraries to only 10-14 real choices for
+        a 10-day trip. We now (a) widen the per-city radius, (b) derive the
+        result cap from the trip duration when available, and (c) return the
+        full merged set to the caller so users can *browse* broadly and select
+        what they actually want. Discovery is intentionally decoupled from
+        itinerary selection — the strategy agent decides what to schedule.
 
         Latency strategy: cities are geocoded SEQUENTIALLY (fast, cached, and it
         respects Nominatim's 1 req/s policy which is enforced via a shared
@@ -647,7 +662,7 @@ class InformationAgent:
             try:
                 pois = self.poi_manager.get_attractions(
                     lat=coords['lat'], lng=coords['lng'],
-                    radius=15000, hobbies=hobbies, poi_type="tourist_attraction"
+                    radius=20000, hobbies=hobbies, poi_type="tourist_attraction"
                 )
                 return city_name, (pois or [])
             except Exception as e:
@@ -690,9 +705,16 @@ class InformationAgent:
         if not all_pois:
             return []
 
-        # Enforce cap BEFORE enrichment to save time
+        # Enforce a duration-aware cap BEFORE enrichment. For a 10-day trip
+        # this yields ~60 choices; a 3-day trip still gets a reasonable 30.
+        try:
+            duration_days = int((user_prefs or {}).get('duration_days') or 0)
+        except (TypeError, ValueError):
+            duration_days = 0
+        dynamic_cap = max(total_number, duration_days * 6) if duration_days else total_number
+        dynamic_cap = min(dynamic_cap, 120)  # Bound to keep enrichment latency sane.
         all_pois.sort(key=lambda x: (x.get('rating') is None, -(float(x.get('rating', 0) or 0))))
-        all_pois = all_pois[:40]
+        all_pois = all_pois[:dynamic_cap]
 
         # Use centralized enrichment
         if all_pois:

@@ -163,22 +163,29 @@ class RouteAgent:
             return self.get_optimal_route(valid_spots) + unresolved_spots
 
         try:
-            # Extract first attraction as starting point
+            # The day starts at the first attraction and ENDS at the last one.
+            # The previous implementation used the same point for origin and
+            # destination ("loop back to start"), which made OSRM plan a route
+            # that drove back to where the day began and reported a bogus
+            # start-to-same-point journey.
             origin = valid_spots[0]
+            destination = valid_spots[-1]
 
-            # Extract last attraction as destination (complete the loop back to start)
-            destination = valid_spots[0]
-
-            # The rest are waypoints
+            # Everything in between is a waypoint
             waypoints = []
-            for attraction in valid_spots[1:]:
+            for attraction in valid_spots[1:-1]:
                 lat, lng = attraction["location"]["lat"], attraction["location"]["lng"]
                 waypoints.append(f"{lat},{lng}")
 
             # Prepare origin and destination strings
             lat, lng = origin["location"]["lat"], origin["location"]["lng"]
             origin_location = f"{lat},{lng}"
-            destination_location = origin_location  # Loop back to start
+            dest_lat, dest_lng = destination["location"]["lat"], destination["location"]["lng"]
+            destination_location = f"{dest_lat},{dest_lng}"
+
+            # Only two spots: nothing to optimise, keep the natural order.
+            if not waypoints:
+                return list(valid_spots) + unresolved_spots
 
             # Call plan_with_waypoints
             optimized_route_data = None
@@ -196,7 +203,8 @@ class RouteAgent:
                 print("Failed to get optimised route. Using fallback TSP solution.")
                 return self.get_optimal_route(valid_spots) + unresolved_spots
 
-            # Extract the optimised waypoint order
+            # Extract the optimised waypoint order (indices are relative to the
+            # intermediate waypoints list, i.e. valid_spots[1:-1]).
             waypoint_indices = optimized_route_data.get("waypoint_original_indices", [])
 
             if not waypoint_indices and len(waypoints) > 0:
@@ -207,8 +215,12 @@ class RouteAgent:
 
             # Add waypoints in optimised order
             for idx in waypoint_indices:
-                if idx + 1 < len(valid_spots):
+                if 0 <= idx < len(waypoints):
                     optimized_attractions.append(valid_spots[idx + 1])
+
+            # Close the day at the destination spot (never visited twice).
+            if optimized_attractions and optimized_attractions[-1] is not destination:
+                optimized_attractions.append(destination)
 
             return optimized_attractions + unresolved_spots
 
@@ -396,9 +408,63 @@ class RouteAgent:
         if "24/7" in opening_hours_str: return (0, 24)
         return (9, 18) # Stub for advanced parsing
 
-    def format_daily_plan_to_itinerary(self, daily_plan_name_dict, all_spots_object_map, start_date_str, retrieved_knowledge=None, accommodation=None):
-        """Generate daily itinerary with TSP routing, meal breaks, and realistic timing."""
+    # Labels the AI is explicitly allowed to use for unscheduled/free time.
+    # These are *not* POIs, so they may be rendered without provider data;
+    # anything else that cannot be resolved is reported as unscheduled instead
+    # of being invented (spec Phase 8 invariant: never fabricate a POI).
+    SEMANTIC_LABELS = {
+        "relaxation", "leisure", "free time", "rest", "rest day", "spare time",
+        "lunch break", "lunch", "dinner", "breakfast", "acclimatization",
+        "acclimatisation", "shopping", "local exploration", "walking tour",
+    }
+
+    def _lookup_spot(self, name, all_spots_object_map):
+        """Resolve a planned name against the authoritative POI map.
+
+        Tolerates the whitespace/case differences the LLM introduces and the
+        ``"1. Name"`` numbering some models emit.  Returns the original provider
+        object (so id/coordinates are preserved verbatim) or None.
+        """
+        if not isinstance(name, str) or not name.strip():
+            return None
+        stripped = name.strip()
+        # "1. Kaziranga" / "2) Kaziranga" -> "Kaziranga"
+        unnumbered = re.sub(r"^\s*\d+[).\-]\s*", "", stripped).strip()
+        lowered = unnumbered.lower()
+
+        for cand in (stripped, unnumbered, lowered):
+            if cand in all_spots_object_map:
+                return all_spots_object_map[cand]
+
+        for key, obj in all_spots_object_map.items():
+            if str(key).strip().lower() == lowered:
+                return obj
+            obj_name = str((obj or {}).get("name") or "").strip().lower()
+            if obj_name and obj_name == lowered:
+                return obj
+
+        # Substring match only when it is unambiguous.
+        hits = [
+            obj for key, obj in all_spots_object_map.items()
+            if len(lowered) > 6 and (
+                lowered in str(key).strip().lower() or str(key).strip().lower() in lowered
+            )
+        ]
+        if len(hits) == 1:
+            return hits[0]
+        return None
+
+    def format_daily_plan_to_itinerary(self, daily_plan_name_dict, all_spots_object_map, start_date_str,
+                                       retrieved_knowledge=None, accommodation=None, unscheduled_out=None):
+        """Generate daily itinerary with TSP routing, meal breaks, and realistic timing.
+
+        ``unscheduled_out`` (optional list) receives one entry per selected
+        attraction that could NOT be placed, with a machine-readable ``reason``.
+        Silently dropping or inventing them is what made travelers see a
+        'selected attraction missing from plan' with no explanation.
+        """
         itinerary = []
+        unscheduled = unscheduled_out if isinstance(unscheduled_out, list) else []
         try:
             current_date = datetime.strptime(start_date_str, "%Y-%m-%d")
             is_suggested = False
@@ -407,27 +473,47 @@ class RouteAgent:
             current_date = datetime.now()
             is_suggested = True
 
-        # Sort day keys numerically
-        day_keys = [k for k in daily_plan_name_dict.keys() if k.lower().startswith("day") and re.search(r"\d+", k)]
-        sorted_day_keys = sorted(day_keys, key=lambda x: int(re.search(r"\d+", x).group()))
+        # Sort day keys numerically.  Day keys arrive as "day1", "Day 2", "1"
+        # or 3 depending on the model, so normalise to an integer day number.
+        day_entries = []
+        for raw_key in daily_plan_name_dict.keys():
+            m = re.search(r"(\d+)", str(raw_key))
+            if not m:
+                print(f"[ROUTE_AGENT][WARN] Ignoring un-numbered day key: {raw_key!r}")
+                continue
+            day_entries.append((int(m.group(1)), raw_key))
+        day_entries.sort(key=lambda t: t[0])
 
-        for day_key in sorted_day_keys:
-            day_number = int(re.search(r"\d+", day_key).group())
-            spot_names_for_day = daily_plan_name_dict.get(day_key, [])
+        for day_number, day_key in day_entries:
+            spot_names_for_day = daily_plan_name_dict.get(day_key, []) or []
 
             current_day_spot_objects_raw = []
             for name in spot_names_for_day:
-                if name in all_spots_object_map:
-                    current_day_spot_objects_raw.append(all_spots_object_map[name])
-                else:
+                resolved = self._lookup_spot(name, all_spots_object_map)
+                if resolved is not None:
+                    current_day_spot_objects_raw.append(resolved)
+                    continue
+                label_key = re.sub(r"^\s*\d+[).\-]\s*", "", str(name)).strip().lower()
+                if label_key in self.SEMANTIC_LABELS:
+                    # Deliberate free-time label from the planner, not a POI.
                     current_day_spot_objects_raw.append({
-                        "id": f"semantic_{name.replace(' ', '_').lower()}",
-                        "name": name,
-                        "description": "Leisure or semantic activity suggested by AI.",
+                        "id": f"semantic_{label_key.replace(' ', '_')}",
+                        "name": str(name).strip(),
+                        "description": "Unstructured free time suggested by the planner.",
                         "estimated_duration": 2,
                         "location": None,
+                        "is_semantic_label": True,
                         # Leisure labels ("Relaxation") are not real POIs — never geocode them.
                         "_location_resolved": True
+                    })
+                else:
+                    print(f"[ROUTE_AGENT][UNSCHEDULED] '{name}' has no matching provider record; "
+                          f"reported instead of fabricated.")
+                    unscheduled.append({
+                        "name": str(name).strip(),
+                        "reason": "not_found_in_data_providers",
+                        "detail": f"Planned on day {day_number} but no provider record matched the name.",
+                        "day": day_number,
                     })
 
             # TSP Optimization
@@ -440,7 +526,7 @@ class RouteAgent:
                 current_day_spot_objects_raw = optimized_day_attractions
 
             current_day_spots_timed = []
-            
+            day_unscheduled = []
             # Start day at 9 AM
             current_time = datetime.strptime("09:00", "%H:%M")
             lunch_added = False
@@ -516,6 +602,16 @@ class RouteAgent:
                 # Validation: Prevent scheduling past 22:00
                 if current_time.hour >= 22:
                     print(f"[WARN] Skipping {spot_obj.get('name')} to prevent over-scheduling (time: {current_time.strftime('%H:%M')}).")
+                    if not spot_obj.get("is_semantic_label"):
+                        reason = {
+                            "name": spot_obj.get("name"),
+                            "id": str(spot_obj.get("id")) if spot_obj.get("id") is not None else None,
+                            "day": day_number,
+                            "reason": "no_time_left_in_day",
+                            "detail": f"Day {day_number} was already full at {current_time.strftime('%H:%M')}; the attraction was not scheduled.",
+                        }
+                        day_unscheduled.append(reason)
+                        unscheduled.append(reason)
                     continue
                 
                 spot_with_time = spot_obj.copy()
@@ -544,16 +640,39 @@ class RouteAgent:
                     current_day_spots_timed.append(spot_with_time)
                 else:
                     print(f"[WARN] Invalid time generated for {spot_obj.get('name')}. Skipping.")
+                    day_unscheduled.append({
+                        "name": spot_obj.get("name"),
+                        "id": str(spot_obj.get("id")) if spot_obj.get("id") is not None else None,
+                        "day": day_number,
+                        "reason": "invalid_time_generated",
+                        "detail": f"Could not assign a valid time slot on day {day_number}.",
+                    })
+                    unscheduled.append(day_unscheduled[-1])
                 
                 current_time = activity_end
 
             current_day_spots_timed = self._sort_spots_by_time(current_day_spots_timed)
+
+            # Canonical per-day contract (spec Phase 3): every activity carries
+            # its integer day, 1-based sequence, stable provider id and the
+            # coordinates the map needs, so downstream filters never have to
+            # guess from strings.
+            for seq, act in enumerate(current_day_spots_timed, start=1):
+                act["sequence"] = seq
+                act["day"] = day_number
+                if act.get("attraction_id") is None and act.get("id") is not None:
+                    act["attraction_id"] = str(act["id"])
+                if "latitude" not in act:
+                    loc = act.get("location") or {}
+                    act["latitude"] = loc.get("lat") if isinstance(loc, dict) else None
+                    act["longitude"] = loc.get("lng") if isinstance(loc, dict) else None
 
             itinerary.append({
                 "day": day_number,
                 "date": (current_date + timedelta(days=day_number - 1)).strftime("%d %b %Y"),
                 "is_suggested_date": is_suggested,
                 "activities": current_day_spots_timed,
+                "unscheduled": day_unscheduled,
                 "transport": None,
                 "food": None,
                 "accommodation": None,

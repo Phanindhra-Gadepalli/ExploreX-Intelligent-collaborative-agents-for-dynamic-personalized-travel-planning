@@ -27,15 +27,22 @@ document.addEventListener('DOMContentLoaded', () => {
         weather: [],
         itinerary: null,
         budget: null,
+        // Selected attractions the planner could not schedule, with reasons.
+        unscheduledAttractions: [],
         // map layers
         map: null,
         mapMarkers: [],
         routePolylines: [],
-        mapCurrentDay: 'all',
+        mapCurrentDay: sessionStorage.getItem('mapCurrentDay') || 'all',
         activeItineraryDay: sessionStorage.getItem('activeItineraryDay') || 1,
         accTier: 'all',
         foodCat: 'all',
-        selectedTransportIdx: null
+        selectedTransportIdx: null,
+        // Transcript of the user's transport choice. Costs are NOT recomputed in
+        // the browser - the server owns the single normalized breakdown - so a
+        // change only flags the plan as needing a regenerate.
+        selectedTransport: null,
+        planIsStale: false
     };
 
     const navTabs = document.querySelectorAll('.nav-tab');
@@ -95,6 +102,9 @@ document.addEventListener('DOMContentLoaded', () => {
         updateJourneyIndicator(tabId);
 
         if (tabId === 'map' && state.map) setTimeout(() => state.map.invalidateSize(), 100);
+        // The assistant rail persists: keep it mounted and re-read the cached
+        // server state instead of re-running any planning step.
+        try { updateAssistantVisibility(); } catch (e) { }
         syncEarth();
     }
 
@@ -270,6 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
         viewSections.forEach(v => v.classList.remove('active'));
         document.getElementById('view-landing')?.classList.add('active');
         state.currentTab = 'landing';
+        try { updateAssistantVisibility(); } catch (e) { }
         syncEarth();
     }
 
@@ -316,9 +327,15 @@ document.addEventListener('DOMContentLoaded', () => {
         state.mapMarkers = [];
         state.routePolylines = [];
         state.mapCurrentDay = 'all';
+        state.unscheduledAttractions = [];
+        assistantCache = null; assistantCacheAt = 0;
+        try { sessionStorage.setItem('mapCurrentDay', 'all'); } catch (e) { }
         state.accTier = 'all';
         state.foodCat = 'all';
         state.selectedTransportIdx = null;
+        state.selectedTransport = null;
+        state.planIsStale = false;
+        try { sessionStorage.removeItem('selectedTransportIdx'); sessionStorage.removeItem('selectedTransport'); } catch (e) { }
 
         // state model back to defaults (keep the Leaflet instance + tab)
         state.sessionId = null;
@@ -381,6 +398,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (state.budget) renderBudget(state.budget);
         const t = state.transport;
         if (t && (Array.isArray(t) ? t.length : Object.keys(t).length)) renderTransport(t);
+        // Trip data changed on the server side - let the assistant re-read it.
+        try { refreshAssistant(true); } catch (e) { }
     }
 
     // ── Restore the current trip from the backend after a refresh ──────────
@@ -409,6 +428,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const itin = t.itinerary;
             state.itinerary = (Array.isArray(itin) ? itin.length : (itin && Array.isArray(itin.days) && itin.days.length)) ? itin : null;
             state.budget = (t.budget && Object.keys(t.budget).length) ? t.budget : null;
+            // The server's canonical breakdown travels next to the raw budget so
+            // the budget page and the email can never disagree about the total.
+            if (state.budget && t.budget_normalized && Object.keys(t.budget_normalized).length) {
+                state.budget.budget_normalized = t.budget_normalized;
+            }
+            state.unscheduledAttractions = Array.isArray(t.unscheduled_attractions) ? t.unscheduled_attractions : [];
             state.transport = t.transit_options || [];
             state.selectedAttractionIds = new Set(
                 (Array.isArray(t.selected_attractions) ? t.selected_attractions : [])
@@ -836,13 +861,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Final itinerary / budget / route.
+        if (data.unscheduled_attractions || (data.state && data.state.unscheduled_attractions)) {
+            state.unscheduledAttractions = data.unscheduled_attractions
+                || (data.state && data.state.unscheduled_attractions) || [];
+        }
         if (data.itinerary) {
             state.itinerary = data.itinerary;
             renderItinerary(data.itinerary);
             renderMap(data.itinerary);
             renderFood(state.food);
         }
-        if (data.budget) { state.budget = data.budget; renderBudget(data.budget); }
+        if (data.budget) {
+            state.budget = data.budget;
+            const nb = data.budget_normalized || (data.state && data.state.budget_normalized);
+            if (nb && Object.keys(nb).length) state.budget.budget_normalized = nb;
+            renderBudget(state.budget);
+        }
         if (data.state && data.state.weather_forecast) {
             state.weather = data.state.weather_forecast;
             renderWeather(data.state.weather_forecast);
@@ -858,18 +892,35 @@ document.addEventListener('DOMContentLoaded', () => {
             switchTab('itinerary');
             showToast('Your itinerary, budget and route are ready.', 'success');
         }
+        // Whatever step just finished, the assistant rail re-reads the persisted
+        // state - it does not re-run any planning agent.
+        try { refreshAssistant(true); } catch (e) { }
     }
 
     // === Render Logic ===
     function fieldScore(a) {
         const raw = a.score ?? a.match_percentage ?? a._internal_score ?? a.match_score;
         const n = typeof raw === 'number' ? raw : parseFloat(raw);
-        if (isNaN(n)) return 85;
+        if (isNaN(n)) return null;               // unknown - rendered as "Not scored"
         return n > 1 ? Math.round(n) : Math.round(n * 100);
     }
     function fieldDuration(a) { return a.duration || a.estimated_duration || a.visit_duration || '2h'; }
     function fieldAddress(a) { return a.address || a.location_name || a.category || 'Location'; }
-    function fieldRating(a) { return a.rating ?? a.stars ?? 4.5; }
+    // No invented scores: when neither the provider nor the enrichment service
+    // reports a rating, the UI says so instead of quietly showing a 4.5.
+    function fieldRating(a) {
+        const raw = a.rating ?? a.stars;
+        const n = typeof raw === 'number' ? raw : parseFloat(raw);
+        return (isNaN(n) || n <= 0) ? null : n;
+    }
+    function fieldFee(a) {
+        const fee = a.entry_fee ?? a.price;
+        if (fee === null || fee === undefined || fee === '' || fee === true) return 'Fee not reported';
+        if (typeof fee === 'string' && /^(yes|no)$/i.test(fee.trim())) {
+            return fee.trim().toLowerCase() === 'no' ? 'Free (per map data)' : 'Paid (amount unknown)';
+        }
+        return fee;
+    }
     function fieldImage(a) {
         const img = a.image_url || a.image || a.photo;
         if (img && String(img).startsWith('http')) return img;
@@ -940,18 +991,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="bento-content">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <h5 class="Bricolage mb-0">${escapeHtml(a.name || 'Attraction')}</h5>
-                        <div class="match-badge"><i class="fas fa-check-circle"></i> ${fieldScore(a)}% Match</div>
+                        <div class="match-badge"><i class="fas fa-check-circle"></i> ${fieldScore(a) === null ? 'Not scored' : `${fieldScore(a)}% Match`}</div>
                     </div>
                     <p class="text-muted small mb-2"><i class="fas fa-map-marker-alt text-accent me-1"></i> ${escapeHtml(fieldAddress(a))}</p>
                     <div class="d-flex justify-content-between text-secondary small mb-2">
-                        <span><i class="fas fa-star text-warning me-1"></i> ${fieldRating(a)}</span>
+                        <span><i class="fas fa-star text-warning me-1"></i> ${fieldRating(a) === null ? 'Not rated' : fieldRating(a)}</span>
                         <span><i class="fas fa-clock me-1"></i> ${escapeHtml(fieldDuration(a))}</span>
                     </div>
                     <div class="d-flex justify-content-between text-secondary small mb-2">
-                        <span><i class="fas fa-ticket-alt text-info me-1"></i> ${escapeHtml(a.entry_fee || a.price || 'Free')}</span>
+                        <span><i class="fas fa-ticket-alt text-info me-1"></i> ${escapeHtml(fieldFee(a))}</span>
                         <span><i class="fas fa-headphones text-primary me-1"></i> ${a.audio_guide || a.metadata?.audio_guide ? 'Audio Guide' : 'No Audio'}</span>
                     </div>
-                    <p class="text-muted small mb-0">${escapeHtml(a.description || 'An amazing attraction to visit.').substring(0, 80)}${(a.description || 'An amazing attraction to visit.').length > 80 ? '...' : ''}</p>
+                    <p class="text-muted small mb-0">${escapeHtml(a.description || 'No description provided by the data source.').substring(0, 80)}${(a.description || 'No description provided by the data source.').length > 80 ? '...' : ''}</p>
                 </div>
                 <div class="p-3 border-top d-flex gap-2 align-items-center" style="background: var(--bg-alt); font-size: 0.9rem;">
                     <button class="btn btn-sm btn-outline-secondary w-50 view-map-btn" data-testid="attr-map-btn"><i class="fas fa-map-marker-alt me-1"></i> Map</button>
@@ -1075,6 +1126,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let currentAttractionModal = null;
+
+    /**
+     * Requirement 2: query /api/attraction-details (Wikipedia-backed) and render
+     * only fields the backend actually returned. Renders a Wikipedia search
+     * fallback link when no verified article exists — never invents a title.
+     */
+    async function _fetchAttractionDetails(a, slots, lat, lng) {
+        const { enrichWrap, sourceBadge, hoursWrap, hoursVal, linksWrap } = slots;
+        if (!a || !a.name) { if (enrichWrap) enrichWrap.classList.add('d-none'); return; }
+        const url = new URL('/api/attraction-details', window.location.origin);
+        url.searchParams.set('name', a.name);
+        if (lat != null) url.searchParams.set('lat', String(lat));
+        if (lng != null) url.searchParams.set('lng', String(lng));
+        let data = null;
+        try {
+            const resp = await fetch(url.toString(), { credentials: 'same-origin' });
+            if (resp.ok) data = await resp.json();
+        } catch (e) {
+            console.warn('attraction-details fetch failed', e);
+        }
+        // Guard against a late response arriving after the user switched POIs.
+        if (enrichWrap && enrichWrap.dataset.attractionId && a.id && enrichWrap.dataset.attractionId !== a.id) return;
+
+        const merged = data || {};
+        const source = String(merged.source || a.source || '').toLowerCase();
+        const bits = [];
+        if (merged.description_source === 'wikipedia') bits.push('<i class="fab fa-wikipedia-w me-1"></i> Wikipedia (verified)');
+        else if (source) bits.push('Source: ' + escapeHtml(source));
+        if (merged.opening_hours) {
+            bits.push('OSM opening hours');
+            if (hoursVal) { hoursVal.textContent = String(merged.opening_hours); }
+            if (hoursWrap) hoursWrap.classList.remove('d-none');
+        }
+        if (sourceBadge) sourceBadge.innerHTML = bits.join(' · ') || '';
+
+        const linkBits = [];
+        const wikiUrl = merged.wiki_url || merged.wikipedia_url || null;
+        const officialSite = merged.website || null;
+        if (wikiUrl) {
+            linkBits.push(`<a class="btn btn-sm btn-outline-primary rounded-pill" target="_blank" rel="noopener noreferrer" href="${encodeURI(wikiUrl)}"><i class="fab fa-wikipedia-w me-1"></i> Wikipedia article</a>`);
+        } else {
+            // Not fabricated: a plain Wikipedia *search* link built from the POI name.
+            const searchQ = encodeURIComponent(a.name + (a.city ? ' ' + a.city : (merged.address ? ' ' + merged.address : '')));
+            linkBits.push(`<span class="text-muted small me-2"><i class="fab fa-wikipedia-w me-1"></i> Wikipedia article unavailable</span>`);
+            linkBits.push(`<a class="btn btn-sm btn-outline-secondary rounded-pill" target="_blank" rel="noopener noreferrer" href="https://en.wikipedia.org/w/index.php?search=${searchQ}"><i class="fas fa-search me-1"></i> Search Wikipedia</a>`);
+        }
+        if (officialSite) {
+            linkBits.push(`<a class="btn btn-sm btn-outline-success rounded-pill" target="_blank" rel="noopener noreferrer" href="${encodeURI(officialSite)}"><i class="fas fa-globe me-1"></i> Official website</a>`);
+        }
+        if (linksWrap) linksWrap.innerHTML = linkBits.join(' ');
+
+        // If Wikipedia returned a richer description than what we already had,
+        // swap it in — but only when the backend flagged it as sourced.
+        if (merged.description && merged.description_source === 'wikipedia') {
+            const descEl = document.getElementById('modal-desc');
+            if (descEl) descEl.textContent = merged.description;
+        }
+    }
     
     function closeAttractionModal() {
         if (currentAttractionModal) {
@@ -1094,15 +1203,36 @@ document.addEventListener('DOMContentLoaded', () => {
         const id = a.id || '';
         document.getElementById('modal-title').innerText = a.name || 'Attraction';
         document.getElementById('modal-location').innerText = fieldAddress(a);
-        document.getElementById('modal-rating').innerText = fieldRating(a);
+        const modalRatingEl = document.getElementById('modal-rating');
+        if (modalRatingEl) {
+            const rv = fieldRating(a);
+            modalRatingEl.innerText = rv === null ? 'Not rated' : String(rv);
+        }
         document.getElementById('modal-desc').innerText = a.description || 'No description available.';
-        
+
+        // Requirement 2: reset the enrichment panel and (asynchronously) fetch
+        // verified details from /api/attraction-details. Any field we cannot
+        // validate is hidden, never fabricated. The user can still read the
+        // base description while the enrichment streams in.
+        const enrichWrap = document.getElementById('modal-enrichment');
+        const sourceBadge = document.getElementById('modal-source-badge');
+        const hoursWrap = document.getElementById('modal-hours');
+        const hoursVal  = document.getElementById('modal-hours-value');
+        const linksWrap = document.getElementById('modal-links');
+        if (enrichWrap) { enrichWrap.classList.remove('d-none'); enrichWrap.dataset.attractionId = id || ''; }
+        if (sourceBadge) sourceBadge.innerHTML = '<i class="fas fa-circle-notch fa-spin me-1"></i> Looking up verified details…';
+        if (hoursWrap) hoursWrap.classList.add('d-none');
+        if (linksWrap) linksWrap.innerHTML = '';
+        const latForLookup = a.latitude || (a.location && a.location.lat) || (a.location && a.location.latitude) || null;
+        const lngForLookup = a.longitude || (a.location && a.location.lng) || (a.location && a.location.longitude) || null;
+        _fetchAttractionDetails(a, { enrichWrap, sourceBadge, hoursWrap, hoursVal, linksWrap }, latForLookup, lngForLookup);
+
         const durationEl = document.getElementById('modal-duration');
         if (durationEl) durationEl.innerText = fieldDuration(a);
         const feeEl = document.getElementById('modal-fee');
         if (feeEl) {
-            let price = a.price === 0 || a.price_level === 0 ? 'Free' : (a.entry_fee || a.price || 'Free');
-            feeEl.innerText = String(price);
+            // Only call something "Free" when a source actually says so.
+            feeEl.innerText = String(fieldFee(a));
         }
 
         const img = document.getElementById('modal-image');
@@ -1270,9 +1400,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <h5 class="Bricolage mb-1">${escapeHtml(acc.name || 'Stay')}</h5>
                     <p class="text-muted small mb-2"><i class="fas fa-map-marker-alt text-accent me-1"></i> ${escapeHtml(acc.address || acc.location_name || 'Local stay')}</p>
                     <div class="d-flex align-items-center mb-2">
-                        <i class="fas fa-star text-warning me-1"></i> <span class="fw-bold me-2">${escapeHtml(acc.rating || '4.0')}</span>
+                        <i class="fas fa-star text-warning me-1"></i> <span class="fw-bold me-2">${acc.rating === undefined || acc.rating === null ? 'Not rated' : escapeHtml(String(acc.rating))}</span>
                     </div>
-                    <p class="text-secondary small mb-3 text-truncate">${escapeHtml((acc.amenities || []).join(' · ') || 'Free WiFi · Air Conditioning')}</p>
+                    <p class="text-secondary small mb-3 text-truncate">${escapeHtml((acc.amenities || []).join(' · ') || 'Amenities not reported')}</p>
                     <div class="d-flex justify-content-between align-items-center mt-auto">
                         <div>${priceHtml}</div>
                         <button class="btn btn-sm ${selected ? 'btn-success' : 'btn-outline-primary'} acc-select-btn" data-testid="accommodation-select">${selected ? '<i class="fas fa-check"></i> Selected' : 'Select'}</button>
@@ -1285,12 +1415,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (selectBtn) {
                 selectBtn.addEventListener('click', e => {
                     e.stopPropagation();
-                    if (state.budget && state.budget.accommodation !== undefined && acc.price) {
-                        const oldAcc = state.accommodations.find(a => a.id === state.selectedAccommodationId);
-                        if (oldAcc && oldAcc.price) state.budget.accommodation -= (oldAcc.price * (state.days || 1));
-                        state.budget.accommodation += (acc.price * (state.days || 1));
-                        state.budget.total_cost = Object.entries(state.budget).filter(([k,v]) => typeof v === 'number' && k !== 'total_cost').reduce((a, [,v])=>a+v,0);
-                        renderBudget(state.budget);
+                    // The budget is computed server-side from the selected stay;
+                    // patching it in the browser created a second, wrong total.
+                    if (state.budget && acc.price_per_night) {
+                        showToast('Accommodation updated — regenerate the plan to refresh the budget.', 'info');
                     }
                     state.selectedAccommodationId = acc.id;
                     renderAccommodations(accs);
@@ -1303,7 +1431,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     e.stopPropagation();
                     document.getElementById('modal-title').innerText = acc.name || 'Accommodation Details';
                     document.getElementById('modal-location').innerText = acc.address || 'Address Unavailable';
-                    document.getElementById('modal-rating').innerText = acc.rating || '4.0';
+                    const accRatingEl = document.getElementById('modal-rating');
+                    if (accRatingEl) {
+                        accRatingEl.innerText = (acc.rating === undefined || acc.rating === null) ? 'Not rated' : String(acc.rating);
+                    }
                     
                     let descHtml = '<strong>Live pricing is currently unavailable for this property.</strong><br><br>';
                     if (acc.booking_url) {
@@ -1392,9 +1523,11 @@ document.addEventListener('DOMContentLoaded', () => {
             card.className = 'bento-card position-relative';
             card.setAttribute('data-testid', 'food-card');
             
-            // Generate price string (e.g. 2 -> ₹₹)
-            const priceLevel = parseInt(s.price_level, 10) || 2;
-            const priceStr = '₹'.repeat(priceLevel);
+            // Price level is shown only when a source actually reports it;
+            // guessing "₹₹" for every unknown place would be fabricated pricing.
+            const rawLevel = parseInt(s.price_level, 10);
+            const priceStr = (!isNaN(rawLevel) && rawLevel >= 1 && rawLevel <= 4) ? '₹'.repeat(rawLevel) : 'Price not reported';
+            const ratingVal = fieldRating(s);
             
             const badgeType = s.source === 'geoapify' ? 'bg-primary' : 'bg-success';
             const badgeHtml = s.cuisine ? `<span class="badge ${badgeType} position-absolute top-0 start-0 m-3 px-3 py-2 text-capitalize shadow-sm" style="border-radius: var(--radius-pill); font-weight: 700;">${escapeHtml(s.cuisine)}</span>` : '';
@@ -1408,7 +1541,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <h5 class="Bricolage mb-1">${escapeHtml(s.name || s.dish || 'Eatery')}</h5>
                     <p class="text-muted small mb-2"><i class="fas fa-map-marker-alt text-accent me-1"></i> ${escapeHtml(s.location_name || s.address || 'Local area')}</p>
                     <div class="d-flex align-items-center mb-2">
-                        <i class="fas fa-star text-warning me-1"></i> <span class="fw-bold me-2">${escapeHtml(s.rating || '4.2')}</span>
+                        <i class="fas fa-star text-warning me-1"></i> <span class="fw-bold me-2">${ratingVal === null ? 'Not rated' : ratingVal}</span>
                     </div>
                     <p class="text-secondary small mb-3 text-truncate">${escapeHtml(s.description || 'Local dining spot')}</p>
                     <div class="d-flex justify-content-between align-items-center mt-auto">
@@ -1429,6 +1562,12 @@ document.addEventListener('DOMContentLoaded', () => {
             daysArray = itineraryData.days;
         }
 
+        // Same day-number contract as the map: 1 / "1" / "Day 2" all become an int.
+        daysArray.forEach((d, i) => {
+            const m = String(d.day ?? '').match(/(\d+)/);
+            d.day = m ? parseInt(m[1], 10) : (i + 1);
+        });
+
         const tl = document.getElementById('itinerary-timeline');
         const pills = document.getElementById('itinerary-day-pills');
         const title = document.getElementById('itinerary-title');
@@ -1440,13 +1579,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!daysArray || daysArray.length === 0) return;
 
         // Initialize active day if not set or out of bounds
-        let activeDayRaw = sessionStorage.getItem('activeItineraryDay');
+        let activeDayRaw = null;
+        try { activeDayRaw = sessionStorage.getItem('activeItineraryDay'); } catch (e) { }
         if (activeDayRaw) state.activeItineraryDay = activeDayRaw === 'all' ? 'all' : parseInt(activeDayRaw, 10);
         else if (!state.activeItineraryDay || state.activeItineraryDay === 'all') state.activeItineraryDay = 1;
         
         if (state.activeItineraryDay !== 'all' && !daysArray.some(d => d.day === state.activeItineraryDay)) {
             state.activeItineraryDay = daysArray[0].day;
-            sessionStorage.setItem('activeItineraryDay', state.activeItineraryDay);
+            try { sessionStorage.setItem('activeItineraryDay', String(state.activeItineraryDay)); } catch (e) { }
         }
 
         const getDayDateStr = (dayIdx) => {
@@ -1466,7 +1606,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 btn.innerText = `Day ${day.day}`;
                 btn.onclick = () => {
                     state.activeItineraryDay = day.day;
-                    sessionStorage.setItem('activeItineraryDay', day.day);
+                    try { sessionStorage.setItem('activeItineraryDay', String(day.day)); } catch (e) { }
                     renderItinerary(state.itinerary); // Re-render itinerary with new active tab
                 };
                 pills.appendChild(btn);
@@ -1608,6 +1748,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         tl.appendChild(contentDiv);
+
+        // Requirement 8: anything the traveller selected but the planner could
+        // not place must be reported with a reason - never dropped silently.
+        const pending = (state.unscheduledAttractions || []).concat(day.unscheduled || []);
+        if (pending.length) {
+            const notice = document.createElement('div');
+            notice.className = 'alert alert-warning small mt-4 mb-0';
+            notice.setAttribute('data-testid', 'unscheduled-notice');
+            const items = pending.map(u => {
+                const nm = escapeHtml(u.name || u.attraction || 'Attraction');
+                const reason = u.reason === 'not_found_in_data_providers' ? 'not found in the live attraction data'
+                    : u.reason === 'no_time_left_in_day' ? 'no time was left in that day'
+                    : u.reason === 'all_days_already_full' ? 'every day was already full'
+                    : u.reason === 'dropped_by_planner' ? 'dropped by the day planner'
+                    : (u.reason || 'not scheduled');
+                const where = u.day ? ` (Day ${u.day})` : '';
+                return `<li>${nm} — ${escapeHtml(reason)}${escapeHtml(where)}</li>`;
+            }).join('');
+            notice.innerHTML = `<i class="fas fa-triangle-exclamation me-2"></i><strong>Not included in the plan</strong>
+                <ul class="mb-0 mt-1 ps-3">${items}</ul>`;
+            tl.appendChild(notice);
+        }
     }
 
     function haversine(a, b) {
@@ -1644,43 +1806,67 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (!state.map) initMap();
-        if (!state.map || daysArray.length === 0) return;
 
+        // Normalise the day the user picked. The backend may send 1 or "1" or
+        // "Day 2"; comparing those loosely against a stored filter is what made
+        // "Day 2" appear empty. Everything is compared as an integer here.
+        daysArray.forEach(d => {
+            const m = String(d.day ?? '').match(/(\d+)/);
+            d.day = m ? parseInt(m[1], 10) : (daysArray.indexOf(d) + 1);
+        });
+
+        let savedDay = sessionStorage.getItem('mapCurrentDay');
+        if (savedDay) state.mapCurrentDay = savedDay === 'all' ? 'all' : parseInt(savedDay, 10);
+        if (state.mapCurrentDay !== 'all' && !daysArray.some(d => d.day === state.mapCurrentDay)) {
+            state.mapCurrentDay = 'all';
+        }
+
+        // Requirement 3: day filters must be generated from the itinerary
+        // BEFORE the map-availability check, so the header is visible even on
+        // first paint / while the Leaflet instance is still mounting. This
+        // directly fixes the reported "All Days / Day 1 / Day 2 not visible".
         const filtersContainer = document.getElementById('map-day-filters');
         if (filtersContainer) {
             filtersContainer.innerHTML = '';
-            const btnAll = document.createElement('button');
-            btnAll.className = `btn btn-sm rounded-pill flex-shrink-0 ${state.activeItineraryDay === 'all' ? 'btn-primary' : 'btn-outline-secondary'}`;
-            btnAll.innerText = 'All Days';
-            btnAll.onclick = () => { 
-                state.activeItineraryDay = 'all'; 
-                sessionStorage.setItem('activeItineraryDay', 'all');
-                renderMap(state.itinerary); 
-                renderItinerary(state.itinerary);
-            };
-            filtersContainer.appendChild(btnAll);
-
-            daysArray.forEach(day => {
+            const mkFilter = (label, value, testId, activeClass) => {
                 const btn = document.createElement('button');
-                btn.className = `btn btn-sm rounded-pill flex-shrink-0 ${state.activeItineraryDay === day.day ? 'btn-success' : 'btn-outline-secondary'}`;
-                btn.innerText = `Day ${day.day}`;
-                btn.onclick = () => { 
-                    state.activeItineraryDay = day.day; 
-                    sessionStorage.setItem('activeItineraryDay', day.day);
-                    renderMap(state.itinerary); 
-                    renderItinerary(state.itinerary);
+                btn.type = 'button';
+                const isActive = String(state.mapCurrentDay) === String(value);
+                btn.className = `btn btn-sm rounded-pill flex-shrink-0 ${isActive ? activeClass : 'btn-outline-secondary'}`;
+                btn.setAttribute('aria-pressed', String(isActive));
+                btn.innerText = label;
+                btn.setAttribute('data-testid', testId);
+                btn.onclick = () => {
+                    state.mapCurrentDay = value;
+                    try { sessionStorage.setItem('mapCurrentDay', String(value)); } catch (e) { }
+                    renderMap(state.itinerary);
                 };
-                filtersContainer.appendChild(btn);
+                return btn;
+            };
+            // "All Days" is the DEFAULT view (requirement 3), not an opt-in.
+            filtersContainer.appendChild(mkFilter('All Days', 'all', 'map-filter-all', 'btn-primary'));
+            daysArray.forEach(day => {
+                filtersContainer.appendChild(mkFilter(`Day ${day.day}`, day.day, `map-filter-day-${day.day}`, 'btn-success'));
             });
         }
+
+        // Always drop previous layers first - even when this itinerary is empty -
+        // otherwise markers from a finished/abandoned trip linger on the map.
+        if (state.map) {
+            state.mapMarkers.forEach(m => state.map.removeLayer(m));
+            state.routePolylines.forEach(p => state.map.removeLayer(p));
+        }
+        state.mapMarkers = [];
+        state.routePolylines = [];
 
         const mapTl = document.getElementById('map-timeline');
         if (mapTl) mapTl.innerHTML = '';
 
-        state.mapMarkers.forEach(m => state.map.removeLayer(m));
-        state.routePolylines.forEach(p => state.map.removeLayer(p));
-        state.mapMarkers = [];
-        state.routePolylines = [];
+        if (!state.map || daysArray.length === 0) return;
+
+        // Rapid filter switching must not let an in-flight OSRM fetch paint
+        // markers for a day the user has already left.
+        const renderToken = (state._mapRenderToken = (state._mapRenderToken || 0) + 1);
 
         let allPoints = [];
         let totalDistanceMeters = 0;
@@ -1688,7 +1874,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let totalStops = 0;
         let anyRoutingFailed = false;
 
-        const daysToRender = state.activeItineraryDay === 'all' ? daysArray : daysArray.filter(d => d.day === state.activeItineraryDay);
+        const daysToRender = state.mapCurrentDay === 'all' ? daysArray : daysArray.filter(d => d.day === state.mapCurrentDay);
 
         let locationCounts = {};
 
@@ -1701,7 +1887,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             let markerIndex = 1;
-            (day.activities || []).forEach((spot, spotIdx) => {
+            const dayActivities = day.activities || day.spots || [];
+            dayActivities.forEach((spot, spotIdx) => {
                 const lat = spot.location?.lat ?? spot.location?.latitude ?? spot.latitude;
                 const lng = spot.location?.lng ?? spot.location?.longitude ?? spot.longitude;
                 if (lat != null && lng != null && !isNaN(lat) && !isNaN(lng)) {
@@ -1770,8 +1957,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
 
+            if (!dayPoints.length && mapTl) {
+                // An empty day is a legitimate plan state - say so instead of
+                // leaving a blank panel that looks like a rendering failure.
+                const empty = document.createElement('div');
+                empty.className = 'text-secondary small mb-3';
+                empty.innerText = `Day ${day.day} has no mapped stops.`;
+                mapTl.appendChild(empty);
+            }
+
             if (dayPoints.length > 1) {
                 const routeData = await fetchOSRMRoute(dayPoints);
+                // The user may have switched the day filter while OSRM thought.
+                if (renderToken !== state._mapRenderToken) return;
                 if (routeData && routeData.geometry) {
                     const routeLayer = L.geoJSON(routeData.geometry, {
                         style: { color: '#0EA5E9', weight: 4, opacity: 0.8 }
@@ -1818,6 +2016,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderBudget(budget) {
         const container = document.getElementById('budget-breakdown');
         if (!container) return;
+        budget = budget || {};
+        // ONE canonical breakdown (services/budget_norm.normalize_budget) drives
+        // the page, the API and the email. The raw BudgetAgent dict is only used
+        // when the normalized object is genuinely absent.
+        const nb = (budget.budget_normalized && Object.keys(budget.budget_normalized).length)
+            ? budget.budget_normalized : null;
 
         const warningContainer = document.getElementById('budget-warning-container');
         if (warningContainer) {
@@ -1836,10 +2040,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const currencySelect = document.getElementById('budget-currency');
-        const currency = currencySelect ? currencySelect.value : 'INR';
-        const rates = { INR: 1, USD: 0.012, EUR: 0.011 }; // Mock rates
-        const rate = rates[currency] || 1;
-        const sym = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
+        // All costs are computed and reported in INR. Converting them with an
+        // invented "mock rate" would put numbers on the page that no source
+        // produced, so the display stays in ₹ regardless of the selector.
+        const currency = 'INR';
+        const rate = 1;
+        const sym = '₹';
+        if (currencySelect) {
+            currencySelect.value = 'INR';
+            currencySelect.disabled = true;
+            currencySelect.title = 'Trip costs are estimated in INR (₹)';
+        }
 
         if (currencySelect && !currencySelect.dataset.listener) {
             currencySelect.dataset.listener = 'true';
@@ -1849,56 +2060,111 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const totalEl = document.getElementById('total-budget-display');
-        const total = budget.total ?? budget.total_cost ?? budget.estimated_total ?? 0;
+        const rawTotal = nb ? nb.total : (budget.total ?? budget.total_cost ?? budget.estimated_total ?? null);
+        const total = rawTotal == null ? 0 : rawTotal;
         const convertedTotal = total * rate;
-        if (totalEl) totalEl.innerText = `${sym}${Math.round(convertedTotal).toLocaleString('en-US')}`;
+        if (totalEl) {
+            totalEl.innerText = (nb && nb.total_is_valid === false) || rawTotal == null
+                ? 'Not available'
+                : `${sym}${Math.round(convertedTotal).toLocaleString('en-US')}`;
+        }
 
-        const allowedCategories = ['accommodation', 'food', 'intercity_transport', 'local_transport', 'attractions', 'car_rental', 'fuel', 'miscellaneous'];
-        
+        // car_rental and fuel are deliberately NOT listed separately: the
+        // normalized local_transport figure already includes them, and showing
+        // both would double-count the same money.
+        const allowedCategories = ['accommodation', 'food', 'transport', 'local_transport', 'attractions', 'miscellaneous'];
+        const missingCategories = new Set(nb && Array.isArray(nb.missing_categories) ? nb.missing_categories : []);
+        const categoryLabels = {
+            accommodation: 'Accommodation', food: 'Food', transport: 'Intercity transport',
+            local_transport: 'Local transport', attractions: 'Activities / entry fees',
+            miscellaneous: 'Miscellaneous'
+        };
         const colors = {
-            accommodation: '#0284C7', food: '#0EA5E9', local_transport: '#38BDF8', 
+            accommodation: '#0284C7', food: '#0EA5E9', local_transport: '#38BDF8',
             attractions: '#059669', car_rental: '#7C3AED', fuel: '#DB2777',
-            intercity_transport: '#0891B2', miscellaneous: '#D97706'
+            transport: '#0891B2', intercity_transport: '#0891B2', miscellaneous: '#D97706'
         };
 
-        const entries = Object.entries(budget).filter(([k, v]) => allowedCategories.includes(k) && typeof v === 'number' && v > 0);
+        const valueFor = (key) => {
+            if (nb) {
+                // Requirement 5: a category the providers never reported is
+                // UNKNOWN, which is not the same thing as a genuine ₹0. The
+                // normalized object lists the unknown ones explicitly, so a
+                // reported zero stays on the page and an unknown one is called
+                // out below instead of silently vanishing.
+                if (missingCategories.has(key)) return null;
+                const v = nb[key];
+                return (typeof v === 'number' && !isNaN(v)) ? v : null;
+            }
+            let v = budget[key];
+            // Legacy aliases emitted by BudgetAgent before normalization existed.
+            if (v == null && key === 'attractions') v = budget.activities;
+            if (v == null && key === 'transport') v = budget.intercity_transport;
+            return (typeof v === 'number' && v > 0) ? v : null;
+        };
+
+        const entries = allowedCategories
+            .map(k => [k, valueFor(k)])
+            .filter(([, v]) => v != null);
         const sum = entries.reduce((acc, [, v]) => acc + v, 0) || 1;
 
         let summaryHtml = '';
-        const limitAmt = budget.budget_amount || budget.budget_limit;
+        const limitAmt = (nb && nb.budget_limit != null) ? nb.budget_limit : (budget.budget_amount || budget.budget_limit);
         if (limitAmt) {
             const limitConverted = limitAmt * rate;
             const limitLabel = `<div class="d-flex justify-content-between mb-2 pb-2 border-bottom"><span class="fw-bold text-dark" data-testid="budget-limit">Budget Limit:</span> <span class="fw-bold">${sym}${Math.round(limitConverted).toLocaleString('en-US')}</span></div>`;
-            
+
             let statusHtml = '';
-            const remainingAmt = (budget.remaining != null) ? budget.remaining : (budget.remaining_budget != null ? budget.remaining_budget : null);
+            const remainingAmt = (nb && nb.remaining_budget != null) ? nb.remaining_budget
+                : (budget.remaining != null) ? budget.remaining
+                : (budget.remaining_budget != null ? budget.remaining_budget : null);
             const remainingConverted = remainingAmt != null ? Math.abs(remainingAmt) * rate : 0;
-            if (remainingAmt != null && remainingAmt >= 0) {
+            const status = nb ? nb.status : (remainingAmt != null && remainingAmt < 0 ? 'over' : 'within');
+            if (status === 'incomplete' || remainingAmt == null) {
+                statusHtml = `<div class="d-flex justify-content-between mb-2"><span class="text-secondary fw-bold">Remaining:</span> <span class="text-secondary fw-bold">Unknown (incomplete data)</span></div>`;
+            } else if (remainingAmt >= 0) {
                 statusHtml = `<div class="d-flex justify-content-between mb-2"><span class="text-success fw-bold" data-testid="budget-remaining">Remaining:</span> <span class="text-success fw-bold">${sym}${Math.round(remainingConverted).toLocaleString('en-US')}</span></div>`;
-            } else if (remainingAmt != null) {
+            } else {
                 statusHtml = `<div class="d-flex justify-content-between mb-2"><span class="text-danger fw-bold" data-testid="budget-remaining">Over budget:</span> <span class="text-danger fw-bold">${sym}${Math.round(remainingConverted).toLocaleString('en-US')}</span></div>`;
             }
-            
-            const pct = budget.utilization_percentage || Math.round((sum / limitAmt) * 100);
+
+            const pct = (nb && nb.utilization_percentage) || budget.utilization_percentage || Math.round((sum / limitAmt) * 100);
             const pctHtml = `<div class="d-flex justify-content-between mb-4 pb-2 border-bottom"><span class="text-secondary small">Utilization:</span> <span class="text-secondary small">${pct}% used</span></div>`;
-            
+
             summaryHtml = limitLabel + statusHtml + pctHtml;
         }
 
         const legendHtml = entries.map(([k, v]) => {
-            const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            const label = categoryLabels[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
             const color = colors[k.toLowerCase()] || '#94A3B8';
             const pct = Math.round((v / sum) * 100);
             const convertedV = v * rate;
             return `
                 <div class="legend-item d-flex justify-content-between align-items-center mb-2" data-testid="budget-category">
                     <div><span class="legend-color rounded-circle d-inline-block me-2 shadow-sm" style="background: ${color}; width: 12px; height: 12px;"></span> <span class="fw-bold">${escapeHtml(label)}</span></div>
-                    <div class="text-secondary">${sym}${Math.round(convertedV).toLocaleString('en-US')} · ${pct}%</div>
+                    <div class="text-secondary">${v === 0 ? '₹0 \u00b7 reported' : sym + Math.round(convertedV).toLocaleString('en-US') + ' · ' + pct + '%'}</div>
                 </div>
             `;
         }).join('');
-        
-        container.innerHTML = summaryHtml + legendHtml;
+
+        // Names the categories no provider reported, so the traveller knows the
+        // total may be understated instead of assuming those costs are zero.
+        const unknownList = allowedCategories.filter(k => missingCategories.has(k))
+            .map(k => categoryLabels[k] || k.replace(/_/g, ' '));
+        const unknownHtml = unknownList.length
+            ? `<div class="alert alert-secondary small mt-3 mb-0" data-testid="budget-unknown-categories">
+                   <i class="fas fa-circle-info me-2"></i>No cost data was reported for:
+                   ${escapeHtml(unknownList.join(', '))}. The total above excludes them.</div>`
+            : '';
+
+        container.innerHTML = summaryHtml + legendHtml + unknownHtml;
+
+        // Requirement 5: render the personalised closing greeting + destination
+        // tips immediately below the existing breakdown. Never overwrites the
+        // categories or totals above — the same data-source rules apply (only
+        // fields the backend actually produced are shown). Skipped when there
+        // is no budget object yet (empty-state budget tab).
+        try { renderBudgetClosing(); } catch (e) { console.warn('budget closing render failed', e); }
 
         const canvas = document.getElementById('budget-donut-chart');
         if (canvas && entries.length) {
@@ -1907,7 +2173,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const chartData = entries.map(([k, v]) => ({
-                label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+                label: categoryLabels[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
                 value: v * rate,
                 color: colors[k.toLowerCase()] || '#94A3B8'
             }));
@@ -1949,6 +2215,126 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
+    }
+
+    function renderBudgetClosing() {
+        // Requirement 5: personalised, data-driven closing section rendered
+        // *below* the budget breakdown. Every claim is derived from state the
+        // backend actually produced (destination, days, interests, weather,
+        // tips). Nothing here invents live prices, current weather, or
+        // official advisories — when data is missing we render general,
+        // clearly-labelled advice instead of pretending to know.
+        const wrap = document.getElementById('budget-closing');
+        if (!wrap) return;
+
+        const dest = state.destination || 'your destination';
+        const days = state.days;
+        const people = (state.travelers && state.travelers.people) || null;
+        const kids = (state.travelers && state.travelers.kids) || null;
+        const startDate = state.startDate;
+        const interests = (state.interests || []).filter(Boolean);
+        // The itinerary reaches the client as {days: [...]}; older payloads sent
+        // a bare array. Accept both so the closing summary never goes blank.
+        const itinerary = Array.isArray(state.itinerary) ? state.itinerary
+            : ((state.itinerary && Array.isArray(state.itinerary.days)) ? state.itinerary.days : []);
+        const tips = state.travelTips || (state.budget && (state.budget.tips || state.budget.travel_tips)) || '';
+        const weather = state.weather;
+        const budgetTotal = (state.budget && (state.budget.total ?? state.budget.total_cost ?? state.budget.estimated_total)) || 0;
+
+        // Pick a small set of genuine highlights from the itinerary, if any.
+        const highlights = [];
+        for (const d of itinerary) {
+            for (const a of (d.activities || [])) {
+                if (a && a.name && a.category !== 'Food' && !a.is_meal) {
+                    highlights.push(a.name);
+                    if (highlights.length >= 5) break;
+                }
+            }
+            if (highlights.length >= 5) break;
+        }
+
+        const greetingBits = [];
+        greetingBits.push('Your adventure is taking shape!');
+        if (dest) greetingBits.push(`Here is the current shape of your ${days ? days + '-day ' : ''}trip to ${escapeHtml(dest)}.`);
+        if (people) {
+            const grp = `${escapeHtml(String(people))} traveller${String(people) === '1' ? '' : 's'}` +
+                        (kids && String(kids) !== '0' ? ` (+${escapeHtml(String(kids))} kid${String(kids) === '1' ? '' : 's'})` : '');
+            greetingBits.push(`Planning for ${grp}.`);
+        }
+        if (startDate && String(startDate).toLowerCase() !== 'flexible') {
+            greetingBits.push(`Departing around ${escapeHtml(String(startDate))}.`);
+        }
+
+        const summaryLines = [];
+        if (interests.length) {
+            summaryLines.push(`<div><i class="fas fa-heart text-danger me-2"></i>Interests you shared: <strong>${escapeHtml(interests.join(', '))}</strong></div>`);
+        }
+        if (highlights.length) {
+            summaryLines.push(`<div class="mt-1"><i class="fas fa-star text-warning me-2"></i>Planned highlights: ${escapeHtml(highlights.join(' · '))}</div>`);
+        }
+        if (budgetTotal) {
+            summaryLines.push(`<div class="mt-1"><i class="fas fa-wallet text-accent me-2"></i>Estimated total: <strong>₹${Math.round(budgetTotal).toLocaleString('en-US')}</strong></div>`);
+        }
+
+        // Weather/seasonal line — only when we actually have a forecast.
+        let weatherLine = '';
+        try {
+            const daily = weather && (Array.isArray(weather) ? weather : (weather.daily_forecast || []));
+            if (daily && daily.length) {
+                const first = daily[0] || {};
+                const cond = first.condition || '';
+                const tmax = first.max_temp || '';
+                if (cond || tmax) {
+                    weatherLine = `<div class="mt-3"><i class="fas fa-cloud-sun text-info me-2"></i>Starting-week outlook: ${escapeHtml(cond || 'mixed')}${tmax ? `, high ~${escapeHtml(String(tmax))}` : ''}. Confirm the forecast closer to departure.</div>`;
+                }
+            } else {
+                weatherLine = `<div class="mt-3 text-muted small"><i class="fas fa-cloud-sun me-2"></i>No live forecast was available for ${escapeHtml(dest)} when this plan was generated — check a weather service before you pack.</div>`;
+            }
+        } catch (_) { /* never fail the whole page for the tips block */ }
+
+        // General destination-agnostic tips (clearly framed as general).
+        const generalTips = [
+            'Confirm transport tickets, hotel check-in times and any required permits close to your travel dates.',
+            'Keep a small buffer each day — road conditions, queues and weather change plans.',
+            'Carry a copy (offline or printed) of this itinerary and emergency contacts.',
+            'Respect local customs, opening hours and photography rules at religious and heritage sites.',
+            'Use reputable operators for taxis, rentals and guided experiences; agree fares up front.',
+            'Pack for mixed conditions: layering, comfortable shoes, sunscreen, and a light rain shell are almost always useful.'
+        ];
+
+        const reminder = `<div class="mt-3 p-3 rounded-3" style="background:#fffbeb;border-left:4px solid #f59e0b;">
+            <strong><i class="fas fa-exclamation-triangle me-1"></i> Before you go:</strong>
+            Prices, schedules and availability change. Re-verify anything that matters (flights, trains, hotel, permits, entry fees) with the official provider before travelling.
+        </div>`;
+
+        const actionsBar = `<div class="d-flex gap-2 flex-wrap mt-4">
+            <button class="btn btn-outline rounded-pill" id="budget-closing-view-itinerary"><i class="fas fa-calendar-alt me-2"></i>View itinerary</button>
+            <button class="btn btn-outline rounded-pill" id="budget-closing-view-map"><i class="fas fa-map me-2"></i>View on map</button>
+            <button class="btn btn-outline rounded-pill" id="budget-closing-new-trip"><i class="fas fa-plus me-2"></i>Start a new trip</button>
+        </div>`;
+
+        const tipsHtml = tips ? `<div class="mt-3"><div class="fw-bold mb-1"><i class="fas fa-lightbulb text-warning me-2"></i>Travel tips for ${escapeHtml(dest)}</div><div style="white-space:pre-wrap;">${escapeHtml(String(tips))}</div></div>` : '';
+
+        wrap.innerHTML = `
+            <div class="glass p-4 rounded-4 border">
+                <h4 class="Bricolage mb-2"><i class="fas fa-paper-plane text-accent me-2"></i>Wrap-up &amp; travel tips</h4>
+                <p class="mb-2">${greetingBits.join(' ')}</p>
+                <div>${summaryLines.join('')}</div>
+                ${weatherLine}
+                ${tipsHtml}
+                <div class="mt-3">
+                    <div class="fw-bold mb-1"><i class="fas fa-compass me-2 text-accent"></i>General reminders (apply to any destination)</div>
+                    <ul class="mb-0 ps-4">${generalTips.map(t => `<li class="mb-1">${escapeHtml(t)}</li>`).join('')}</ul>
+                </div>
+                ${reminder}
+                ${actionsBar}
+            </div>
+        `;
+        wrap.classList.remove('d-none');
+
+        document.getElementById('budget-closing-view-itinerary')?.addEventListener('click', () => switchTab('itinerary'));
+        document.getElementById('budget-closing-view-map')?.addEventListener('click', () => { switchTab('map'); if (!state.map) initMap(); renderMap(state.itinerary); });
+        document.getElementById('budget-closing-new-trip')?.addEventListener('click', () => { if (typeof resetTrip === 'function') resetTrip(); });
     }
 
     function renderWeather(weatherData) {
@@ -2048,6 +2434,61 @@ document.addEventListener('DOMContentLoaded', () => {
         container.appendChild(strip);
     }
 
+    // ── Transit display helpers ──────────────────────────────────────────────
+    // Costs arrive with their own currency code. Hard-coding '₹' made a fare the
+    // agent had quoted in USD display as rupees (a "$320" Delhi->Dubai flight
+    // appeared as ₹320), so a value is always shown in the currency it was
+    // quoted in. Nothing is converted here - we have no live FX feed and a
+    // made-up rate would be a fabrication.
+    const CURRENCY_SYMBOLS = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'AED ', SGD: 'S$ ', THB: '฿' };
+    function money(value, currency) {
+        const n = Number(value);
+        if (value === null || value === undefined || !isFinite(n)) return 'Price unavailable';
+        const code = String(currency || 'INR').toUpperCase();
+        const sym = CURRENCY_SYMBOLS[code] !== undefined ? CURRENCY_SYMBOLS[code] : (code + ' ');
+        return sym + n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+    }
+    const BASIS_LABELS = {
+        per_person: 'per person', per_vehicle: 'per vehicle', per_group: 'per group',
+        per_day: 'per day', per_trip: 'per trip', per_night: 'per night'
+    };
+    function basisLabel(basis) {
+        if (!basis) return '';
+        return BASIS_LABELS[String(basis)] || String(basis).replace(/_/g, ' ');
+    }
+    // Which journey a card prices - previously every card was just "Flight".
+    function transitLegText(opt, transitData) {
+        const origin = String((opt && opt.origin) || (transitData && transitData.origin) || state.origin || '').trim();
+        const destination = String((opt && opt.destination) || (transitData && transitData.destination) || state.destination || '').trim();
+        if (origin && destination) return origin + ' → ' + destination;
+        return destination || origin || '';
+    }
+    function transitPriceBlock(opt, transitData, isIntercity) {
+        const value = opt.estimated_cost != null ? opt.estimated_cost
+            : (opt.price_inr != null ? opt.price_inr : null);
+        const currency = opt.currency || (transitData && transitData.currency) || 'INR';
+        if (value === null || opt.cost_status === 'unavailable') {
+            return '<div class="fw-bold fs-6 text-muted">Price unavailable</div>';
+        }
+        const basis = basisLabel(opt.cost_basis);
+        const qualifier = [basis, isIntercity ? 'one way' : ''].filter(Boolean).join(' · ');
+        let html = `<div class="fw-bold fs-5 text-accent">${escapeHtml(money(value, currency))}` +
+            (qualifier ? ` <small class="fw-normal text-muted fs-6">(${escapeHtml(qualifier)})</small>` : '') +
+            '</div>';
+        if (isIntercity && opt.group_cost != null && String(opt.cost_basis) === 'per_person') {
+            const travellers = (transitData && transitData.num_people) ||
+                (state.travelers && state.travelers.people) ||
+                (value ? Math.round(Number(opt.group_cost) / Number(value)) : null);
+            if (travellers) {
+                html += `<div class="small text-muted">≈ ${escapeHtml(money(opt.group_cost, currency))} for ${escapeHtml(String(travellers))} traveller(s), one way</div>`;
+            }
+        }
+        if (opt.cost_status === 'non_inr_currency') {
+            html += '<div class="small text-warning" data-testid="transit-non-inr">Not priced in ₹ - excluded from the budget total.</div>';
+        }
+        return html;
+    }
+
     function renderTransport(transitData) {
         const container = document.getElementById('transport-options');
         if (!container) return;
@@ -2064,22 +2505,82 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // Requirement 4: because ExploreX does not integrate a live booking
+        // feed, every option shown here is an AI *estimate*. Surface that
+        // once, prominently, above the list — the per-card "Estimated" chip
+        // then reinforces it on every row.
+        const isEstimate = !!transitData.is_estimate || !!transitData.estimation_note;
+        if (isEstimate) {
+            const note = String(transitData.estimation_note || 'Values shown are AI-generated estimates for planning purposes. Actual prices, schedules and seat availability must be confirmed with the operating carrier or booking platform.').slice(0, 400);
+            const banner = document.createElement('div');
+            banner.className = 'alert alert-warning d-flex align-items-start gap-2 mb-3';
+            banner.setAttribute('data-testid', 'transit-estimate-banner');
+            banner.innerHTML = '<i class="fas fa-hourglass-half mt-1"></i><div><strong>Planning estimates, not live bookings.</strong><br><span class="small">' + escapeHtml(note) + '</span></div>';
+            container.appendChild(banner);
+        }
+
         const options = Array.isArray(transitData.options) ? transitData.options
             : (Array.isArray(transitData.intercity_transport) ? transitData.intercity_transport : []);
+        const localOptions = Array.isArray(transitData.local_transport) ? transitData.local_transport : [];
         const recommendedMode = String(transitData.recommended_mode || '').toLowerCase();
+        const typeIcons = {
+            flight: 'fa-plane', train: 'fa-train', bus: 'fa-bus', car: 'fa-car', driving: 'fa-car',
+            self_drive: 'fa-car-side', taxi: 'fa-taxi', taxi_or_cab_transfer: 'fa-taxi',
+            rental_car: 'fa-car-rear', app_cab: 'fa-mobile-screen', public_transit: 'fa-train-subway',
+            auto_rickshaw: 'fa-taxi', walk_or_cycle: 'fa-walking'
+        };
 
         if (options.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state-card">
-                    <i class="fas fa-bus"></i>
-                    <h5 class="Bricolage">No transport options available</h5>
-                    <p>We couldn't find any transit options from your origin.</p>
-                </div>
-            `;
+            // A same-city trip legitimately has no intercity leg. Saying "we
+            // couldn't find any transit options" implied a lookup failure, so
+            // the reason is stated from the backend flag instead.
+            const sameCity = !!transitData.same_city;
+            const empty = document.createElement('div');
+            empty.className = 'empty-state-card';
+            empty.setAttribute('data-testid', 'transit-empty');
+            if (sameCity) {
+                empty.innerHTML = `
+                    <i class="fas fa-location-dot"></i>
+                    <h5 class="Bricolage">No intercity journey needed</h5>
+                    <p>Your origin and destination are the same city, so this trip has no
+                       outbound leg to price. In-city transport is listed below
+                       ${localOptions.length === 0 ? 'once the plan provides it.' : '.'}</p>
+                `;
+            } else {
+                const failed = String(transitData.provider_status || '') === 'error';
+                empty.innerHTML = `
+                    <div class="empty-state-card">
+                        <i class="fas fa-bus"></i>
+                        <h5 class="Bricolage">${failed ? 'Transport options unavailable' : 'No transport options available'}</h5>
+                        <p>${failed
+                    ? `We could not generate fares for ${escapeHtml(transitLegText({}, transitData) || 'this route')} right now. No prices are shown because none are guessed - regenerate the plan to try again.`
+                    : `We found no intercity option for ${escapeHtml(transitLegText({}, transitData) || 'this route')}. In-city transport is listed below once the plan provides it.`}</p>
+                    </div>
+                `;
+            }
+            container.appendChild(empty);
+            // Still show the local options - they are independent of the
+            // intercity leg and were previously hidden by this early return.
+            if (localOptions.length > 0) renderLocalTransit(container, transitData, localOptions, typeIcons);
             return;
         }
 
-        const typeIcons = { flight: 'fa-plane', train: 'fa-train', bus: 'fa-bus', car: 'fa-car', driving: 'fa-car' };
+        // Name the journey before pricing it. The section used to open straight
+        // into "Flight / Train" cards, so nothing said which route was quoted.
+        const routeHeading = document.createElement('h5');
+        routeHeading.className = 'Bricolage mb-1';
+        routeHeading.setAttribute('data-testid', 'transit-route');
+        const leg = transitLegText({}, transitData);
+        routeHeading.innerHTML = '<i class="fas fa-location-arrow text-accent me-2"></i>' +
+            escapeHtml(leg ? `Getting from ${leg}` : 'Intercity options');
+        container.appendChild(routeHeading);
+        const routeSub = document.createElement('p');
+        routeSub.className = 'text-secondary small mb-3';
+        const travellers = transitData.num_people || (state.travelers && state.travelers.people);
+        routeSub.textContent = 'One-way fares per traveller for ' + (leg || 'this journey') +
+            (travellers ? ` · group of ${travellers}` : '') +
+            '. Your budget counts a return trip (outbound + return).';
+        container.appendChild(routeSub);
 
         // Sort options to put the recommended mode first
         const sortedOptions = [...options].sort((a, b) => {
@@ -2091,8 +2592,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         sortedOptions.forEach((opt, idx) => {
-            const type = opt.mode || 'route';
-            const icon = typeIcons[String(type).toLowerCase()] || 'fa-route';
+            const type = String(opt.mode || 'route');
+            const icon = typeIcons[type.toLowerCase()] || 'fa-route';
             const card = document.createElement('div');
             const isRecommended = type.toLowerCase() === recommendedMode;
             const testId = `transit-${type.toLowerCase()}`;
@@ -2108,12 +2609,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const isSelected = state.selectedTransportIdx === idx;
             if (isSelected) card.style.border = '2px solid var(--accent-color)';
 
-            const costText = opt.estimated_cost ? '₹' + String(opt.estimated_cost) : (opt.price_inr ? '₹' + String(opt.price_inr) : 'Live price unavailable');
             const durationText = opt.duration || 'Unknown duration';
             const providerText = opt.provider || 'Provider unknown';
             const baggageText = opt.baggage || 'Baggage info unavailable';
             const ecoFriendlyText = opt.eco_friendly ? 'Eco-friendly' : 'Standard emissions';
             const ecoFriendlyClass = opt.eco_friendly ? 'text-success' : 'text-secondary';
+            const legText = transitLegText(opt, transitData);
+            const windowText = [opt.departure_info, opt.arrival_info].filter(Boolean).join(' → ');
+            // Requirement 4B: never imply live inventory. Every option is an AI
+            // estimate because ExploreX does not integrate a live booking API.
+            const estimateChip = '<span class="badge bg-light text-dark border ms-2" data-testid="transit-estimate-badge" title="ExploreX has no live booking feed. Value shown is an AI estimate, not a confirmed price or seat."><i class="fas fa-hourglass-half me-1"></i>Estimated</span>';
 
             card.innerHTML = `
                 ${recommendedBadge}
@@ -2124,6 +2629,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div>
                             <h5 class="Bricolage mb-1 text-capitalize">${escapeHtml(type)} <small class="text-muted ms-2 fs-6">by ${escapeHtml(providerText)}</small></h5>
+                            ${legText ? `<div class="fw-semibold small mb-1" data-testid="transit-leg"><i class="fas fa-arrow-right-long text-accent me-1"></i>${escapeHtml(legText)}${windowText ? ` <span class="fw-normal text-muted">· ${escapeHtml(windowText)}</span>` : ''}</div>` : ''}
                             <div class="text-secondary small d-flex gap-3 flex-wrap mt-2">
                                 <span><i class="fas fa-clock me-1 text-accent"></i> ${escapeHtml(durationText)}</span>
                                 <span><i class="fas fa-leaf ${ecoFriendlyClass} me-1"></i> ${escapeHtml(ecoFriendlyText)}</span>
@@ -2132,35 +2638,73 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </div>
                     <div class="text-md-end mt-3 mt-md-0 d-flex flex-md-column align-items-center align-items-md-end justify-content-between gap-2">
-                        <div class="fw-bold fs-5 text-accent">${escapeHtml(costText)}</div>
-                        <button class="btn btn-sm ${isSelected ? 'btn-success' : 'btn-outline-primary'} transport-select-btn" data-testid="${testId}">${isSelected ? '<i class="fas fa-check"></i> Booked' : 'Select'}</button>
+                        <div>${transitPriceBlock(opt, transitData, true)}${estimateChip}</div>
+                        <button class="btn btn-sm ${isSelected ? 'btn-success' : 'btn-outline-primary'} transport-select-btn" data-testid="${testId}">${isSelected ? '<i class="fas fa-check"></i> Selected' : 'Select'}</button>
                     </div>
                 </div>
             `;
             container.appendChild(card);
 
             card.querySelector('.transport-select-btn')?.addEventListener('click', () => {
-                if (state.budget && state.budget.intercity_transport !== undefined) {
-                    const oldOpt = sortedOptions[state.selectedTransportIdx];
-                    const numPeople = Math.max(1, parseInt(state.travelers?.people || 1));
-                    if (oldOpt && oldOpt.estimated_cost) state.budget.intercity_transport -= (oldOpt.estimated_cost * 2 * numPeople);
-                    if (opt.estimated_cost) state.budget.intercity_transport += (opt.estimated_cost * 2 * numPeople);
-                    
-                    // recalculate total
-                    let total = 0;
-                    for (let k in state.budget) {
-                        if (k !== 'total' && k !== 'total_cost' && typeof state.budget[k] === 'number') {
-                            total += state.budget[k];
-                        }
-                    }
-                    state.budget.total = total;
-                    state.budget.total_cost = total;
-                    renderBudget(state.budget);
-                }
+                // Phase 5/8: the budget breakdown is computed once, on the server,
+                // and shared by the state, the API and the email. Re-summing every
+                // numeric field here produced a second, non-canonical total that
+                // the budget page then contradicted. The selection is recorded and
+                // the plan is flagged; the cost changes when the user regenerates.
                 state.selectedTransportIdx = idx;
+                state.selectedTransport = {
+                    mode: type,
+                    provider: opt.provider || null,
+                    estimated_cost: opt.estimated_cost ?? opt.price_inr ?? null,
+                    cost_basis: opt.cost_basis || null,
+                };
+                state.planIsStale = true;
+                try {
+                    sessionStorage.setItem('selectedTransportIdx', String(idx));
+                    sessionStorage.setItem('selectedTransport', JSON.stringify(state.selectedTransport));
+                } catch (e) { }
                 renderTransport(transitData);
+                showToast('Transport option selected. Regenerate your itinerary to apply the new cost.', 'info');
             });
         });
+
+        // Requirement 4: also render local_transport (in-city options) if the
+        // agent produced them. Users asked for a broader comparison — only
+        // showing intercity made the section feel thin.
+        if (localOptions.length > 0) renderLocalTransit(container, transitData, localOptions, typeIcons);
+    }
+
+    // In-city options live in their own renderer so the "no intercity leg" path
+    // can still show them.
+    function renderLocalTransit(container, transitData, localOptions, typeIcons) {
+        const recommendedLocal = String(transitData.recommended_local_mode || '').toLowerCase();
+        {
+            const heading = document.createElement('h5');
+            heading.className = 'Bricolage mt-4 mb-2';
+            heading.innerHTML = '<i class="fas fa-city text-accent me-2"></i>Getting around ' +
+                escapeHtml(String(transitData.destination || state.destination || 'the destination'));
+            container.appendChild(heading);
+            localOptions.forEach((lo, li) => {
+                const mode = lo.mode || 'option';
+                const icon = (typeIcons[String(mode).toLowerCase()] || 'fa-shoe-prints');
+                const rec = String(mode).toLowerCase() === recommendedLocal ? '<span class="badge bg-warning text-dark ms-2">Recommended</span>' : '';
+                const div = document.createElement('div');
+                div.className = 'glass p-3 rounded-4 d-flex align-items-center justify-content-between mb-2';
+                div.setAttribute('data-testid', 'transit-local-option');
+                div.innerHTML = `
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="bg-secondary text-white p-2 rounded-circle d-flex align-items-center justify-content-center" style="width:38px;height:38px;"><i class="fas ${icon}"></i></div>
+                        <div>
+                            <div class="fw-bold text-capitalize">${escapeHtml(String(mode))}${rec}</div>
+                            <div class="text-secondary small">${escapeHtml(String(lo.recommendation_reason || ''))}</div>
+                        </div>
+                    </div>
+                    <div class="text-end">${transitPriceBlock(lo, transitData, false)}
+                        <span class="badge bg-light text-dark border ms-2" title="AI estimate, not live price"><i class="fas fa-hourglass-half me-1"></i>Estimated</span></div>
+                `;
+                container.appendChild(div);
+            });
+        }
     }
 
     // === Generate Itinerary (recommend step with the user's real selection) ===
@@ -2267,7 +2811,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // === Boot ===
-    earthCtl = initEarth('landing-earth-canvas', 'landing-earth-container');
+    // The 3D earth is decorative and must never be able to abort the auth boot
+    // below. A WebGL/THREE failure here previously left the default-active
+    // landing view on screen for signed-in users, trapping them in a
+    // landing -> /login -> landing redirect loop.
+    try {
+        earthCtl = initEarth('landing-earth-canvas', 'landing-earth-container');
+    } catch (e) {
+        console.warn('Landing earth init failed; continuing boot.', e);
+        earthCtl = null;
+    }
 
     const auth = currentUser();
     const params = new URLSearchParams(window.location.search);
@@ -2290,6 +2843,230 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
         showLanding();
     }
+    // ═════════════════════════════════════════════════════════════════════
+    // Persistent AI Travel Assistant (Requirement 7)
+    // ═════════════════════════════════════════════════════════════════════
+    // One assistant rail that stays mounted across Explore, attractions,
+    // Itinerary, Map, Weather, Budget and Transit. Every fact it shows comes
+    // from the SERVER-side session state (/api/assistant) - switching tabs
+    // never re-runs the planning pipeline and never invents a summary.
+    // `var` (not `let`) on purpose: switchTab() can run from the boot code
+    // above this block, and these bindings must already be readable by then.
+    var assistantCache = null;
+    var assistantCacheAt = 0;
+    var assistantFetching = null;
+
+    function assistantPrefOpen() {
+        try {
+            const v = localStorage.getItem('assistantOpen');
+            return v === null ? true : v === '1';
+        } catch (e) { return true; }
+    }
+    function assistantSetPrefOpen(open) {
+        try { localStorage.setItem('assistantOpen', open ? '1' : '0'); } catch (e) { }
+    }
+
+    function updateAssistantVisibility() {
+        const assistantPanel = document.getElementById('assistant-panel');
+        const assistantOpenBtn = document.getElementById('assistant-panel-open');
+        if (!assistantPanel) return;
+        const onTripPage = state.currentTab && state.currentTab !== 'landing';
+        const show = onTripPage && assistantPrefOpen();
+        assistantPanel.classList.toggle('is-visible', !!show);
+        document.body.classList.toggle('assistant-visible', !!show);
+        // Off-canvas drawers need a dismiss affordance on tablet/phone widths.
+        document.body.classList.toggle('assistant-backdrop', !!show && window.innerWidth < 1200);
+        if (assistantOpenBtn) assistantOpenBtn.classList.toggle('d-none', !!show || !onTripPage);
+    }
+
+    function assistantRow(label, value) {
+        if (value === null || value === undefined || value === '') return '';
+        return `<div class="assistant-kv"><span>${escapeHtml(label)}</span><span>${escapeHtml(String(value))}</span></div>`;
+    }
+
+    function assistantRenderContext(ctx) {
+        const assistantBody = document.getElementById('assistant-panel-body');
+        if (!assistantBody) return;
+        if (!ctx) { assistantBody.innerHTML = '<div class="assistant-state">No trip loaded yet.</div>'; return; }
+        const trip = ctx.trip || {};
+        let html = '';
+
+        if (!ctx.has_trip) {
+            html += `<div class="assistant-state">
+                <i class="fas fa-mug-hot me-1" aria-hidden="true"></i>
+                Tell the planner where you want to go and the assistant will keep track of it here.</div>`;
+            assistantBody.innerHTML = html;
+            return;
+        }
+
+        html += '<div class="assistant-section"><div class="assistant-section-title">Trip</div>';
+        html += assistantRow('Destination', trip.destination || 'Not decided yet');
+        html += assistantRow('Origin', trip.origin);
+        html += assistantRow('Days', trip.days);
+        html += assistantRow('Start date', trip.start_date);
+        html += assistantRow('Travellers', trip.people);
+        html += assistantRow('Budget', trip.budget_category || trip.budget_level);
+        html += '</div>';
+
+        const missing = ctx.missing_fields || [];
+        if (missing.length) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Still needed</div>';
+            html += missing.map(m => `<span class="assistant-chip is-warn">${escapeHtml(String(m))}</span>`).join('');
+            html += '</div>';
+        }
+
+        const sel = ctx.selected_attractions || [];
+        if (sel.length) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Selected attractions</div>';
+            html += sel.slice(0, 8).map(a => `<span class="assistant-chip">${escapeHtml(a.name || a)}</span>`).join('');
+            if (sel.length > 8) html += `<span class="assistant-chip">+${sel.length - 8} more</span>`;
+            html += '</div>';
+        }
+
+        if (ctx.itinerary_days && ctx.itinerary_days.length) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Day-by-day</div><ul class="assistant-list">';
+            ctx.itinerary_days.forEach(d => {
+                const n = d.activity_count != null ? d.activity_count : (d.activities || []).length;
+                html += `<li>Day ${escapeHtml(String(d.day))} — ${n} activit${n === 1 ? 'y' : 'ies'}${d.date ? ` · ${escapeHtml(String(d.date))}` : ''}</li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        const unscheduled = ctx.unscheduled_attractions || [];
+        if (unscheduled.length) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Not scheduled</div><ul class="assistant-list">';
+            unscheduled.forEach(u => {
+                html += `<li>${escapeHtml(String(u.name || 'Attraction'))} <span class="assistant-chip is-warn">${escapeHtml(String(u.reason || 'not placed'))}</span></li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        // Only a stay the traveller actually picked is presented as chosen; the
+        // first recommendation is labelled as a suggestion (never "booked").
+        if (ctx.accommodation && ctx.accommodation.name) {
+            const acc = ctx.accommodation;
+            html += '<div class="assistant-section"><div class="assistant-section-title">Stay</div>';
+            html += assistantRow('Selected', acc.name);
+            if (acc.price_per_night) html += assistantRow('Nightly rate', `₹${Number(acc.price_per_night).toLocaleString('en-IN')}`);
+            else if (acc.price_status === 'unavailable' || !acc.price_per_night) html += assistantRow('Nightly rate', 'Not reported');
+            html += '</div>';
+        }
+
+        const b = ctx.budget || {};
+        if (b && (b.total != null || b.status)) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Budget</div>';
+            html += assistantRow('Estimated total', b.total_is_valid === false ? 'Incomplete data'
+                : (b.total != null ? `₹${Math.round(b.total).toLocaleString('en-IN')}` : 'Not calculated'));
+            if (b.budget_limit != null) html += assistantRow('Limit', `₹${Math.round(b.budget_limit).toLocaleString('en-IN')}`);
+            if (b.status) html += assistantRow('Status', b.status === 'within' ? 'Within budget' : b.status === 'over' ? 'Over budget' : 'Incomplete data');
+            html += '</div>';
+        }
+
+        const warns = ctx.budget_warnings || ctx.warnings || [];
+        if (warns.length) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Watch out</div>';
+            html += warns.map(w => `<div class="assistant-chip is-warn">${escapeHtml(String(w))}</div>`).join('');
+            html += '</div>';
+        }
+
+        const tr = ctx.transit || {};
+        if (tr.recommended_mode || tr.recommended_local_mode || tr.same_city) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Getting around</div>';
+            if (tr.same_city) html += assistantRow('Intercity', 'None — origin and destination are the same city');
+            else html += assistantRow('Intercity', (tr.intercity_options && tr.intercity_options[0] && (tr.intercity_options[0].mode || tr.intercity_options[0].name)) || tr.recommended_mode);
+            html += assistantRow('Local', (tr.local_options && tr.local_options[0] && (tr.local_options[0].mode || tr.local_options[0].name)) || tr.recommended_local_mode);
+            if (ctx.self_drive_recommended !== undefined && ctx.self_drive_recommended !== null) {
+                html += assistantRow('Self-drive', ctx.self_drive_recommended ? 'Recommended' : 'Not needed');
+            }
+            html += '</div>';
+        }
+
+        if (ctx.email_sent) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Delivery</div>';
+            html += assistantRow('Itinerary email', 'Sent');
+            html += '</div>';
+        }
+
+        const ps = ctx.provider_status || {};
+        const degraded = Object.entries(ps).filter(([, v]) => v && v.state && v.state !== 'ok');
+        if (degraded.length) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Live data</div>';
+            html += degraded.map(([k, v]) => `<span class="assistant-chip is-warn" title="${escapeHtml(String(v.detail || ''))}">${escapeHtml(k)}: ${escapeHtml(String(v.state))}</span>`).join('');
+            html += '</div>';
+        }
+
+        const convo = (ctx.conversation || []).slice(-2);
+        if (convo.length) {
+            html += '<div class="assistant-section"><div class="assistant-section-title">Latest exchange</div>';
+            convo.forEach(m => {
+                const text = String(m.content || m.text || '').slice(0, 220);
+                html += `<div class="assistant-kv"><span>${escapeHtml(m.role === 'user' ? 'You' : 'ExploreX')}</span><span>${escapeHtml(text)}</span></div>`;
+            });
+            html += '</div>';
+        }
+
+        assistantBody.innerHTML = html || '<div class="assistant-state">Nothing to show yet.</div>';
+    }
+
+    function refreshAssistant(force) {
+        const assistantBody = document.getElementById('assistant-panel-body');
+        if (!assistantBody) return Promise.resolve(null);
+        const now = Date.now();
+        if (!force && assistantCache && (now - assistantCacheAt) < 20000) {
+            assistantRenderContext(assistantCache);
+            return Promise.resolve(assistantCache);
+        }
+        if (assistantFetching) return assistantFetching;
+        assistantBody.innerHTML = '<div class="assistant-state"><i class="fas fa-circle-notch fa-spin me-2" aria-hidden="true"></i>Loading your trip…</div>';
+        assistantFetching = fetch('/api/assistant', { credentials: 'same-origin' })
+            .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+            .then(data => {
+                const ctx = (data && data.context) || null;
+                assistantCache = ctx; assistantCacheAt = Date.now();
+                assistantRenderContext(ctx);
+                return ctx;
+            })
+            .catch(err => {
+                console.warn('assistant refresh failed', err);
+                assistantBody.innerHTML = '<div class="assistant-state assistant-error">' +
+                    'The assistant could not reach the trip data. <br>' +
+                    '<button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="assistant-retry-btn">Retry</button></div>';
+                document.getElementById('assistant-retry-btn')?.addEventListener('click', () => refreshAssistant(true));
+                return null;
+            })
+            .finally(() => { assistantFetching = null; });
+        return assistantFetching;
+    }
+
+    document.getElementById('assistant-panel-collapse')?.addEventListener('click', () => {
+        assistantSetPrefOpen(false);
+        updateAssistantVisibility();
+    });
+    document.getElementById('assistant-panel-open')?.addEventListener('click', () => {
+        assistantSetPrefOpen(true);
+        updateAssistantVisibility();
+        refreshAssistant(false);
+    });
+    document.getElementById('assistant-continue-chat')?.addEventListener('click', () => {
+        // Follow-ups continue the SAME conversation - the chat step already
+        // holds the collected information, so nothing is re-asked or overwritten.
+        switchTab('chat');
+        document.getElementById('chat-input-field')?.focus();
+    });
+    window.addEventListener('resize', updateAssistantVisibility);
+    document.addEventListener('click', e => {
+        // Close the mobile drawer when tapping outside of it.
+        const assistantPanel = document.getElementById('assistant-panel');
+        const assistantOpenBtn = document.getElementById('assistant-panel-open');
+        if (!assistantPanel || window.innerWidth >= 1200) return;
+        if (!assistantPrefOpen()) return;
+        if (!assistantPanel.contains(e.target) && e.target !== assistantOpenBtn && !assistantOpenBtn?.contains(e.target)) {
+            document.body.classList.remove('assistant-backdrop');
+            assistantPanel.classList.remove('is-visible');
+        }
+    });
+
+    if (state.currentTab && state.currentTab !== 'landing') { updateAssistantVisibility(); refreshAssistant(false); }
     syncEarth();
 });
 

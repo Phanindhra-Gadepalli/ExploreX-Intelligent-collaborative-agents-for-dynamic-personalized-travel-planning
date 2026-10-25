@@ -28,6 +28,8 @@ try:
 except ImportError:
     pass
 
+from services.budget_norm import normalize_budget as _canonical_normalize_budget
+
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -192,6 +194,7 @@ def normalize_itinerary(raw) -> list:
 # ---------------------------------------------------------------------------
 
 def _to_number(value):
+    """Legacy loose parser kept for stray string prices inside POI records."""
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -206,36 +209,41 @@ def _to_number(value):
 
 
 def normalize_budget(budget) -> dict:
-    """Coerce the many budget shapes into {total, accommodation, food,
-    transport, attractions, currency, warning, infeasible}."""
-    out = {
-        "total": None, "accommodation": None, "food": None,
-        "transport": None, "attractions": None,
-        "currency": "₹", "warning": "", "infeasible": False,
-    }
-    if not isinstance(budget, dict):
-        return out
+    """Delegate to the single canonical normaliser (services.budget_norm).
 
-    breakdown = budget.get("breakdown") if isinstance(budget.get("breakdown"), dict) else {}
-    out["currency"] = budget.get("currency_symbol") or budget.get("currency") or "₹"
-    if out["currency"] in ("INR", "inr"):
-        out["currency"] = "₹"
-
-    out["total"] = _to_number(budget.get("total", budget.get("total_cost", budget.get("grand_total"))))
-    out["accommodation"] = _to_number(budget.get("accommodation", breakdown.get("accommodation", breakdown.get("hotels", breakdown.get("stay")))))
-    out["food"] = _to_number(budget.get("food", breakdown.get("food", breakdown.get("meals"))))
-    out["transport"] = _to_number(budget.get("transport", breakdown.get("local_transport", breakdown.get("transport", breakdown.get("transit")))))
-    out["attractions"] = _to_number(budget.get("attractions", breakdown.get("attractions", breakdown.get("activities"))))
-    out["warning"] = str(budget.get("budget_warning") or budget.get("warning") or "")
-    out["infeasible"] = bool(budget.get("budget_infeasible", budget.get("infeasible", False)))
-    return out
+    The legacy loose parsing that scraped numbers out of the human-readable
+    ``breakdown`` strings is gone: that is what turned "16 attraction(s) x avg
+    INR 150..." into an Activities figure of Rs 16 and made the email total show
+    Rs 0 because BudgetAgent publishes ``estimated_total``, not ``total``.
+    """
+    return _canonical_normalize_budget(budget)
 
 
 def _money(value, symbol="₹") -> str:
     n = _to_number(value)
     if n is None:
-        return f"{symbol}0"
+        return "Not available"
     return f"{symbol}{n:,.0f}"
+
+
+def _budget_status_line(bud: dict) -> str:
+    """Human sentence describing budget fit. Never claims 'fits' when over."""
+    limit = bud.get("budget_limit")
+    status = bud.get("status")
+    if status == "incomplete" or not bud.get("total_is_valid"):
+        return "Budget status: incomplete — provider data was unavailable for some categories."
+    if not limit:
+        return ""
+    from services.budget_norm import format_inr
+    total_txt = format_inr(bud.get("total"))
+    limit_txt = format_inr(limit)
+    strict = bud.get("budget_strictness") == "strict"
+    if status == "over":
+        return (f"⚠️ Estimated total {total_txt} exceeds your {limit_txt} limit"
+                + (" (strict limit — cannot be met with current data)." if strict else "."))
+    remaining = bud.get("remaining_budget")
+    rem_txt = f" — {format_inr(remaining)} headroom remains." if remaining and remaining > 0 else "."
+    return f"Estimated total {total_txt} is within your {limit_txt} budget{rem_txt}"
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +258,38 @@ def _esc(s) -> str:
 
 # Short alias used throughout the render helpers below.
 esc = _esc
+
+
+# A fare is always shown in the currency it was quoted in; relabelling a USD or
+# AED figure with a rupee sign is how a "$320" flight ended up as "₹320".
+_CURRENCY_SYMBOLS = {"INR": "\u20b9", "USD": "$", "EUR": "\u20ac", "GBP": "\u00a3",
+                     "AED": "AED ", "SGD": "S$ ", "THB": "\u0e3f"}
+
+
+def _money(value, currency="INR") -> str:
+    """Format a numeric cost with its own currency symbol (no conversion)."""
+    n = _to_number(value)
+    if n is None:
+        return "price unavailable"
+    code = str(currency or "INR").strip().upper()
+    if code in ("\u20b9", "RS", "RUPEE", "RUPEES"):
+        code = "INR"
+    sym = _CURRENCY_SYMBOLS.get(code, "" if code == "INR" else code + " ")
+    return f"{sym}{n:,.0f}"
+
+
+def _clean_str(value) -> str:
+    """Trim a possibly-missing text field to a safe string (never None)."""
+    if value is None:
+        return ""
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    return "" if text.lower() in ("none", "null", "n/a", "na", "unknown") else text
+
+
+_BASIS_WORDS = {
+    "per_person": "per person", "per_vehicle": "per vehicle", "per_group": "per group",
+    "per_day": "per day", "per_trip": "per trip", "per_night": "per night",
+}
 
 
 def _render_itinerary_html(days) -> str:
@@ -307,15 +347,46 @@ def _render_itinerary_text(days) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _as_poi_list(items):
+    """Accept a single POI dict, a list of POIs, or None -> always a list.
+
+    The old call site passed the *selected accommodation dict* straight into a
+    ``for it in items`` loop, which iterated its keys (strings) and silently
+    produced a broken/empty 'Where You'll Stay' section.
+    """
+    if items is None:
+        return []
+    if isinstance(items, dict):
+        return [items]
+    if isinstance(items, (list, tuple)):
+        return [i for i in items if i]
+    return []
+
+
 def _render_list_section(title, items, icon="•"):
-    """Render an optional section (accommodation / food) from a list of POIs."""
+    """Render an optional section (accommodation / food) from POI records."""
     names = []
-    for it in items or []:
+    for it in _as_poi_list(items):
         if isinstance(it, dict):
             nm = _first(it, "name", "title", "label")
-            price = _first(it, "price", "price_per_night", "cost")
-            if nm:
-                names.append(f"{nm}" + (f" — {price}" if price else ""))
+            price = _first(it, "price_per_night", "price", "cost")
+            parts = [str(nm).strip()] if nm else []
+            if price not in (None, ""):
+                p = _to_number(price)
+                currency = str(_first(it, "currency", default="INR")).upper()
+                sym = "₹" if currency in ("INR", "₹") else ("$" if currency == "USD" else "")
+                if p is not None and p > 0:
+                    parts.append(f"{sym}{p:,.0f} / night")
+                else:
+                    parts.append("price unavailable")
+            rating = _to_number(_first(it, "rating"))
+            if rating:
+                parts.append(f"rated {rating:.1f}")
+            addr = _first(it, "address", "location_name", "vicinity")
+            if addr and str(addr) != str(nm):
+                parts.append(str(addr).strip())
+            if parts:
+                names.append(" — ".join(parts))
         elif isinstance(it, str) and it.strip():
             names.append(it.strip())
     if not names:
@@ -328,49 +399,142 @@ def _render_list_section(title, items, icon="•"):
 
 
 def _render_transit(transit) -> tuple:
-    """Render transportation options from the transit-agent structure."""
+    """Render transportation from the TransitAgent structure.
+
+    TransitAgent emits ``intercity_transport`` / ``local_transport`` (never
+    ``options``), so the old renderer always found an empty list and the email
+    silently dropped the whole transport section.
+    """
     if not transit:
         return "", ""
-    options = []
-    if isinstance(transit, dict):
-        options = transit.get("options") if isinstance(transit.get("options"), list) else []
-        recommended = transit.get("recommended_mode")
-    elif isinstance(transit, list):
-        options = transit
-        recommended = None
-    else:
+    if isinstance(transit, list):
+        transit = {"intercity_transport": transit}
+    if not isinstance(transit, dict):
         return "", ""
 
-    rows_html = ""
-    rows_text = ""
-    for opt in options[:8]:
-        if not isinstance(opt, dict):
+    recommended = transit.get("recommended_mode")
+    recommended_local = transit.get("recommended_local_mode")
+    is_estimate_flag = bool(transit.get("is_estimate"))
+    note = transit.get("estimation_note") or ""
+
+    # The email used to say "Getting There & Back" without ever naming the
+    # journey, so nothing told the traveller which route the fares were for.
+    origin = _clean_str(transit.get("origin"))
+    destination = _clean_str(transit.get("destination"))
+    route = f"{origin} \u2192 {destination}" if origin and destination else (destination or origin)
+    default_currency = transit.get("currency") or "INR"
+    intercity_label = "Getting There & Back" + (f" ({route})" if route else "")
+
+    sections = []
+    for key, label, icon, rec in (
+        ("intercity_transport", intercity_label, "\U0001f686", recommended),
+        ("local_transport", "Getting Around Locally", "\U0001f695", recommended_local),
+    ):
+        raw_list = transit.get(key)
+        if isinstance(raw_list, dict):
+            raw_list = list(raw_list.values())
+        if not isinstance(raw_list, list) or not raw_list:
+            # Legacy fallback (frontend-built payloads).
+            raw_list = transit.get("options") if key == "intercity_transport" else None
+        if not isinstance(raw_list, list):
             continue
-        mode = _first(opt, "mode", "type")
-        provider = _first(opt, "provider", "name", "operator")
-        duration = _first(opt, "duration", "travel_time")
-        cost = _first(opt, "estimated_cost", "cost", "price")
-        dep = _first(opt, "departure_info", "departure")
-        arr = _first(opt, "arrival_info", "arrival")
-        star = " ⭐" if recommended and str(mode).lower() == str(recommended).lower() else ""
-        line = f"{mode}{star}: {provider}"
-        detail = []
-        if duration:
-            detail.append(f"{duration}")
-        if dep or arr:
-            detail.append(f"{dep} → {arr}")
-        if cost:
-            detail.append(f"~₹{_to_number(cost):,.0f}" if _to_number(cost) else str(cost))
-        if detail:
-            line += " (" + ", ".join(str(d) for d in detail if d) + ")"
-        rows_html += f"<li style='margin-bottom:4px;'>{esc(line)}</li>"
-        rows_text += f"  - {line}\n"
+        rows_html, rows_text = [], []
+        for opt in raw_list[:8]:
+            if isinstance(opt, str):
+                opt = {"mode": opt}
+            if not isinstance(opt, dict):
+                continue
+            mode = _first(opt, "mode", "type", "name")
+            provider = _first(opt, "provider", "operator", "company")
+            duration = _first(opt, "duration", "travel_time")
+            cost = _first(opt, "estimated_cost", "cost", "price")
+            basis = _first(opt, "cost_basis")
+            leg = _clean_str(_first(opt, "origin"))
+            leg_dest = _clean_str(_first(opt, "destination"))
+            opt_currency = _first(opt, "currency", default=default_currency)
+            dep = _first(opt, "departure_info", "departure")
+            arr = _first(opt, "arrival_info", "arrival")
+            star = " \u2b50" if rec and str(mode).lower() == str(rec).lower() else ""
+            line = f"{mode}{star}" + (f": {provider}" if provider else "")
+            detail = []
+            # Prefer the leg printed on the option itself, then the journey the
+            # whole payload describes.
+            opt_leg = (f"{leg} \u2192 {leg_dest}" if leg and leg_dest
+                       else (route if key == "intercity_transport" and route else ""))
+            if opt_leg:
+                detail.append(f"for {opt_leg}")
+            if duration:
+                detail.append(str(duration))
+            elif dep or arr:
+                detail.append(f"{dep} \u2192 {arr}")
+            if cost not in (None, ""):
+                c = _to_number(cost)
+                if c is not None:
+                    qualifier = _BASIS_WORDS.get(str(basis or "").strip().lower(), "")
+                    suffix = f" ({qualifier}, one way)" if qualifier and key == "intercity_transport" \
+                        else (f" ({qualifier})" if qualifier else "")
+                    detail.append(f"~{_money(c, opt_currency)}{suffix} (estimated)")
+                else:
+                    detail.append(str(cost))
+            elif is_estimate_flag:
+                detail.append("cost estimate unavailable")
+            elif basis:
+                detail.append(str(basis))
+            if detail:
+                line += " (" + ", ".join(detail) + ")"
+            rows_html.append(f"<li style='margin-bottom:4px;'>{esc(line)}</li>")
+            rows_text.append(f"  - {line}\n")
+        if rows_html:
+            sections.append((label, icon, rows_html, rows_text))
 
-    if not rows_html:
+    if not sections:
         return "", ""
-    html = ("<h4 style='margin:18px 0 6px;color:#0b6bcb;'>🚆 Getting There</h4>"
-            f"<ul style='margin:0 0 10px;padding-left:20px;'>{rows_html}</ul>")
-    text = "\nTransportation:\n" + rows_text
+    html = ""
+    text = ""
+    for label, icon, rows_html, rows_text in sections:
+        html += (f"<h4 style='margin:18px 0 6px;color:#0b6bcb;'>{icon} {esc(label)}</h4>"
+                 f"<ul style='margin:0 0 10px;padding-left:20px;'>{''.join(rows_html)}</ul>")
+        text += f"\n{label}:\n" + "".join(rows_text)
+    if is_estimate_flag or note:
+        hint = note or ("Figures above are planning estimates generated by ExploreX. "
+                        "They are not bookings and are not guaranteed prices.")
+        html += (f"<p style='color:#666;font-size:0.85em;background:#f8fafc;padding:6px 10px;"
+                 f"border-radius:4px;'>ℹ️ {esc(hint)}</p>")
+        text += f"\nNote: {hint}\n"
+    return html, text
+
+
+def _render_unscheduled(items) -> tuple:
+    """Disclose the places the traveller picked that are NOT in the plan.
+
+    Silence here was the bug: a selected attraction could vanish from the
+    itinerary, the map and the email, so the traveller only found out on the
+    ground. Each entry already carries a machine ``reason`` plus a human
+    ``detail`` written by the planner, which is what we render.
+    """
+    entries = []
+    for it in _as_poi_list(items):
+        if isinstance(it, dict):
+            name = _first(it, "name", "title")
+            if not name:
+                continue
+            detail = _first(it, "detail", "reason") or "could not be fitted into the day plan"
+            day = it.get("day")
+            line = str(name).strip()
+            if day:
+                line += f" (planned for Day {day})"
+            entries.append(f"{line} — {detail}")
+        elif isinstance(it, str) and it.strip():
+            entries.append(f"{it.strip()} — could not be fitted into the day plan")
+    if not entries:
+        return "", ""
+    html = ("<h4 style='margin:18px 0 6px;color:#b45309;'>⚠️ Not Included in the Plan</h4>"
+            "<p style='margin:0 0 6px;color:#444;'>These places you selected were "
+            "<strong>not</strong> scheduled, so they are deliberately absent below:</p>"
+            "<ul style='margin:0 0 10px;padding-left:20px;'>"
+            + "".join(f"<li>{esc(e)}</li>" for e in entries[:12]) + "</ul>")
+    text = ("\nNot Included in the Plan (you selected these, but they were not scheduled):\n"
+            + "".join(f"  - {e}\n" for e in entries[:12]))
     return html, text
 
 
@@ -419,7 +583,7 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation,
     # ---- Normalize inputs -------------------------------------------------
     days = normalize_itinerary(itinerary)
     bud = normalize_budget(budget)
-    symbol = bud.get("currency", "₹")
+    symbol = "₹"  # ExploreX plans in a single currency (spec Phase 5).
 
     origin = ctx.get("origin") or ""
     duration = ctx.get("days") or (len(days) if days else "")
@@ -428,6 +592,27 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation,
     start_date = ctx.get("start_date") or ""
     end_date = ctx.get("end_date") or ""
     tips = ctx.get("tips") or ""
+
+    # ---- Server-side pre-send payload validation --------------------------
+    # The email must be built from the finalized trip state.  We log exactly
+    # which fields are missing, and refuse to send when there is no trip at all
+    # (an empty email is worse than a failed one).
+    missing_fields = []
+    if not city:
+        missing_fields.append("city")
+    if not days:
+        missing_fields.append("itinerary")
+    if not bud.get("total_is_valid"):
+        missing_fields.append("budget.total")
+    if not _as_poi_list(ctx.get("accommodation")):
+        missing_fields.append("accommodation")
+    if missing_fields:
+        print(f"[EMAIL][VALIDATION] Missing/incomplete payload fields for {to_email}: "
+              f"{', '.join(missing_fields)} (itinerary_days={len(days)})")
+    if not days and not bud.get("total_is_valid"):
+        print("[EMAIL][VALIDATION] Aborting: neither itinerary nor budget available — "
+              "nothing useful could be emailed.")
+        return False
 
     travelers_txt = ""
     if people not in (None, ""):
@@ -441,7 +626,8 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation,
 
     print(f"[EMAIL][PAYLOAD] to={to_email} city={city!r} origin={origin!r} "
           f"days={duration} people={people} kids={kids} itinerary_days={len(days)} "
-          f"budget_total={bud.get('total')} notes={'yes' if notes else 'no'}")
+          f"budget_total={bud.get('total')} status={bud.get('status')} "
+          f"notes={'yes' if notes else 'no'}")
 
     if not days:
         print("[EMAIL][PAYLOAD] Itinerary empty after normalization — email will note that.")
@@ -458,6 +644,7 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation,
         icon="🍽️",
     )
     transit_html, transit_text = _render_transit(ctx.get("transport"))
+    unsched_html, unsched_text = _render_unscheduled(ctx.get("unscheduled"))
 
     # ---- Plain-text version ----------------------------------------------
     text = f"Hello {user_name},\n\n{confirmation}\n\n"
@@ -474,17 +661,32 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation,
         text += f"Travel dates: {dates_txt}\n"
     text += "\n"
 
-    text += "Estimated Budget:\n"
-    text += f"  Total:         {_money(bud['total'], symbol)}\n"
-    text += f"  Accommodation: {_money(bud['accommodation'], symbol)}\n"
-    text += f"  Food:          {_money(bud['food'], symbol)}\n"
-    text += f"  Transport:     {_money(bud['transport'], symbol)}\n"
-    text += f"  Activities:    {_money(bud['attractions'], symbol)}\n"
-    if bud.get("warning"):
-        text += f"  Note: {bud['warning']}\n"
+    budget_line_items = (
+        ("Total", bud["total"] if bud.get("total_is_valid") else None),
+        ("Accommodation", bud["accommodation"]),
+        ("Food", bud["food"]),
+        ("Intercity transport", bud["transport"]),
+        ("Local transport", bud["local_transport"]),
+        ("Activities / entry fees", bud["attractions"]),
+        ("Miscellaneous", bud["miscellaneous"]),
+    )
+    status_line = _budget_status_line(bud)
+
+    text += "Estimated Budget (all amounts in INR):\n"
+    for label, val in budget_line_items:
+        text += f"  {label + ':':<14} {_money(val, symbol) if val is not None else 'Not available'}\n"
+    if status_line:
+        text += f"  {status_line}\n"
+    if bud.get("budget_warning"):
+        text += f"  Note: {bud['budget_warning']}\n"
+    if not bud.get("data_complete"):
+        text += ("  Note: some cost categories were unavailable from data providers; "
+                 "the total above excludes them and may understate the real cost.\n")
     text += "\n"
 
     text += "Itinerary:\n" + _render_itinerary_text(days)
+    if unsched_text:
+        text += unsched_text
     if acc_text:
         text += acc_text
     if food_text:
@@ -510,16 +712,14 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation,
 
     budget_rows = "".join(
         f"<tr><td style='padding:4px 16px 4px 0;color:#666;'>{label}</td>"
-        f"<td style='padding:4px 0;font-weight:600;'>{_money(val, symbol)}</td></tr>"
-        for label, val in (
-            ("Total", bud["total"]), ("Accommodation", bud["accommodation"]),
-            ("Food", bud["food"]), ("Transport", bud["transport"]),
-            ("Activities", bud["attractions"]),
-        )
+        f"<td style='padding:4px 0;font-weight:600;'>{_money(val, symbol) if val is not None else 'Not available'}</td></tr>"
+        for label, val in budget_line_items
     )
+    status_html = (f"<p style='margin:8px 0 0;color:#0b6bcb;font-weight:600;'>{esc(status_line)}</p>"
+                   if status_line else "")
     warning_html = (f"<p style='color:#b45309;background:#fffbeb;padding:8px 12px;"
-                    f"border-left:4px solid #f59e0b;border-radius:4px;'>⚠️ {esc(bud['warning'])}</p>"
-                    if bud.get("warning") else "")
+                    f"border-left:4px solid #f59e0b;border-radius:4px;'>⚠️ {esc(bud.get('budget_warning') or '')}</p>"
+                    if bud.get("budget_warning") else "")
     notes_html = (f"<h4 style='margin:18px 0 6px;color:#0b6bcb;'>📝 Your Notes</h4>"
                   f"<p style='white-space:pre-wrap;background:#f8fafc;padding:10px;"
                   f"border-radius:6px;'>{esc(notes)}</p>" if notes else "")
@@ -543,11 +743,13 @@ def send_trip_email(to_email, user_name, city, itinerary, budget, confirmation,
       <div style="background:#f4f7fb;padding:14px 16px;border-radius:8px;margin-bottom:20px;">
         <h4 style="margin:0 0 8px;color:#111;">Estimated Budget</h4>
         <table style="border-collapse:collapse;font-size:15px;">{budget_rows}</table>
+        {status_html}
         {warning_html}
       </div>
 
       <h3 style="margin:0 0 10px;color:#111;">Your Itinerary</h3>
       {_render_itinerary_html(days)}
+      {unsched_html}
       {acc_html}
       {food_html}
       {transit_html}

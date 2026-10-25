@@ -199,19 +199,36 @@ class BudgetAgent:
         # ── 4. Calculate each budget component ────────────────────────────────
         total_acc   = self._calculate_accommodation_cost(acc_ppd, rooms, num_days)
         total_food  = self._calculate_food_cost(food_ppd, num_people, num_days)
-        actual_rent_car = should_rent_car and bool(car_info)
-        total_trans = self._calculate_local_transport_cost(trans_ppd, num_people, num_days, actual_rent_car)
+        # A rental recommendation stays in the plan even when the rental API is
+        # unavailable (403 / no key): we then price it from a transparent
+        # fallback estimate instead of silently dropping the cost to zero.
+        rental_recommended = bool(should_rent_car)
+        actual_rent_car = rental_recommended and bool(car_info)
+        driving_mode = rental_recommended          # covers both real + fallback pricing
+        total_trans = self._calculate_local_transport_cost(trans_ppd, num_people, num_days, driving_mode)
 
         attraction_cost = self._calculate_attraction_cost(spots, num_people)
 
         car_rental_cost = 0.0
         fuel_cost       = 0.0
         fuel_km         = 0.0
-        if actual_rent_car:
-            car_rental_cost, daily_car_rate = self._calculate_car_rental_cost(
-                car_info, budget_level, num_days
-            )
+        car_rental_source = None                   # None | "provider" | "fallback_estimate"
+        rental_daily_estimate = 0.0
+        if driving_mode:
             fuel_cost, fuel_km = self._calculate_fuel_cost(spots, budget_level, num_days)
+            if actual_rent_car:
+                car_rental_cost, daily_car_rate = self._calculate_car_rental_cost(
+                    car_info, budget_level, num_days
+                )
+                car_rental_source = "provider"
+            else:
+                # Provider returned nothing: estimate per-vehicle per-day rate.
+                default_daily = float(self._RENTAL_DAILY_INR.get(budget_level, 2_500))
+                rental_daily_estimate = default_daily
+                car_rental_cost = round(default_daily * num_days, 2)
+                car_rental_source = "fallback_estimate"
+                print(f"[BUDGET][CAR_RENTAL][FALLBACK] Rental provider unavailable — "
+                      f"estimated ₹{car_rental_cost:,.0f} ({int(num_days)} × ₹{default_daily:,.0f}/day).")
             # local transport replaced by fuel when driving
 
         subtotal_without_transit = (
@@ -244,7 +261,7 @@ class BudgetAgent:
                     total_acc, total_food, total_trans,
                     subtotal,
                     num_people, num_days, rooms,
-                    actual_rent_car,
+                    driving_mode,
                     attraction_cost, car_rental_cost, fuel_cost, intercity_transport_cost,
                     budget_amount, budget_strictness, spots
                 )
@@ -261,11 +278,21 @@ class BudgetAgent:
             rooms, num_people, num_days,
             total_acc, total_food, total_trans,
             attraction_cost, spots,
-            car_rental_cost, actual_rent_car,
+            car_rental_cost, driving_mode,
             fuel_cost, fuel_km, budget_level,
             intercity_transport_cost, intercity_mode,
             subtotal, miscellaneous_cost, total,
         )
+        if car_rental_source == "fallback_estimate":
+            breakdown["car_rental"] = (
+                f"Self-drive car estimated at ₹{rental_daily_estimate:,.0f}/day × {int(num_days)} day(s) "
+                f"= ₹{car_rental_cost:,.0f} (indicative estimate — the rental provider was unavailable, "
+                "so this is not a quote)."
+            )
+            breakdown["local_transport"] = (
+                breakdown.get("local_transport")
+                or "Local transport is covered by the self-drive estimate above (no double count)."
+            )
 
         utilization_percentage = round((total / budget_amount * 100), 1) if budget_amount else 0.0
         within_budget = total <= budget_amount if budget_amount else True
@@ -286,6 +313,8 @@ class BudgetAgent:
             "miscellaneous":       round(miscellaneous_cost, 2),
             "car_rental":          round(car_rental_cost, 2),
             "fuel":                round(fuel_cost, 2),
+            "car_rental_source":   car_rental_source,
+            "car_rental_estimated": car_rental_source == "fallback_estimate",
             "budget_category":     budget_level,
             "budget_warning":      budget_warning,
             "budget_infeasible":   budget_infeasible,
@@ -304,10 +333,19 @@ class BudgetAgent:
         """
         Determine budget level, numeric budget amount (or None), and strictness.
 
-        Budget level thresholds (for numeric budgets):
-            ≤ ₹30,000  → low
-            ≤ ₹1,00,000 → medium
-            > ₹1,00,000 → high
+        The budget *level* must reflect how much each traveller actually gets to
+        spend per day, NOT the absolute pot. A ₹150,000 pot is luxury for one
+        person for a weekend but a backpacker budget for a group of 10 over 10
+        days. We therefore derive an effective per-person-per-day figure when the
+        group size and duration are known and classify on that:
+
+            <  ₹2,500 / person / day  -> low
+            <  ₹6,000 / person / day  -> medium
+            >= ₹6,000 / person / day  -> high
+
+        When people/days are unknown we fall back to sensible absolute totals
+        (<=₹30k low, <=₹1L medium, else high). A string budget ("luxury",
+        "backpacker", ...) is honoured when no amount is present.
 
         Returns (budget_level: str, budget_amount: int | None, strictness: str | None)
         """
@@ -324,7 +362,27 @@ class BudgetAgent:
                 budget_amount = None
 
         if budget_amount is not None:
-            if budget_amount <= 30_000:
+            # Derive effective per-person-per-day spend when dimensions are known.
+            try:
+                num_people = max(1, int(user_prefs.get("people", 1) or 1))
+            except (ValueError, TypeError):
+                num_people = 1
+            try:
+                num_days = max(1, int(user_prefs.get("days", 1) or 1))
+            except (ValueError, TypeError):
+                num_days = 1
+
+            per_person_per_day = budget_amount / (num_people * num_days)
+            # Only trust the per-day model when the trip dimensions are actually
+            # meaningful (a real group/length); otherwise use absolute totals.
+            if (user_prefs.get("people") or user_prefs.get("days")) and per_person_per_day > 0:
+                if per_person_per_day < 2_500:
+                    budget_level = "low"
+                elif per_person_per_day < 6_000:
+                    budget_level = "medium"
+                else:
+                    budget_level = "high"
+            elif budget_amount <= 30_000:
                 budget_level = "low"
             elif budget_amount <= 1_00_000:
                 budget_level = "medium"
@@ -737,16 +795,40 @@ class BudgetAgent:
         if not transit_options or "intercity_transport" not in transit_options:
             return 0.0, "N/A"
 
-        recommended_mode = transit_options.get("recommended_mode", "").lower()
-        options_list = transit_options.get("intercity_transport", [])
-        
-        # map estimated_cost to price_inr for backwards compatibility
-        for o in options_list:
-            o["price_inr"] = float(o.get("estimated_cost", 0))
+        recommended_mode = str(transit_options.get("recommended_mode") or "").lower()
+        raw_options = transit_options.get("intercity_transport") or []
 
-        trains           = [o for o in options_list if o.get("mode", "").lower() == "train"]
-        flights          = [o for o in options_list if o.get("mode", "").lower() == "flight"]
-        buses            = [o for o in options_list if o.get("mode", "").lower() == "bus"]
+        # Work on copies and price only genuinely-INR quotes. The old
+        # ``o["price_inr"] = float(o.get("estimated_cost", 0))`` both mutated the
+        # shared transit payload and silently read a USD/AED figure as rupees,
+        # which turned a Delhi->Dubai flight into a "320 INR" fare and then into
+        # a Rs 5,000 intercity budget line for ten people.
+        options_list = []
+        for o in raw_options:
+            if not isinstance(o, dict):
+                continue
+            o = dict(o)
+            currency = str(o.get("currency") or transit_options.get("currency") or "INR").strip().upper()
+            if currency not in ("INR", "\u20b9", "RS", "RUPEE", "RUPEES"):
+                o["price_inr"] = None
+            else:
+                price = o.get("price_inr")
+                if price is None:
+                    price = o.get("estimated_cost")
+                try:
+                    price = float(price) if price not in (None, "") else None
+                except (TypeError, ValueError):
+                    price = None
+                o["price_inr"] = price if price and price > 0 else None
+            options_list.append(o)
+
+        priced = [o for o in options_list if o.get("price_inr")]
+        if not priced:
+            return 0.0, "N/A"
+
+        trains           = [o for o in priced if str(o.get("mode", "")).lower() == "train"]
+        flights          = [o for o in priced if str(o.get("mode", "")).lower() == "flight"]
+        buses            = [o for o in priced if str(o.get("mode", "")).lower() == "bus"]
 
         options: list = []
         mode_label    = "transport"

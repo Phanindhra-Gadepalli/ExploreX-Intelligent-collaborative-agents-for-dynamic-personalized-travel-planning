@@ -15,8 +15,11 @@ from flask_session import Session
 import os
 import json
 import time
+import uuid
 import queue
 import threading
+import traceback
+import requests
 from dotenv import load_dotenv
 from workflows.travel_graph import TravelGraph
 
@@ -41,9 +44,15 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "travel-ai-secret")
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
-app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# Send the session cookie only over HTTPS when running in production (or when
+# an explicit COOKIE_SECURE=1 is set); keep it off for plain-HTTP local dev.
+app.config['SESSION_COOKIE_SECURE'] = (
+    os.environ.get('COOKIE_SECURE') == '1'
+    or os.environ.get('FLASK_ENV') == 'production'
+    or os.environ.get('PRODUCTION') == '1'
+)
 
 # ── Startup side-effects that must run ONLY in the actual serving process ────
 # When debug=True, Werkzeug spawns two processes:
@@ -82,6 +91,11 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # Create a session store for workflows
 workflows = {}
 
+# Requirement 6: in-flight email guard keyed by session_id -> unix timestamp.
+# Prevents a double-click or a client retry storm from dispatching the same
+# itinerary multiple times to the SMTP provider. Entries expire after 30s.
+_EMAIL_INFLIGHT = {}
+
 # Human-readable trace labels for the real multi-agent loop. Each key is an
 # actual process_step name; the value names the agent(s) that genuinely run in
 # that step. Used only to label the SSE 'status' events — no behavior change.
@@ -112,6 +126,54 @@ AGENT_PROGRESS_MESSAGES = {
 STREAM_KEEPALIVE_SECONDS = 15
 
 
+# ── Phase 9: one error contract for every endpoint ───────────────────────────
+# User-facing responses must never contain a Python exception string, a stack
+# trace, a provider API key or another traveller's PII. The detail stays in the
+# server log, correlated by a short reference the user can quote to support.
+_INTERNAL_MARKERS = (
+    "attributeerror", "none", "keyerror", "indexerror", "typeerror", "valueerror",
+    "json decode", "traceback", "expected", "positional argument", "non-serializable",
+    "connection aborted", "read timed out", "rapidapi", "api key", "bearer ",
+)
+
+
+def log_error(context, exc):
+    """Log a full server-side trace and return a short correlation reference."""
+    ref = uuid.uuid4().hex[:8]
+    print(f"[ERROR][{context}][ref={ref}] {type(exc).__name__}: {exc}")
+    traceback.print_exc()
+    return ref
+
+
+def client_error_message(exc, fallback="Something went wrong on our side. Please try again."):
+    """Return a safe, human-readable message, or the fallback if the exception
+    text looks like an internal error or could expose secrets."""
+    detail = " ".join(str(exc).split())[:200]
+    if not detail:
+        return fallback
+    lowered = detail.lower()
+    if any(marker in lowered for marker in _INTERNAL_MARKERS):
+        return fallback
+    return detail
+
+
+def error_response(exc, context, status=500, fallback=None, extra=None):
+    """Build the standard error payload: {status, success, error, message,
+    request_ref}. The 'error' key is kept because the existing SPA reads it."""
+    ref = log_error(context, exc)
+    message = fallback or client_error_message(exc)
+    payload = {
+        "status": "error",
+        "success": False,
+        "error": message,
+        "message": message,
+        "request_ref": ref,
+    }
+    if extra:
+        payload.update(extra)
+    return jsonify(payload), status
+
+
 @app.route('/test-image')
 def test_image():
     return send_file('frontend/static/images/background.jpg', mimetype='image/jpeg')
@@ -123,13 +185,33 @@ def serve_image(filename):
 
 
 def normalize_itinerary_for_client(raw_itinerary):
-    if not raw_itinerary or not isinstance(raw_itinerary, list): return raw_itinerary
+    """Project the stored itinerary onto the contract the SPA expects.
+
+    Day keys arrive from the planner in several shapes (1, "1", "day1",
+    "Day 2"). The frontend needs ONE representation - a positive integer -
+    otherwise the All Days / Day N filters silently mismatch and show nothing.
+
+    The result is ALWAYS ``{"days": [...]}`` - including for a trip that has not
+    been planned yet - so no consumer has to guess which shape it received.
+    """
+    if not raw_itinerary or not isinstance(raw_itinerary, list):
+        return {"days": []}
+    import re as _re
     days = []
-    for day in raw_itinerary:
+    for idx, day in enumerate(raw_itinerary, start=1):
+        if not isinstance(day, dict):
+            continue
+        # Resolve the day NUMBER: prefer an explicit field, fall back to order.
+        raw_day = day.get("day", day.get("day_number"))
+        match = _re.search(r"(\d+)", str(raw_day if raw_day is not None else ""))
+        day_number = int(match.group(1)) if match else idx
+
         # Route agent writes "activities"; keep "spots" as a legacy alias.
-        raw_spots = day.get("activities") or day.get("spots") or []
+        # Work on shallow copies so projecting the client contract can never
+        # mutate the authoritative server-side itinerary.
+        raw_spots = [dict(s) for s in (day.get("activities") or day.get("spots") or []) if isinstance(s, dict)]
         d = {
-            "day": day.get("day"),
+            "day": day_number,
             "date": day.get("date"),
             "is_suggested_date": day.get("is_suggested_date"),
             "morning": [],
@@ -140,8 +222,19 @@ def normalize_itinerary_for_client(raw_itinerary):
             "transport": day.get("transport") or {},
             "activities": raw_spots,
             "spots": raw_spots,
+            "unscheduled": day.get("unscheduled") or [],
         }
-        for spot in raw_spots:
+        for seq, spot in enumerate(raw_spots, start=1):
+            # Every activity carries its day + position so the map, the itinerary
+            # page and the email can all reference the same stop unambiguously.
+            spot.setdefault("day", day_number)
+            spot.setdefault("sequence", seq)
+            if spot.get("latitude") is None and isinstance(spot.get("location"), dict):
+                spot["latitude"] = spot["location"].get("lat") or spot["location"].get("latitude")
+            if spot.get("longitude") is None and isinstance(spot.get("location"), dict):
+                spot["longitude"] = spot["location"].get("lng") or spot["location"].get("longitude")
+            if spot.get("attraction_id") is None and spot.get("id") is not None:
+                spot["attraction_id"] = str(spot["id"])
             if spot.get("is_meal"):
                 d["meals"].append(spot)
                 continue
@@ -296,9 +389,19 @@ def index():
     u_email = session.get('user_email')
     
     if session_id and session_id not in workflows:
-        # Recreate workflow if it was lost from memory but session exists
-        workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
-        print(f"[DEBUG] Restored workflow on page reload: {session_id}")
+        # Recreate workflow if it was lost from memory but session exists.
+        # This is best-effort: if agent initialisation fails (e.g. an
+        # incompatible ChromaDB build or a missing credential), the landing
+        # page must still render and the workflow is created lazily when the
+        # user actually starts planning (see /process). A hard failure here
+        # previously returned a 500 on the home page.
+        try:
+            workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
+            print(f"[DEBUG] Restored workflow on page reload: {session_id}")
+        except Exception as e:
+            print(f"[ERROR] Failed to restore TravelGraph for {session_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     # Restore auth data
     if is_auth:
@@ -351,6 +454,8 @@ def reset_session():
     
     new_session_id = os.urandom(16).hex()
     session['session_id'] = new_session_id
+    # A new trip gets a brand-new TravelGraph instance, so no trip-specific
+    # state (destination, selections, budget, email status) can survive it.
     workflows[new_session_id] = TravelGraph(user_name=u_name, user_email=u_email)
     
     # Restore auth data
@@ -359,7 +464,16 @@ def reset_session():
         session['user_name'] = u_name
         session['user_email'] = u_email
         session['is_guest'] = bool(is_guest)
-        
+
+    # Bound the in-process workflow map: sessions are random ids, so a stale
+    # entry can never be reused - dropping the oldest keeps memory finite.
+    try:
+        if len(workflows) > 500:
+            for stale_id in list(workflows.keys())[:-500]:
+                workflows.pop(stale_id, None)
+    except Exception:
+        pass
+
     return jsonify({"status": "success", "message": "Session reset", "session_id": new_session_id})
 
 @app.route('/api/state', methods=['GET'])
@@ -390,12 +504,50 @@ def get_state():
         "attractions": state.get("attractions") or [],
         "selected_attractions": state.get("selected_attractions") or [],
         "accommodations": state.get("accommodations") or [],
+        "selected_accommodation": state.get("selected_accommodation"),
+        "restaurants": state.get("restaurants") or [],
         "weather": state.get("weather_forecast") or [],
         "itinerary": normalize_itinerary_for_client(state.get("itinerary") or []),
         "budget": state.get("budget") or {},
+        # ONE canonical breakdown, identical to what the budget page and the
+        # email use, so a page refresh can never show a different total.
+        "budget_normalized": state.get("budget_normalized") or {},
         "transit_options": state.get("transit_options"),
+        "travel_tips": state.get("travel_tips"),
+        "unscheduled_attractions": state.get("unscheduled_attractions") or [],
+        "provider_status": state.get("provider_status") or {},
+        "current_step": state.get("current_step"),
+        "email_sent": bool(state.get("email_sent")),
     }
     return jsonify({"status": "success", "session_id": session_id, "trip": trip})
+
+
+@app.route('/api/assistant', methods=['GET'])
+def get_assistant_context():
+    """Read the persisted trip state for the floating AI Travel Assistant.
+
+    The assistant must never re-run the LLM pipeline on navigation: every value
+    here is already in the session's workflow state. When there is no trip the
+    endpoint still succeeds with an empty context so the panel can show its
+    idle state instead of erroring.
+    """
+    session_id = session.get('session_id')
+    if not session_id or session_id not in workflows:
+        return jsonify({
+            "status": "success",
+            "session_id": session_id,
+            "context": {"step": None, "trip": None, "has_trip": False,
+                        "conversation": [], "missing_fields": []},
+        })
+    try:
+        context = workflows[session_id].get_assistant_context()
+        history = workflows[session_id].get_conversation_history()
+        context["conversation"] = history
+        context["has_trip"] = bool((context.get("trip") or {}).get("destination"))
+        return jsonify({"status": "success", "session_id": session_id, "context": context})
+    except Exception as e:
+        print(f"[ERROR] assistant context unavailable: {type(e).__name__}: {e}")
+        return jsonify({"status": "error", "message": "Assistant context is temporarily unavailable."}), 500
 
 @app.route('/api/process', methods=['POST'])
 def process():
@@ -445,10 +597,13 @@ def process():
 
         return jsonify(result)
     except Exception as e:
-        import traceback
-        print(f"[ERROR] in process route: {str(e)}")
-        print(f"[ERROR] Traceback: {traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        # The exception text is logged with a correlation reference and never
+        # returned verbatim: it can contain provider responses or PII.
+        return error_response(
+            e, "api/process",
+            fallback="That step could not be completed. Your progress so far is saved - please try again.",
+            extra={"step": (request.json or {}).get('step', 'chat') if request.is_json else None},
+        )
 
 @app.route('/api/destinations', methods=['POST'])
 def recommend_destinations():
@@ -487,27 +642,39 @@ def recommend_destinations():
             
         return jsonify({"status": "success", "destinations": destinations})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return error_response(e, "api/destinations",
+                              fallback="Destination suggestions are unavailable right now. Please try again.")
 
 @app.route('/api/attractions/<city>')
 def get_attractions(city):
     """Get attractions for a specific city"""
     session_id = session.get('session_id')
-    
+
     if not session_id or session_id not in workflows:
-        return jsonify({"error": "Session not found"}), 404
-    
+        return jsonify({"status": "error", "success": False,
+                        "error": "Session not found", "message": "Session not found"}), 404
+
     workflow = workflows[session_id]
-    info_agent = workflow.info_agent
-    
-    attractions = info_agent.get_attractions(city)
+    try:
+        attractions = workflow.info_agent.get_attractions(city)
+    except Exception as e:
+        return error_response(e, "api/attractions",
+                              fallback=f"We could not load attractions for {city} right now.")
     return jsonify(attractions)
 
 @app.route('/api/email', methods=['POST'])
 def send_email_api():
     """Manually trigger itinerary email delivery.
+
+    Requirement 6 hardening:
+      * Recipient is validated on the server (never trust the frontend alone).
+      * The itinerary sent is the *server-side* itinerary for the current
+        session — a client cannot smuggle in another user's plan by tampering
+        with the request body.
+      * In-flight + already-sent guards prevent a double-click (or a
+        malicious retry loop) from sending the same itinerary twice.
+      * Missing SMTP configuration produces an explicit, actionable error
+        rather than a silent False.
 
     Returns a clean JSON contract:
       Success -> {"success": true,  "message": "Itinerary sent successfully"}
@@ -533,7 +700,7 @@ def send_email_api():
             "error": "Please enter a valid email address"
         }), 400
 
-    # ---- Session / workflow ------------------------------------------------
+    # ---- Session / workflow ----------------------------------------------
     session_id = session.get('session_id')
     if not session_id or session_id not in workflows:
         print("[EMAIL] /api/email called with no active session.")
@@ -547,10 +714,52 @@ def send_email_api():
     state = workflow.get_current_state() or {}
     user_info = state.get("user_info", {}) or {}
 
-    # ---- Itinerary (prefer the frontend's latest copy) ---------------------
-    itinerary = data.get("itinerary") or state.get("itinerary")
+    # ---- Authorization: only the owner of the session can send its itinerary.
+    # If an authenticated user is signed in, the itinerary is bound to their
+    # Flask session id; a body-supplied "itinerary" from a different session
+    # therefore cannot be dispatched (defense in depth vs. IDOR).
+    signed_in_email = (session.get('user_email') or '').strip().lower()
+    if signed_in_email and email.lower() != signed_in_email:
+        # Allow sending to the account's own address only. Cross-account
+        # delivery would leak another traveller's plan.
+        print(f"[EMAIL][AUTH] Rejected: signed-in={signed_in_email} requested={email}")
+        return jsonify({
+            "success": False,
+            "message": "Unable to send itinerary",
+            "error": "You can only email your itinerary to the address associated with your account."
+        }), 403
+
+    # ---- Duplicate-send prevention ---------------------------------------
+    # 1) Refuse if we already delivered this exact itinerary in this session.
+    # 2) Refuse if a send is currently in flight (double-click / retry storm).
+    already_sent = bool(state.get("email_sent"))
+    sent_to = (state.get("email_sent_to") or "").lower()
+    in_flight = _EMAIL_INFLIGHT.get(session_id)
+    now = time.time()
+    if in_flight and (now - in_flight) < 30:
+        return jsonify({
+            "success": False,
+            "message": "Unable to send itinerary",
+            "error": "An email is already being sent. Please wait."
+        }), 429
+    if already_sent and sent_to == email.lower():
+        # Idempotent response so the frontend can display a friendly notice
+        # without re-attempting SMTP credentials every click.
+        return jsonify({
+            "success": True,
+            "status": "already_sent",
+            "message": "This itinerary was already sent to that address."
+        }), 200
+    _EMAIL_INFLIGHT[session_id] = now
+
+    # ---- Itinerary -------------------------------------------------------
+    # Server-side is authoritative. The client body value is only consulted
+    # as a fallback for shape/normalisation hints — never as the source of
+    # truth (that would let a caller ship an arbitrary itinerary).
+    itinerary = state.get("itinerary") or data.get("itinerary")
     normalized_days = normalize_itinerary(itinerary)
     if not normalized_days:
+        _EMAIL_INFLIGHT.pop(session_id, None)
         print("[EMAIL][PAYLOAD] /api/email received no usable itinerary.")
         return jsonify({
             "success": False,
@@ -558,11 +767,12 @@ def send_email_api():
             "error": "Itinerary not generated yet"
         }), 400
 
-    budget = data.get("budget") or state.get("budget") or state.get("budget_estimate") or {}
+    budget = state.get("budget") or state.get("budget_estimate") or data.get("budget") or {}
     notes = (data.get("notes") or "").strip()
 
-    # ---- Trip context for a rich email -------------------------------------
+    # ---- Trip context for a rich email -----------------------------------
     accommodation = state.get("selected_accommodation")
+    accommodation_is_selection = bool(accommodation)
     if not accommodation:
         accs = state.get("accommodations") or []
         accommodation = accs[0] if accs else None
@@ -575,9 +785,14 @@ def send_email_api():
         "start_date": user_info.get("start_date") or state.get("start_date"),
         "end_date": state.get("end_date"),
         "accommodation": accommodation,
+        # Tells the email renderer whether this stay was actually chosen by the
+        # traveller or is merely the first recommendation (never say "booked").
+        "accommodation_is_selection": accommodation_is_selection,
         "food": state.get("restaurants") or [],
         "transport": state.get("transit_options"),
         "tips": state.get("travel_tips") or state.get("tips"),
+        "unscheduled": state.get("unscheduled_attractions") or [],
+        "rental_decision_source": state.get("rental_decision_source"),
     }
 
     user_name = user_info.get("name") or "Traveler"
@@ -591,7 +806,21 @@ def send_email_api():
     print(f"[EMAIL] /api/email dispatching to={email} city={city!r} "
           f"itinerary_days={len(normalized_days)}")
 
-    # ---- Send --------------------------------------------------------------
+    # ---- Explicit credential check so the user sees an actionable message ---
+    missing_creds = [k for k in ("MAIL_SERVER", "MAIL_USERNAME")
+                     if not (os.environ.get(k) or "").strip()]
+    if missing_creds:
+        _EMAIL_INFLIGHT.pop(session_id, None)
+        print(f"[EMAIL][CONFIG] Missing environment variables: {missing_creds}")
+        return jsonify({
+            "success": False,
+            "message": "Unable to send itinerary",
+            "error": ("Email delivery is not configured on this server "
+                      f"(missing {', '.join(missing_creds)}). "
+                      "Set them in your .env file and restart.")
+        }), 503
+
+    # ---- Send ------------------------------------------------------------
     try:
         success = send_trip_email(
             email, user_name, city, itinerary, budget, confirmation,
@@ -603,8 +832,22 @@ def send_email_api():
         print(f"[EMAIL][ERROR] Unexpected failure sending to {email}: {exc}")
         traceback.print_exc()
         success = False
+    finally:
+        _EMAIL_INFLIGHT.pop(session_id, None)
 
     if success:
+        # Record the delivery on the workflow state so a page refresh or a
+        # duplicate click cannot trigger a second send for the same recipient.
+        try:
+            workflow.set_state_field("email_sent", True)
+            workflow.set_state_field("email_sent_to", email.lower())
+        except Exception:
+            # Older TravelGraph builds may not expose set_state_field — best-effort.
+            try:
+                state["email_sent"] = True
+                state["email_sent_to"] = email.lower()
+            except Exception:
+                pass
         print(f"[EMAIL][SUCCESS] Itinerary delivered to {email}.")
         return jsonify({
             "success": True,
@@ -616,7 +859,7 @@ def send_email_api():
     return jsonify({
         "success": False,
         "message": "Unable to send itinerary",
-        "error": "We couldn't send the email right now. Please try again."
+        "error": "We couldn't send the email right now. Please check the address and try again, or contact support if the problem continues."
     }), 500
 
 @app.route('/api/stream')
@@ -638,10 +881,12 @@ def stream():
             workflows[session_id] = TravelGraph(user_name=session.get('user_name'), user_email=session.get('user_email'))
             print(f"[DEBUG] Created new TravelGraph for session: {session_id}")
         except Exception as e:
-            print(f"[ERROR] Failed to create TravelGraph: {str(e)}")
+            # The exception text can contain absolute paths or provider detail;
+            # log it here and give the client a generic, safe message instead.
+            print(f"[ERROR] Failed to create TravelGraph: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
-            return Response(f"data: {{\"type\": \"error\", \"error\": \"Failed to initialize workflow: {str(e)}\"}}", mimetype='text/event-stream')
+            return Response('data: {"type": "error", "error": "Failed to initialize workflow. Please refresh and try again."}', mimetype='text/event-stream')
     else:
         print(f"[DEBUG] Reusing existing session: {session_id}")
 
@@ -862,8 +1107,12 @@ def stream():
             print(f"[DEBUG] Final decision: next_step = {final_next_step}, should_rent_car = {workflow.get_current_state().get('should_rent_car', False)}")
             
         except Exception as e:
-            print(f"[ERROR] in stream route: {str(e)}")
-            yield f"data: {{\"type\": \"error\", \"error\": {json.dumps(str(e))} }}\n\n"
+            ref = log_error("api/stream", e)
+            # Same contract as the JSON endpoints: a safe message plus a
+            # reference, never the raw exception text.
+            safe = client_error_message(
+                e, "That step could not be completed. Your progress so far is saved - please try again.")
+            yield f"data: {{\"type\": \"error\", \"error\": {json.dumps(safe)}, \"request_ref\": {json.dumps(ref)} }}\n\n"
     return Response(generate(), mimetype='text/event-stream')
 
 @app.route('/api/nearby/<attraction_id>')
@@ -888,7 +1137,8 @@ def get_nearby_places(attraction_id):
         result = info_agent.search_nearby_places(lat, lng)
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": f"Failed to get nearby places: {str(e)}"}), 500
+        return error_response(e, "api/nearby",
+                              fallback="Nearby places could not be loaded for this stop right now.")
     
 @app.route('/api/attraction-details', methods=['GET'])
 def get_attraction_details_endpoint():
@@ -934,17 +1184,46 @@ def get_attraction_details_endpoint():
         details = get_attraction_details(name=name, lat=lat or None, lng=lng or None, existing_data=existing_data)
         return jsonify(details)
     except Exception as e:
-        import traceback
-        print(f"[ERROR] get_attraction_details_endpoint: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return error_response(e, "api/attraction-details",
+                              fallback=f"Details for {name} are unavailable right now.")
 
 
 if __name__ == '__main__':
     # Create data directory if it doesn't exist
     os.makedirs('data', exist_ok=True)
-    
-    pass
-    
-    # Run the app
-    app.run(host="127.0.0.1", port=8000, debug=True)
+
+    # ── Deployment-aware startup ───────────────────────────────────────────
+    # Everything below is driven by environment variables so the SAME entry
+    # point works for local development and for a production host (Render /
+    # Railway / Fly.io / a container). Defaults preserve the original local
+    # dev behaviour (127.0.0.1:8000, debug on).
+    #   FLASK_DEBUG=0            -> turn off the reloader/debugger
+    #   HOST=0.0.0.0 PORT=8000   -> bind like a PaaS expects
+    #   PRODUCTION=1 (or FLASK_ENV=production)
+    #                            -> serve via Waitress (a real WSGI server)
+    host = os.environ.get("HOST", "127.0.0.1")
+    try:
+        port = int(os.environ.get("PORT", "8000"))
+    except (TypeError, ValueError):
+        port = 8000
+
+    is_production = (
+        os.environ.get("PRODUCTION") == "1"
+        or os.environ.get("FLASK_ENV") == "production"
+    )
+    debug = (os.environ.get("FLASK_DEBUG", "1") == "1") and not is_production
+
+    if is_production:
+        # Waitress is a battle-tested, pure-Python WSGI server that runs the
+        # same on Windows and Linux, so it avoids shipping the Werkzeug
+        # development server (which explicitly warns against production use).
+        try:
+            from waitress import serve
+            print(f"[STARTUP] Serving ExploreX with Waitress on http://{host}:{port}")
+            serve(app, host=host, port=port, threads=int(os.environ.get("WEB_CONCURRENCY", "8")))
+        except ImportError:
+            print("[STARTUP] Waitress not installed; falling back to Flask's server "
+                  "with debug disabled. Run `pip install waitress` for production.")
+            app.run(host=host, port=port, debug=False)
+    else:
+        app.run(host=host, port=port, debug=debug)

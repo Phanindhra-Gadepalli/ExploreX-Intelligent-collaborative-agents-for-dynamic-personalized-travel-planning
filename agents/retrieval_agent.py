@@ -113,13 +113,35 @@ class RetrievalAgent:
         self.persist_directory = persist_directory
         self.embeddings = RetrievalAgent._get_embeddings()
 
-        # Load ChromaDB (India knowledge base)
-        self.vector_db = Chroma(
-            collection_name="travel_knowledge",
-            embedding_function=self.embeddings,
-            persist_directory=self.persist_directory,
-            client_settings=Settings(anonymized_telemetry=False)
-        )
+        # Load ChromaDB (India knowledge base).
+        #
+        # ChromaDB stores its metadata in a version-specific SQLite schema. A
+        # database created by a different ChromaDB major version can fail here
+        # with errors such as "no such column: collections.topic" (a newer DB
+        # opened by an older client) or missing config_json_str (the reverse).
+        # We surface that as a clear, actionable startup error rather than a
+        # raw sqlite3.OperationalError, so the operator knows to rebuild or
+        # align the ChromaDB version instead of guessing.
+        try:
+            self.vector_db = Chroma(
+                collection_name="travel_knowledge",
+                embedding_function=self.embeddings,
+                persist_directory=self.persist_directory,
+                client_settings=Settings(anonymized_telemetry=False)
+            )
+        except Exception as e:  # noqa: BLE001 - re-raised with actionable context
+            msg = str(e).lower()
+            if "collections.topic" in msg or "config_json_str" in msg or "no such column" in msg:
+                raise RuntimeError(
+                    "ChromaDB knowledge base at '{}' is incompatible with the "
+                    "installed ChromaDB version ({}). This happens when the vector "
+                    "database was created by a different ChromaDB version. To repair: "
+                    "(1) back up the folder, (2) remove the incompatible "
+                    "'chroma.sqlite3', and (3) re-ingest with the pinned version by "
+                    "running: python services/document_ingestion.py --rebuild"
+                    .format(self.persist_directory, e)
+                ) from e
+            raise
 
         # In-memory cache for international destination web results
         # Structure: { cache_key: {"result": str, "timestamp": float} }
@@ -418,8 +440,17 @@ class RetrievalAgent:
         Perform a DuckDuckGo text search and return a list of snippet dicts.
         Falls back gracefully if the library is unavailable.
         """
+        DDGS = None
         try:
-            from ddgs import DDGS
+            from ddgs import DDGS  # type: ignore  # modern package name
+        except ImportError:
+            try:
+                from duckduckgo_search import DDGS  # type: ignore  # legacy name
+            except ImportError:
+                print("[WARN] Neither 'ddgs' nor 'duckduckgo_search' is available. "
+                      "Install one with: pip install ddgs")
+                return []
+        try:
             results = []
             with DDGS() as ddgs:
                 for r in ddgs.text(query, max_results=max_results):
@@ -429,9 +460,6 @@ class RetrievalAgent:
                         "href": r.get("href", ""),
                     })
             return results
-        except ImportError:
-            print("[WARN] ddgs library not available. Install it with: pip install ddgs")
-            return []
         except Exception as e:
             print(f"[WARN] DuckDuckGo search failed for query '{query}': {e}")
             return []

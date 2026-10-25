@@ -1001,6 +1001,10 @@ a.rag-chip:hover { transform: translateY(-1px); box-shadow: var(--shadow-xs); co
 }
 
 .budget-legend { flex-grow: 1; }
+
+/* Wrap-up / travel tips sits BELOW the chart+legend row (it used to be a third
+   flex child of .budget-container, which put the greetings beside the money). */
+.budget-closing { display: block; width: 100%; margin-top: 1.75rem; }
 .legend-item {
     display: flex; justify-content: space-between; align-items: center;
     padding: .85rem 0;
@@ -1140,6 +1144,135 @@ a:hover { color: var(--accent-hover); }
 
 /* Budget glass panel */
 .budget-glass-wrap { background: rgba(255,255,255,.84); backdrop-filter: blur(16px); border-radius: var(--radius-xl); border: 1px solid var(--border); box-shadow: var(--shadow-md); padding: 2.5rem; }
+
+/* ── 29b. TRAVEL ASSISTANT PANEL (persistent, left rail) ─────────────────── */
+/* Requirement 7: one assistant surface that follows the traveller across every
+   trip page. It is position:fixed so switching tabs cannot unmount it, and it
+   renders straight off the server-side session state. */
+.assistant-panel {
+    position: fixed;
+    left: 1rem;
+    top: calc(var(--nav-height) + 14px);
+    width: 320px;
+    max-height: calc(100vh - var(--nav-height) - 34px);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    z-index: 1045;
+    overflow: hidden;
+    transform: translateX(calc(-100% - 2rem));
+    opacity: 0;
+    pointer-events: none;
+    transition: transform .35s var(--ease-out), opacity .25s var(--ease-out);
+}
+.assistant-panel.is-visible {
+    transform: none;
+    opacity: 1;
+    pointer-events: auto;
+}
+.assistant-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    padding: .85rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--grad-sky-soft);
+}
+.assistant-panel-title {
+    font-weight: 800;
+    font-size: .95rem;
+    color: var(--text-main);
+    letter-spacing: -.01em;
+}
+.assistant-panel-title i { color: var(--accent); }
+.assistant-panel-icon-btn {
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    border-radius: var(--radius-pill);
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: .75rem;
+    cursor: pointer;
+}
+.assistant-panel-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.assistant-panel-body {
+    padding: 1rem;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    font-size: .86rem;
+    color: var(--text-secondary);
+}
+.assistant-panel-footer { padding: .75rem 1rem; border-top: 1px solid var(--border); background: var(--bg-alt); }
+.assistant-state { text-align: center; padding: 1.5rem .5rem; color: var(--text-muted); }
+.assistant-error { color: var(--critical); }
+.assistant-section { margin-bottom: 1rem; }
+.assistant-section:last-child { margin-bottom: 0; }
+.assistant-section-title {
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-weight: 800;
+    color: var(--text-muted);
+    margin-bottom: .4rem;
+}
+.assistant-kv { display: flex; justify-content: space-between; gap: .5rem; padding: .18rem 0; }
+.assistant-kv span:first-child { color: var(--text-muted); }
+.assistant-kv span:last-child { color: var(--text-main); font-weight: 600; text-align: right; }
+.assistant-chip {
+    display: inline-block;
+    background: var(--sky-100);
+    color: var(--accent-hover);
+    border-radius: var(--radius-pill);
+    padding: .1rem .55rem;
+    font-size: .72rem;
+    font-weight: 700;
+    margin: 0 .25rem .25rem 0;
+}
+.assistant-chip.is-warn { background: #FEF3C7; color: #92400E; }
+.assistant-list { list-style: none; margin: 0; padding: 0; }
+.assistant-list li { padding: .2rem 0; border-bottom: 1px dashed var(--border); }
+.assistant-list li:last-child { border-bottom: 0; }
+.assistant-panel-open {
+    position: fixed;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 44px; height: 44px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--accent);
+    box-shadow: var(--shadow-soft);
+    z-index: 1044;
+    cursor: pointer;
+}
+.assistant-panel-open:hover { background: var(--accent); color: #fff; }
+
+/* Two-column layout on desktop: the rail owns the left gutter, the page keeps
+   its own layout to the right of it. Below 1200px it becomes an off-canvas
+   drawer so nothing is squeezed. */
+@media (min-width: 1200px) {
+    body.assistant-visible .app-container { padding-left: 352px; }
+}
+@media (max-width: 1199.98px) {
+    .assistant-panel { width: min(340px, 88vw); }
+    body.assistant-backdrop::after {
+        content: "";
+        position: fixed; inset: 0;
+        background: rgba(15,23,42,.35);
+        z-index: 1040;
+    }
+}
+@media (max-width: 768px) {
+    .assistant-panel { top: auto; bottom: 0; left: 0; width: 100vw; max-height: 62vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; transform: translateY(105%); }
+    .assistant-panel.is-visible { transform: none; }
+    .assistant-panel-open { left: auto; right: 1rem; top: auto; bottom: 1rem; transform: none; }
+}
 
 /* ── 29. RESPONSIVE ───────────────────────────────────────────────────────── */
 @media (max-width: 1199.98px) {

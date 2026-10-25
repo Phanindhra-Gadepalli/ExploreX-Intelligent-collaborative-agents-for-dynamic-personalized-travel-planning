@@ -13,16 +13,16 @@ class POILocation(BaseModel):
     lng: float
 
 class POIExtraction(BaseModel):
-    id: str
+    id: str = ""
     name: str
     rating: float = 4.5
     user_ratings_total: int = 100
     price_level: int = 2
-    address: str
+    address: str = ""
     location: POILocation
     category: str = "tourist_attraction"
     types: List[str] = ["tourist_attraction"]
-    description: str
+    description: str = ""
     source: str = "rag_extraction"
 
 class POIExtractionList(BaseModel):
@@ -31,6 +31,7 @@ class POIExtractionList(BaseModel):
 class RecommendAgent:
     def __init__(self, model_name="gemini-flash-lite-latest"):
         """Initialize RecommendAgent with AI model for personalized recommendations"""
+        self.model_name = model_name
         self.model = ChatGoogleGenerativeAI(model=model_name, temperature=0.7)
         try:
             from sentence_transformers import SentenceTransformer
@@ -379,16 +380,49 @@ class RecommendAgent:
         
         pois = []
         try:
-            structured_llm = self.model.with_structured_output(POIExtractionList)
-            try:
-                response = structured_llm.invoke([HumanMessage(content=prompt)])
-                pois = [p.dict() for p in response.pois]
-            except Exception as e:
-                print(f"[RECOMMEND_AGENT] Structured output failed: {e}. Retrying once...")
-                response = structured_llm.invoke([HumanMessage(content=prompt)])
-                pois = [p.dict() for p in response.pois]
+            # The installed google-genai converter cannot express array fields
+            # inside a Gemini function declaration (it omits `items`, producing
+            # "properties[pois].items: missing field"), so with_structured_output
+            # fails for any schema that contains a list. Native JSON mode
+            # (response_mime_type=application/json + response_schema) accepts the
+            # same schema reliably, so we use it here and parse the returned JSON
+            # into the Pydantic model ourselves.
+            json_model = ChatGoogleGenerativeAI(
+                model=self.model_name,
+                temperature=0,
+                model_kwargs={
+                    "response_mime_type": "application/json",
+                    "response_schema": POIExtractionList,
+                },
+            )
+            raw = json_model.invoke([HumanMessage(content=prompt)]).content
+            if isinstance(raw, list):  # some versions return multimodal parts
+                raw = "".join(
+                    part.get("text", "") for part in raw
+                    if isinstance(part, dict) and "text" in part
+                )
+            text = (raw or "").strip()
+            # Strip markdown code fences (```json ... ```) if present.
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+            data = json.loads(text)
+            items = data.get("pois", []) if isinstance(data, dict) else data
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                loc = item.get("location")
+                if not isinstance(loc, dict) or loc.get("lat") is None or loc.get("lng") is None:
+                    continue  # skip POIs the route/map cannot place
+                try:
+                    pois.append(POIExtraction(**item).dict())
+                except Exception:
+                    continue
         except Exception as e2:
-            print(f"[RECOMMEND_AGENT] Structured output failed: {e2}. Falling back to empty list.")
+            print(f"[RECOMMEND_AGENT] RAG POI extraction failed (non-fatal): {e2}. Falling back to empty list.")
             pois = []
 
         if isinstance(pois, list):

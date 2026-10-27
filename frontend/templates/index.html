@@ -256,36 +256,6 @@
 
         <!-- 4. EXPLORE / PERSONALIZATION -->
         <section id="view-explore" class="view-section">
-            <div class="row mb-5">
-                <div class="col-md-12 glass p-4 rounded-4">
-                    <h3 class="Bricolage mb-1">What are you interested in?</h3>
-                    <p class="text-secondary mb-4">Select your interests to get personalized recommendations</p>
-                    
-                    <div class="interest-grid" id="interest-chips">
-                        <div class="interest-chip" id="interest-chip-history" data-interest="History" data-testid="interest-chip-history"><i class="fas fa-landmark text-warning"></i> History</div>
-                        <div class="interest-chip" data-interest="Architecture" data-testid="interest-chip-architecture"><i class="fas fa-building text-danger"></i> Architecture</div>
-                        <div class="interest-chip selected" data-interest="Food" data-testid="interest-chip-food"><i class="fas fa-utensils text-primary"></i> Food</div>
-                        <div class="interest-chip selected" data-interest="Photography" data-testid="interest-chip-photography"><i class="fas fa-camera text-info"></i> Photography</div>
-                        <div class="interest-chip" data-interest="Nature" data-testid="interest-chip-nature"><i class="fas fa-leaf text-success"></i> Nature</div>
-                        <div class="interest-chip" data-interest="Adventure" data-testid="interest-chip-adventure"><i class="fas fa-hiking text-danger"></i> Adventure</div>
-                        <div class="interest-chip" data-interest="Shopping" data-testid="interest-chip-shopping"><i class="fas fa-shopping-bag text-warning"></i> Shopping</div>
-                        <div class="interest-chip" data-interest="Spiritual" data-testid="interest-chip-spiritual"><i class="fas fa-om text-secondary"></i> Spiritual</div>
-                        <div class="interest-chip" data-interest="Art & Culture" data-testid="interest-chip-art-culture"><i class="fas fa-palette text-warning"></i> Art & Culture</div>
-                        <div class="interest-chip" data-interest="Nightlife" data-testid="interest-chip-nightlife"><i class="fas fa-glass-martini-alt text-purple"></i> Nightlife</div>
-                        <div class="interest-chip" data-interest="Family Friendly" data-testid="interest-chip-family-friendly"><i class="fas fa-child text-primary"></i> Family Friendly</div>
-                        <div class="interest-chip" data-interest="Offbeat" data-testid="interest-chip-offbeat"><i class="fas fa-map-signs text-success"></i> Offbeat</div>
-                    </div>
-                    
-                    <div class="slider-container mt-4">
-                        <label class="d-flex justify-content-between text-secondary small fw-bold mb-2">
-                            <span>Adjust your interest weight (optional)</span>
-                            <span id="weight-val">80%</span>
-                        </label>
-                        <input type="range" class="form-range" min="0" max="100" value="80" id="interest-weight" data-testid="interest-weight">
-                    </div>
-                </div>
-            </div>
-
             <div class="d-flex justify-content-between align-items-end mb-4">
                 <div>
                     <h3 class="Bricolage mb-1">Top Destinations For You</h3>
@@ -501,6 +471,9 @@
                                 <span id="modal-hours-value"></span>
                             </div>
                             <div id="modal-links" class="d-flex gap-2 flex-wrap mt-2"></div>
+                            <!-- Populated on demand by the "Nearby Eats" button. Distances come from
+                                 the attraction and eatery coordinates returned by /api/nearby. -->
+                            <div id="modal-nearby" class="mt-3 d-none" data-testid="nearby-eats-panel" aria-live="polite"></div>
                         </div>
 
                         <div class="d-flex gap-2">

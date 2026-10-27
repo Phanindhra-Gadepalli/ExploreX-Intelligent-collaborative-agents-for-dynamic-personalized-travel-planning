@@ -24,6 +24,8 @@ import requests
 import unicodedata
 from typing import Optional, Dict, Any
 
+from services.attraction_images import get_image_resolver, normalize_image_url
+
 # ---------------------------------------------------------------------------
 # In-memory cache  {cache_key: {data: {...}, ts: float}}
 # ---------------------------------------------------------------------------
@@ -176,8 +178,9 @@ def _extract_wikidata_fields(wiki_data: Dict) -> Dict:
 
     # Thumbnail image (use as fallback only)
     thumbnail = wiki_data.get('thumbnail', {})
-    if thumbnail.get('source'):
-        result['wiki_thumbnail'] = thumbnail['source']
+    normalized_thumb = normalize_image_url((thumbnail or {}).get('source'))
+    if normalized_thumb:
+        result['wiki_thumbnail'] = normalized_thumb
 
     # Wikipedia page link
     page_url = wiki_data.get('content_urls', {}).get('desktop', {}).get('page')
@@ -241,6 +244,21 @@ def get_attraction_details(
                     result['description'] = v
             else:
                 result.setdefault(k, v)
+
+        # A verified image may already exist from the provider/enrichment pass.
+        # Otherwise ask the shared resolver (cached, throttled) rather than
+        # borrowing an unrelated photo.
+        if not normalize_image_url(result.get('image_url')) \
+                and not normalize_image_url(result.get('wiki_thumbnail')):
+            try:
+                poi = {'name': name, 'latitude': lat, 'longitude': lng}
+                if existing_data and isinstance(existing_data, dict):
+                    poi['city'] = existing_data.get('city') or existing_data.get('state_city')
+                image = get_image_resolver().resolve(poi, city=poi.get('city'))
+                if image:
+                    result['image_url'] = image
+            except Exception as exc:
+                print(f"[ATTRACTION_DETAILS] Image resolution failed: {type(exc).__name__}")
         return result
 
     # 1. Check in-memory cache (stores Wikipedia-only enrichment)

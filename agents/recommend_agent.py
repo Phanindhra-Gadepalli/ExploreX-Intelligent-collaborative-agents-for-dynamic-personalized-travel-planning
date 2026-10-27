@@ -4,10 +4,10 @@ from typing import List, Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-# langchain_google_genai only recognises langchain_core.pydantic_v1.BaseModel
-# schemas in convert_to_genai_function_declarations; a pydantic v2 model falls
-# through to the callable branch and raises "Value not declarable with JSON Schema".
-from langchain_core.pydantic_v1 import BaseModel, Field
+# langchain-google-genai 2.x converts pydantic v2 schemas for Gemini function
+# declarations. The old langchain_core.pydantic_v1 shim is deprecated in
+# langchain-core 0.3 and removed in 1.0, so use the native v2 models.
+from pydantic import BaseModel, Field
 
 from services.structured_parse import records_from_text, clamp_rating, clamp_int, clean_name
 from services.interest_match import match_interests
@@ -238,7 +238,8 @@ class RecommendAgent:
             score += popularity_score
             
             # 3. Category/Direct Match Bonus (20% weight)
-            if attraction.get('category') and attraction.get('category').lower() in hobbies:
+            category = str(attraction.get('category') or '').lower()
+            if category and category in hobbies:
                 score += 20.0
                 
             # 4. Location Context (10% weight)
@@ -265,18 +266,31 @@ class RecommendAgent:
             # into a "photography" match. These labels mirror the workflow's
             # canonical values (interest_based / outside_interests / discovery).
             matched, _reasons = match_interests(attr, user_prefs or {})
+            metadata = attr.get('metadata') if isinstance(attr.get('metadata'), dict) else {}
+            notable = bool(
+                attr.get('source') == 'wikipedia'
+                or attr.get('wikipedia_url')
+                or metadata.get('wikidata_id')
+                or attr.get('wikidata_id')
+            )
             if matched:
                 attr['recommendation_type'] = 'interest_based'
-            elif str((user_prefs or {}).get('hobbies') or '').strip():
-                attr['recommendation_type'] = 'outside_interests'
-            else:
+            elif not str((user_prefs or {}).get('hobbies') or '').strip():
                 attr['recommendation_type'] = 'discovery'
+            elif notable:
+                # Verifiable notable places broaden the trip honestly instead
+                # of being discarded as "outside interests".
+                attr['recommendation_type'] = 'discovery'
+            else:
+                attr['recommendation_type'] = 'outside_interests'
                 
             final_attractions.append(attr)
             seen_ids.add(attr['id'])
             
-        # Return top 50 recommendations to give a mix
-        return final_attractions[:50]
+        # Return the full ranked set.  Breadth is bounded by the duration-aware
+        # discovery target upstream; an extra top-50 cut here silently removed
+        # verified attractions from the Explore grid.
+        return final_attractions
     
     def _create_recommendation_prompt(self, user_prefs, attractions, retrieved_knowledge=None):
         """Create prompt for the LLM to rank attractions"""

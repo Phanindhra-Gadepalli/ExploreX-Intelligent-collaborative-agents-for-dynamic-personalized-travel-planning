@@ -1,6 +1,6 @@
 """
 Diagnostic: run just the CHAT step in-process to surface the real exception.
-Usage:  .venv311\Scripts\python.exe diag_chat_step.py
+Usage:  .venv313\Scripts\python.exe diag_chat_step.py
 """
 import sys, io, traceback, json, os
 

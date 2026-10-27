@@ -4,9 +4,18 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 import json
 from typing import Generator, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from services.chat_extract import (
+    extract_trip_fields,
+    has_value,
+    merge_missing,
+    is_valid_tool_name,
+)
 
 class TravelState(BaseModel):
+    """The trip details ExploreX collects before it can plan anything."""
+
     name: Optional[str] = Field(default=None, description="User's name")
     origin_city: Optional[str] = Field(default=None, description="The city the user is starting their journey from")
     city: Optional[str] = Field(default=None, description="Destination city, state, or country anywhere in the world (e.g., 'Goa', 'Kerala', 'Paris', 'Tokyo', 'Dubai', 'Singapore', 'Rajasthan')")
@@ -38,13 +47,26 @@ class TravelState(BaseModel):
 
     @staticmethod
     def _json_schema_extra(schema: dict):
-        schema.pop("title", None)
+        """Strip redundant per-property titles, but KEEP the root title.
+
+        langchain-core derives the OpenAI/Gemini tool function name from
+        ``schema["title"]``. The previous version popped it, so
+        ``with_structured_output(TravelState)`` produced a function declaration
+        with ``name=""`` and every extraction failed with:
+
+            400 GenerateContentRequest.tools[0].function_declarations[0].name:
+                Invalid function name. Must start with a letter or an underscore.
+
+        The empty name is what made ExploreX re-ask for information the user
+        had already given (nothing was ever extracted or persisted).
+        """
         for prop in schema.get("properties", {}).values():
             prop.pop("title", None)
 
-    model_config = {
-        "json_schema_extra": _json_schema_extra
-    }
+    model_config = ConfigDict(
+        title="TravelState",
+        json_schema_extra=_json_schema_extra,
+    )
 
 class ChatAgent:
     def __init__(self, model_name="gemini-flash-lite-latest"):
@@ -53,6 +75,14 @@ class ChatAgent:
         # Use a non-streaming model for structured output
         self.extractor_model = ChatGoogleGenerativeAI(model=model_name, temperature=0)
         self.structured_extractor = self.extractor_model.with_structured_output(TravelState)
+        self.tool_function_name = None
+        # Fail loudly (and degrade gracefully) instead of silently looping if a
+        # future langchain/schema change produces an invalid tool name again.
+        self.extractor_error = self._validate_extractor_tool_name()
+        if self.extractor_error:
+            # Keep the object, but never call it: an invalid declaration would
+            # only produce another HTTP 400 on every single turn.
+            self.structured_extractor = None
         
         # Define required fields (these must be filled)
         # budget OR budget_amount must be present — checked by _has_budget()
@@ -60,6 +90,89 @@ class ChatAgent:
         # Define all fields, including optional ones
         self.all_fields = self.required_fields + ["budget_amount", "budget_strictness", "specificRequirements"]
         self.conversation_history = []
+
+    _BUDGET_CATEGORIES = ("low", "medium", "high")
+
+    def _validate_extractor_tool_name(self):
+        """Verify the Gemini function-declaration name for ``TravelState``.
+
+        langchain-core derives the tool name from the JSON schema title. When
+        that title is missing the name becomes ``""`` and Gemini rejects the
+        whole request with HTTP 400, which used to be swallowed as "extraction
+        failed" and caused ExploreX to re-ask the same questions forever.
+
+        Returns ``None`` when the declaration is usable, otherwise a short
+        reason string. The reason is deliberately provider-safe (no keys, no
+        request bodies) so it can be logged and surfaced in diagnostics.
+        """
+        try:
+            from langchain_core.utils.function_calling import convert_to_openai_tool
+
+            tool = convert_to_openai_tool(TravelState)
+            name = ((tool or {}).get("function") or {}).get("name")
+            self.tool_function_name = name
+            if not is_valid_tool_name(name):
+                print(
+                    f"[ERROR] Structured extractor function name {name!r} is invalid "
+                    f"for Gemini (must match ^[A-Za-z_][A-Za-z0-9_.:-]{{0,127}}$). "
+                    f"Deterministic extraction will be used until this is fixed."
+                )
+                return f"invalid function name: {name!r}"
+            print(f"[DEBUG] Structured extractor function name: {name!r}")
+            return None
+        except Exception as e:
+            # A schema-to-tool conversion failure is just as fatal for the
+            # primary path, so record it and let the fallback take over.
+            self.tool_function_name = None
+            print(f"[ERROR] Could not derive structured extractor function name: {e}")
+            return f"function name derivation failed: {e}"
+
+    def _sanitize_extracted(self, payload: dict, allowed) -> dict:
+        """Validate extractor output before it is merged into the trip state.
+
+        A malformed or hallucinated value must never corrupt persisted state
+        (for example ``days = "a few"`` or ``budget = "unlimited"``). Invalid
+        values are logged and dropped; the deterministic parser can still fill
+        the field from the user's own wording.
+        """
+        clean = {}
+        for field, value in (payload or {}).items():
+            if field not in allowed or not has_value(value):
+                continue
+
+            if field in ("days", "people", "kids", "budget_amount"):
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    print(f"[WARN] Ignoring non-numeric extraction {field}={value!r}")
+                    continue
+                if field in ("days", "people") and number <= 0:
+                    print(f"[WARN] Ignoring non-positive extraction {field}={value!r}")
+                    continue
+                if field in ("kids", "budget_amount") and number < 0:
+                    print(f"[WARN] Ignoring negative extraction {field}={value!r}")
+                    continue
+                if field == "budget_amount" and number == 0:
+                    continue
+                clean[field] = number
+                continue
+
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    continue
+                if field == "budget":
+                    value = value.lower()
+                    if value not in self._BUDGET_CATEGORIES:
+                        print(f"[WARN] Ignoring unknown budget category {value!r}")
+                        continue
+                elif field == "budget_strictness":
+                    value = value.lower()
+                    if value not in ("strict", "flexible"):
+                        print(f"[WARN] Ignoring unknown budget strictness {value!r}")
+                        continue
+            clean[field] = value
+        return clean
 
     def _extract_text(self, content) -> str:
         """Extract plain text from Gemini response content (str or list of dicts)."""
@@ -148,7 +261,6 @@ class ChatAgent:
             # being frozen forever. The extractor is instructed to return a value
             # ONLY when the user explicitly states/changes it, so unchanged fields
             # come back as None and are left untouched.
-            missing_current = [f for f in self.required_fields if not self.is_valid_field(f, state.get(f))]
             fields_to_extract = list(dict.fromkeys(
                 self.required_fields + ["budget_amount", "budget_strictness"]
             ))
@@ -189,47 +301,96 @@ class ChatAgent:
                     f"Conversation Context:\n{context_str}"
                 )
                 
-                try:
-                    print(f"[DEBUG] Invoking structured_extractor...")
-                    # Pass timeout in config instead of using ThreadPoolExecutor
+                extracted_dict = {}
+                applied_deterministic = {}
+
+                if self.structured_extractor is None:
+                    print(
+                        f"[WARN] Structured extractor unavailable "
+                        f"({self.extractor_error}); using deterministic extraction"
+                    )
+                else:
                     try:
+                        print(f"[DEBUG] Invoking structured_extractor...")
+                        # Pass timeout in config instead of using ThreadPoolExecutor
                         extracted_data = self.structured_extractor.invoke(
-                            extraction_prompt, 
-                            config={"timeout": 15}
+                            extraction_prompt,
+                            config={"timeout": 15},
                         )
                     except Exception as e:
-                        print(f"[WARN] Structured extraction timed out or failed: {e} — skipping extraction")
+                        # Never suppress this: log the provider error, then
+                        # recover the details deterministically below.
+                        import traceback
+                        print(f"[ERROR] Structured extraction failed: {e}")
+                        traceback.print_exc()
                         extracted_data = None
-                    if extracted_data is not None:
-                        print(f"[DEBUG] structured_extractor returned: {type(extracted_data)}")
-                        extracted_dict = extracted_data.model_dump(exclude_none=True)
-                        print(f"[DEBUG] extracted_dict: {extracted_dict}")
-                        for field, value in extracted_dict.items():
-                            # Update any field the user explicitly stated or changed
-                            # this turn (extracted_dict already excludes None values).
-                            if field in fields_to_extract:
+
+                    if extracted_data is None:
+                        print(
+                            "[WARN] Structured extraction returned no object; "
+                            "using deterministic extraction"
+                        )
+                    else:
+                        try:
+                            if isinstance(extracted_data, TravelState):
+                                payload = extracted_data.model_dump(exclude_none=True)
+                            elif isinstance(extracted_data, dict):
+                                payload = TravelState.model_validate(
+                                    extracted_data
+                                ).model_dump(exclude_none=True)
+                            else:
+                                raise TypeError(
+                                    f"unexpected extractor return type "
+                                    f"{type(extracted_data).__name__}"
+                                )
+
+                            extracted_dict = self._sanitize_extracted(
+                                payload, fields_to_extract
+                            )
+                            print(f"[DEBUG] extracted_dict: {extracted_dict}")
+                            # The LLM is authoritative for explicit updates, so it
+                            # may overwrite an earlier value when the user changes it.
+                            for field, value in extracted_dict.items():
                                 state[field] = value
                                 print(f"Updated state: {field} = {value}")
+                        except Exception as e:
+                            import traceback
+                            print(f"[ERROR] Extracted object failed validation: {e}")
+                            traceback.print_exc()
+                            extracted_dict = {}
 
-                        # Normalize the budget category from a numeric amount, unless
-                        # the user explicitly gave a category (low/medium/high/luxury)
-                        # in this same turn — in which case their wording wins.
-                        if state.get("budget_amount") and "budget" not in extracted_dict:
-                            try:
-                                amt = int(state["budget_amount"])
-                                if amt <= 30000:
-                                    state["budget"] = "low"
-                                elif amt <= 100000:
-                                    state["budget"] = "medium"
-                                else:
-                                    state["budget"] = "high"
-                                print(f"Normalized budget category to '{state['budget']}' based on amount {amt}")
-                            except (ValueError, TypeError):
-                                pass
-                except Exception as e:
-                    import traceback
-                    print(f"[ERROR] Structured extraction failed: {e}")
-                    traceback.print_exc()
+                # Deterministic safety net: recover explicit details from the
+                # user's own message without a second model call. This only
+                # fills fields that are still empty, so a successful LLM
+                # extraction (including an intentional update) always wins.
+                deterministic = extract_trip_fields(user_input, current=state)
+                applied_deterministic = merge_missing(
+                    state, deterministic, keys=fields_to_extract
+                )
+                if applied_deterministic:
+                    print(
+                        f"[DEBUG] Deterministic fallback filled: "
+                        f"{sorted(applied_deterministic)}"
+                    )
+
+                # Derive a budget category from a numeric amount, unless the
+                # user explicitly gave a category (low/medium/high/luxury) in
+                # this same turn — in which case their wording wins.
+                category_given_now = (
+                    "budget" in extracted_dict or "budget" in applied_deterministic
+                )
+                if state.get("budget_amount") and not category_given_now:
+                    try:
+                        amt = int(state["budget_amount"])
+                        if amt <= 30000:
+                            state["budget"] = "low"
+                        elif amt <= 100000:
+                            state["budget"] = "medium"
+                        else:
+                            state["budget"] = "high"
+                        print(f"Normalized budget category to '{state['budget']}' based on amount {amt}")
+                    except (ValueError, TypeError):
+                        pass
 
 
         # Add user input to conversation if not empty

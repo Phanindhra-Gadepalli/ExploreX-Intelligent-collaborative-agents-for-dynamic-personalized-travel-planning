@@ -701,7 +701,11 @@ class TravelGraph:
             _days_int = int(str(user_days_str or 5).split('-')[0])
         except (TypeError, ValueError):
             _days_int = 5
-        discovery_target = max(30, min(120, _days_int * 6))
+        # Discovery breadth scales with the trip: 60 candidates for a 5-day
+        # trip, up to 180 for a long multi-region itinerary. This is a
+        # latency guard, not a recommendation cap - selection remains the
+        # user's.
+        discovery_target = max(60, min(180, _days_int * 12))
 
         # Give the agents the resolved scope so later stages never geocode a
         # bare POI name against the wrong city.
@@ -1002,7 +1006,8 @@ class TravelGraph:
                 return {
                     "next_step": "strategy",
                     "stream": transition_generator(),
-                    "selected_attractions": selected_attractions
+                    "selected_attractions": selected_attractions,
+                    "state": self.state.copy(),
                 }
             
             # Check if we have selected_attraction_ids provided
@@ -1045,7 +1050,8 @@ class TravelGraph:
                         "stream": validation_msg(),
                         "validation_warning": True,
                         "required_count": required,
-                        "selected_count": len(selected_attractions)
+                        "selected_count": len(selected_attractions),
+                        "state": self.state.copy(),
                     }
                 
                 # Create a generator that yields a transition message
@@ -1055,7 +1061,8 @@ class TravelGraph:
                 return {
                     "next_step": "strategy",
                     "stream": transition_generator(),
-                    "selected_attractions": selected_attractions
+                    "selected_attractions": selected_attractions,
+                    "state": self.state.copy(),
                 }
             else:
                 # Recommend attractions to the user
@@ -1068,7 +1075,8 @@ class TravelGraph:
                         "response": "No attractions available for recommendation.",
                         "recommended_attractions": [],
                         "accommodations": [],
-                        "map_data": []
+                        "map_data": [],
+                        "state": self.state.copy(),
                     }
                 
                 # CRITICAL FIX: InformationAgent._rerank_attractions_with_llm() already:
@@ -1079,18 +1087,25 @@ class TravelGraph:
                 # that discards the correct interest matching. Use state attractions directly.
                 
                 # Apply lightweight fallback classification for any POIs missing recommendation_type
-                hobbies = user_prefs.get('hobbies', '').lower()
+                hobbies = str(user_prefs.get('hobbies') or '').lower()
                 for attr in attractions:
                     if 'recommendation_type' not in attr:
                         # Apply heuristic from InformationAgent
                         matched = self.info_agent._heuristic_interest_match(attr, user_prefs)
                         attr['matched_interests'] = matched
+                        metadata = attr.get('metadata') if isinstance(attr.get('metadata'), dict) else {}
+                        notable = bool(
+                            attr.get('source') == 'wikipedia'
+                            or attr.get('wikipedia_url')
+                            or metadata.get('wikidata_id')
+                            or attr.get('wikidata_id')
+                        )
                         if matched:
                             attr['recommendation_type'] = 'interest_based'
-                        elif hobbies:
-                            attr['recommendation_type'] = 'outside_interests'
-                        else:
+                        elif not hobbies or notable:
                             attr['recommendation_type'] = 'discovery'
+                        else:
+                            attr['recommendation_type'] = 'outside_interests'
 
                 recommended = attractions  # Already ranked and labelled by InformationAgent
 
@@ -1119,7 +1134,8 @@ class TravelGraph:
                     "recommended_attractions": recommended,
                     "accommodations": self.state.get("accommodations", []),
                     "restaurants": self.state.get("restaurants", []),
-                    "map_data": self.recommend_agent.generate_map_data(recommended)
+                    "map_data": self.recommend_agent.generate_map_data(recommended),
+                    "state": self.state.copy(),
                 }
         except Exception as e:
             print(f"Error in _process_recommend: {str(e)}")
@@ -1127,7 +1143,8 @@ class TravelGraph:
                 "next_step": "error",
                 "stream": None,
                 "response": "An error occurred while processing recommendations.",
-                "error": str(e)
+                "error": str(e),
+                "state": self.state.copy(),
             }
     
     # ------------------------------------------------------------------

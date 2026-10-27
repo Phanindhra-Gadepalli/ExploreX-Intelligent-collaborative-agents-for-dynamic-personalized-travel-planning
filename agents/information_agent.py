@@ -31,6 +31,7 @@ from services.interest_match import (
     match_interests as _match_interests,
     normalize_interests,
 )
+from services.attraction_images import enrich_poi_images, normalize_image_url
 from services.destination_resolver import (
     resolve_destination,
     validate_point_for_scope,
@@ -105,6 +106,8 @@ class InformationAgent:
 
         self.weather_summary_writer = self.llm 
         self.llm_rerank_cache = {}
+        self.last_discovery_status = {}
+        self.last_image_status = {"state": "idle"}
 
     def _get_rerank_cache_key(self, user_prefs, attractions_ids_tuple, weather_summary):
         """Generate a cache key for LLM re-ranking based on user preferences, attraction IDs, and weather."""
@@ -226,6 +229,10 @@ class InformationAgent:
             quality_points += 6.0
         if attr.get("source") in ("geoapify", "google", "rag", "web_rag", "openstreetmap", "overpass"):
             quality_points += 2.0
+        if attr.get("source") == "wikipedia" or attr.get("wikipedia_url"):
+            # A Wikipedia article is verifiable notability, not a popularity
+            # estimate. It outranks an unmapped-by-anyone OSM node.
+            quality_points += 4.0
         if attr.get("description") and len(str(attr["description"])) > 20:
             quality_points += 4.0
         quality_points = min(20.0, quality_points)
@@ -332,10 +339,23 @@ class InformationAgent:
             # The model's "tourist_value" is advisory only and cannot rescue a
             # genuine interest mismatch; _calculate_score already clamps the
             # whole LLM contribution to 10 points.
+            metadata = attr.get("metadata") if isinstance(attr.get("metadata"), dict) else {}
+            notable = bool(
+                attr.get("source") == "wikipedia"
+                or attr.get("wikipedia_url")
+                or metadata.get("wikidata_id")
+                or attr.get("wikidata_id")
+            )
             if not requested_interests:
                 attr["recommendation_type"] = "discovery"
             elif matched_groups:
                 attr["recommendation_type"] = "interest_based"
+            elif notable:
+                # A verifiable notable place that does not match a hobby is a
+                # legitimate *discovery* recommendation, not a discarded
+                # "outside_interests" record.  This keeps the Explore grid
+                # diverse without misrepresenting the interest match.
+                attr["recommendation_type"] = "discovery"
             else:
                 attr["recommendation_type"] = "outside_interests"
             scored_attractions.append(attr)
@@ -349,10 +369,11 @@ class InformationAgent:
         # If we filtered everything, fallback to original but limit damage
         if not final_list:
             final_list = scored_attractions
-            
-        # Limit to top 50 attractions as requested
-        final_list = final_list[:50]
-            
+
+        # No arbitrary top-50 truncation.  Discovery breadth is set by the
+        # caller's duration-aware target; ranking must not silently throw away
+        # verified places (a 5-day Kerala trip lost two thirds of its pool
+        # here before).
         print(f"[INFO_AGENT_LLM] Re-ranked list size: {len(final_list)}")
         
         # 5. Print a quick debug summary
@@ -535,9 +556,18 @@ class InformationAgent:
         """
         hobbies = user_prefs.get('hobbies') if user_prefs else None
         
-        initial_pois = self.poi_manager.get_attractions(lat, lng, radius, hobbies, poi_type)
+        initial_pois = self.poi_manager.get_attractions(
+            lat, lng, radius, hobbies, poi_type, city=(user_prefs or {}).get('city')
+        )
         
-        duration_days = int(user_prefs.get('duration_days', 3)) if user_prefs else 3
+        # ``days`` is the field TravelState actually stores; ``duration_days``
+        # was never written by the chat flow, so the required-POI budget was
+        # silently pinned to the 3-day default for every trip.
+        duration_days = int(
+            (user_prefs or {}).get('days')
+            or (user_prefs or {}).get('duration_days')
+            or 3
+        )
         required_pois = max(10, duration_days * 3)
         city = user_prefs.get('city') if user_prefs else None
         
@@ -711,6 +741,62 @@ class InformationAgent:
             print(f"[INFO_AGENT] Skipping LLM re-ranking. Returning all {len(initial_pois)} attractions from initial sort.")
             return initial_pois
 
+    @staticmethod
+    def _discovery_sort_key(poi):
+        """Rank a candidate for broad discovery without inventing popularity.
+
+        Wikipedia/Wikidata-backed places are verifiable and notable, so they
+        come first; a reported rating breaks ties.  Unrated provider records
+        are not discarded - they simply rank after notable/rated ones.
+        """
+        if not isinstance(poi, dict):
+            return (9, 9, 9, 0.0)
+        metadata = poi.get("metadata") if isinstance(poi.get("metadata"), dict) else {}
+        source_rank = {"wikipedia": 3, "osm": 2, "geoapify": 1}.get(poi.get("source"), 0)
+        notable = 0 if (metadata.get("wikidata_id") or poi.get("wikipedia_url") or poi.get("wikidata_id")) else 1
+        try:
+            rating = float(poi.get("rating"))
+        except (TypeError, ValueError):
+            rating = None
+        return (-source_rank, notable, rating is None, -(rating or 0.0))
+
+    @classmethod
+    def _balanced_cap(cls, pois, cap):
+        """Trim a merged pool while keeping every city represented.
+
+        A plain ``[:cap]`` on a state search lets the first cities consume the
+        entire budget, silently discarding the others.  Round-robin selection
+        across city groups keeps the pool geographically balanced.
+        """
+        items = [p for p in (pois or []) if isinstance(p, dict)]
+        if cap is None or cap <= 0 or len(items) <= cap:
+            return items
+
+        groups = {}
+        for poi in items:
+            key = poi.get("state_city") or poi.get("city") or poi.get("region") or ""
+            groups.setdefault(str(key), []).append(poi)
+
+        for group in groups.values():
+            group.sort(key=cls._discovery_sort_key)
+
+        ordered = []
+        cursors = {key: 0 for key in groups}
+        while len(ordered) < cap:
+            progressed = False
+            for key in groups:
+                index = cursors[key]
+                group = groups[key]
+                if index < len(group):
+                    ordered.append(group[index])
+                    cursors[key] = index + 1
+                    progressed = True
+                    if len(ordered) >= cap:
+                        break
+            if not progressed:
+                break
+        return ordered
+
     def get_attractions_for_state(self, state_name: str, state_cities: list, user_prefs: dict,
                                   weather_summary: str = None, total_number: int = 80):
         """Comprehensive state-wide attraction discovery.
@@ -758,7 +844,8 @@ class InformationAgent:
             try:
                 pois = self.poi_manager.get_attractions(
                     lat=coords['lat'], lng=coords['lng'],
-                    radius=20000, hobbies=hobbies, poi_type="tourist_attraction"
+                    radius=20000, hobbies=hobbies, poi_type="tourist_attraction",
+                    city=city_name,
                 )
                 return city_name, (pois or [])
             except Exception as e:
@@ -792,25 +879,48 @@ class InformationAgent:
             for poi in pois:
                 pid = poi.get('id')
                 if pid and pid not in seen_ids:
-                    poi['state_city'] = state_name
+                    # Attribute every POI to the city that produced it. The old
+                    # `state_city = state_name` erased the per-city spread, so
+                    # balanced capping and the UI could not tell Kochi from
+                    # Wayanad. `state` keeps the higher-level scope.
+                    poi.setdefault('city', city_name)
+                    poi['state_city'] = city_name
+                    poi['state'] = state_name
                     all_pois.append(poi)
                     seen_ids.add(pid)
 
         print(f"[ATTRACTION_PIPELINE] State search completed. Total cities attempted: {len(state_cities)}. Successful: {success_count}. Failed: {failed_count}. Raw POIs deduplicated: {len(all_pois)}")
+        raw_poi_count = len(all_pois)
 
         if not all_pois:
+            # Disclose the failure instead of leaving the UI with an empty,
+            # unexplained discovery panel.
+            self.last_discovery_status = {
+                "scope": state_name,
+                "cities": {name: 0 for name, _ in geocoded},
+                "failed_cities": failed_count,
+                "raw": 0,
+                "empty": True,
+                "reason": "all_cities_failed",
+            }
             return []
 
         # Enforce a duration-aware cap BEFORE enrichment. For a 10-day trip
-        # this yields ~60 choices; a 3-day trip still gets a reasonable 30.
+        # this yields ~120 choices; a 3-day trip still gets a broad 60. The cap
+        # is a latency guard, not a recommendation decision, and the balanced
+        # selection keeps every searched city represented.
         try:
-            duration_days = int((user_prefs or {}).get('duration_days') or 0)
+            duration_days = int(
+                (user_prefs or {}).get('days')
+                or (user_prefs or {}).get('duration_days')
+                or 0
+            )
         except (TypeError, ValueError):
             duration_days = 0
-        dynamic_cap = max(total_number, duration_days * 6) if duration_days else total_number
-        dynamic_cap = min(dynamic_cap, 120)  # Bound to keep enrichment latency sane.
-        all_pois.sort(key=lambda x: (x.get('rating') is None, -(float(x.get('rating', 0) or 0))))
-        all_pois = all_pois[:dynamic_cap]
+        dynamic_cap = max(total_number, duration_days * 12) if duration_days else total_number
+        dynamic_cap = min(dynamic_cap, 180)  # Bound to keep enrichment latency sane.
+        all_pois = self._balanced_cap(all_pois, dynamic_cap)
+        capped_count = len(all_pois)
 
         # Use centralized enrichment
         if all_pois:
@@ -822,6 +932,27 @@ class InformationAgent:
             all_pois = self._rerank_attractions_with_llm(all_pois, user_prefs, weather_summary)
 
         print(f"[STATE_SEARCH] Returning all {len(all_pois)} state-wide POIs.")
+        # Per-city discovery diagnostics: which cities actually produced POIs,
+        # how many survived the cap and how much image coverage there is. This
+        # is what the scope/provider disclosure in the UI reads, so a state
+        # search must publish it just like the single-city path does.
+        self.last_discovery_status = {
+            "scope": state_name,
+            "cities": {name: len(results_by_city.get(name, [])) for name, _ in geocoded},
+            "cities_with_results": {
+                name: sum(1 for p in all_pois if p.get("state_city") == name)
+                for name, _ in geocoded
+            },
+            "cities_attempted": len(geocoded),
+            "successful_cities": success_count,
+            "failed_cities": failed_count,
+            "raw": raw_poi_count,
+            "capped": capped_count,
+            "total": len(all_pois),
+            "empty": False,
+            "multi_city": len(geocoded) > 1,
+            "image_status": dict(getattr(self, "last_image_status", None) or {}),
+        }
         return all_pois
 
     def get_attractions_for_cities(self, cities, user_prefs, weather_summary: str = None,
@@ -849,6 +980,7 @@ class InformationAgent:
                 pois = self.poi_manager.get_attractions(
                     lat=float(city['lat']), lng=float(city['lng']),
                     radius=radius, hobbies=hobbies, poi_type="tourist_attraction",
+                    city=name,
                 )
                 return name, city, (pois or [])
             except Exception as e:
@@ -907,14 +1039,16 @@ class InformationAgent:
             return []
 
         try:
-            duration_days = int((user_prefs or {}).get('duration_days') or 0)
+            duration_days = int(
+                (user_prefs or {}).get('days')
+                or (user_prefs or {}).get('duration_days')
+                or 0
+            )
         except (TypeError, ValueError):
             duration_days = 0
-        dynamic_cap = max(total_number, duration_days * 6) if duration_days else total_number
-        dynamic_cap = min(dynamic_cap, 160)
-        all_pois.sort(key=lambda x: (x.get('rating') is None,
-                                     -(float(x.get('rating') or 0))))
-        all_pois = all_pois[:dynamic_cap]
+        dynamic_cap = max(total_number, duration_days * 12) if duration_days else total_number
+        dynamic_cap = min(dynamic_cap, 200)
+        all_pois = self._balanced_cap(all_pois, dynamic_cap)
 
         all_pois = self.enrich_attractions(
             all_pois, ", ".join(c['name'] for c in cities[:3])
@@ -1466,8 +1600,8 @@ out 15 tags center;
     _PRESERVED_POI_FIELDS = (
         "tags", "types", "osm_tags", "metadata", "wikidata_id", "wikipedia",
         "wikidata", "wikipedia_url", "osm_id", "osm_type", "place_id",
-        "provider", "source", "country", "country_code", "city", "region",
-        "state_city", "city_name", "opening_hours", "entry_fee", "fee",
+        "provider", "source", "sources", "country", "country_code", "city", "region",
+        "state", "state_city", "city_name", "opening_hours", "entry_fee", "fee",
         "price_level", "currency", "rating_status", "price_status",
         "amenities", "amenities_status", "feature_type", "categories",
         "interest_match", "matched_interests", "interest_match_reasons",
@@ -1489,9 +1623,11 @@ out 15 tags center;
 
     @staticmethod
     def _first_real_url(*values):
+        """Return the first safely normalised image URL, or ``None``."""
         for value in values:
-            if isinstance(value, str) and value.startswith("http"):
-                return value
+            url = normalize_image_url(value)
+            if url:
+                return url
         return None
 
     def enrich_attractions(self, pois, city_name):
@@ -1599,6 +1735,37 @@ out 15 tags center;
 
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(pois or [])))) as executor:
             enriched = [item for item in executor.map(_enrich_single, pois or []) if item]
+
+        # Verified images first: provider metadata, OSM tags, Wikipedia
+        # titles/GeoSearch, Wikidata P18 and Commons are tried in batch.  The
+        # per-place Wikipedia search is only a last resort.  The budget is
+        # derived from the batch size so a 60-place state search is not cut off
+        # after 24 photos.  The resolver's guarantee stage then fills every
+        # remaining card with an explicitly representative image or a generated
+        # travel card, so no displayed attraction has an empty image area.
+        if enriched:
+            try:
+                budget = int(os.environ.get(
+                    "ATTRACTION_IMAGE_MAX_LOOKUPS", str(max(24, min(120, len(enriched))))
+                ))
+            except (TypeError, ValueError):
+                budget = max(24, min(120, len(enriched)))
+            try:
+                enrich_poi_images(enriched, city_name, max_lookups=budget)
+                from services.attraction_images import get_image_resolver
+                self.last_image_status = dict(get_image_resolver().last_status)
+                print(
+                    f"[ATTRACTION_IMAGES] city={city_name or 'unknown'} "
+                    f"resolved={self.last_image_status.get('resolved', 0)} "
+                    f"missing={self.last_image_status.get('missing', 0)} "
+                    f"state={self.last_image_status.get('state', 'unknown')} "
+                    f"sources={self.last_image_status.get('sources', {})}"
+                )
+            except Exception as exc:
+                # Image enrichment is never allowed to fail an attraction
+                # search; disclose the failure instead of hiding it.
+                self.last_image_status = {"state": "error", "detail": type(exc).__name__}
+                print(f"[ATTRACTION_IMAGES][WARN] {type(exc).__name__}: {exc}")
 
         return enriched
 

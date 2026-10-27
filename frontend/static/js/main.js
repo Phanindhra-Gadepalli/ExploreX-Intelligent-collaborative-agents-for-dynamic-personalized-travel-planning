@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // session / ui
         sessionId: null,
         currentTab: 'chat',
+        // Authoritative *backend* progress (next_step). It never changes the
+        // visible tab by itself; only an explicit user action may navigate.
+        workflowStep: 'chat',
         generating: false,
         // trip inputs (synced from the Explore controls + backend user_info)
         destination: null,
@@ -19,7 +22,12 @@ document.addEventListener('DOMContentLoaded', () => {
         email: '',
         // trip data
         attractions: [],
+        // Client-side pagination only; discovery/ranking happens server-side.
+        attractionsVisible: 12,
         selectedAttractionIds: new Set(),
+        // Set only after the backend warned that the selection is below the
+        // suggested count, so the *second* click is an explicit override.
+        allowInsufficientSelection: false,
         // Country/region/multi-city scope proposed by the backend, plus the
         // honest per-provider status. Both are rendered, never hidden.
         destinationScope: null,
@@ -92,9 +100,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // === Navigation & Tabs ===
+    // User-initiated navigation only. `switchTab` persists the tab so a refresh
+    // returns the user where they were; backend progress never calls it.
     navTabs.forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
 
-    function switchTab(tabId) {
+    function switchTab(tabId, options = {}) {
+        const persist = options.persist !== false;
         navTabs.forEach(t => t.classList.remove('active'));
         document.querySelector(`.nav-tab[data-tab="${tabId}"]`)?.classList.add('active');
 
@@ -103,8 +114,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (v.id === `view-${tabId}`) v.classList.add('active');
         });
         state.currentTab = tabId;
+        if (persist && tabId !== 'landing') {
+            try { sessionStorage.setItem('explorex_tab', tabId); } catch (e) { }
+        }
 
         updateJourneyIndicator(tabId);
+
+        // The interest card used to be the only trigger for the destination
+        // grid.  Load it when Explore opens, unless a plan already exists (the
+        // function itself returns early when state.attractions is populated).
+        if (tabId === 'explore') {
+            try { fetchDestinations(); } catch (e) { console.error('Destination load failed:', e); }
+        }
 
         if (tabId === 'map' && state.map) setTimeout(() => state.map.invalidateSize(), 100);
         // The assistant rail persists: keep it mounted and re-read the cached
@@ -232,45 +253,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // === Interests System (state is the source of truth) ===
-    const interestWeight = document.getElementById('interest-weight');
-    const weightVal = document.getElementById('weight-val');
-
-    function readInterestsFromDom() {
-        return Array.from(document.querySelectorAll('.interest-chip.selected'))
-            .map(c => c.dataset.interest).filter(Boolean);
-    }
-
-    // Paint state.interests back onto the chips (used by restore + reset).
-    function applyInterestsToDom() {
-        document.querySelectorAll('.interest-chip').forEach(chip => {
-            chip.classList.toggle('selected', state.interests.includes(chip.dataset.interest));
-        });
-        if (interestWeight) interestWeight.value = state.interestWeight;
-        if (weightVal) weightVal.innerText = state.interestWeight + '%';
-    }
-
-    document.querySelectorAll('.interest-chip').forEach(chip => {
-        chip.addEventListener('click', () => {
-            chip.classList.toggle('selected');
-            state.interests = readInterestsFromDom();
-            fetchDestinations();
-        });
-    });
-
-    if (interestWeight && weightVal) {
-        interestWeight.addEventListener('input', e => {
-            state.interestWeight = parseInt(e.target.value, 10) || 0;
-            weightVal.innerText = state.interestWeight + '%';
-        });
-        interestWeight.addEventListener('change', e => {
-            fetchDestinations();
-        });
-    }
-
-    // Seed the model from the chips that are pre-selected in the markup.
-    state.interests = readInterestsFromDom();
-    state.interestWeight = interestWeight ? (parseInt(interestWeight.value, 10) || 80) : 80;
+    // === Shared interest model ===
+    // The interest picker was removed from the Explore window, but the model is
+    // still part of the chat/destination contract.  Keep the previous defaults
+    // (Food + Photography, weight 80) and let chat parsing or restored server
+    // state replace them when the traveller provides real preferences.
+    state.interests = ['Food', 'Photography'];
+    state.interestWeight = 80;
 
     function getSelectedInterestsString() {
         if (!state.interests.length) return '';
@@ -355,6 +344,7 @@ document.addEventListener('DOMContentLoaded', () => {
         state.interestWeight = 80;
         state.email = '';
         state.attractions = [];
+        state.attractionsVisible = 12;
         state.selectedAttractionIds = new Set();
         state.accommodations = [];
         state.selectedAccommodationId = null;
@@ -385,13 +375,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const emailInput = document.getElementById('email-deliver-input'); if (emailInput) emailInput.value = '';
         const mapDetails = document.getElementById('map-location-details'); if (mapDetails) mapDetails.classList.add('d-none');
         const mapTl = document.getElementById('map-timeline'); if (mapTl) mapTl.classList.remove('d-none');
-
-        applyInterestsToDom();
     }
 
     // ── Re-render every view from the state model ──────────────────────────
     function renderAll() {
-        applyInterestsToDom();
         renderScopeDisclosure();
         if (state.attractions.length) renderRecommendations(state.attractions);
         if (state.accommodations.length) renderAccommodations(state.accommodations);
@@ -442,6 +429,8 @@ document.addEventListener('DOMContentLoaded', () => {
             state.unscheduledAttractions = Array.isArray(t.unscheduled_attractions) ? t.unscheduled_attractions : [];
             state.destinationScope = t.destination_scope || state.destinationScope;
             state.providerStatus = t.provider_status || state.providerStatus;
+            state.workflowStep = t.current_step || state.workflowStep;
+            state.attractionsVisible = 12;
             state.transport = t.transit_options || [];
             state.selectedAttractionIds = new Set(
                 (Array.isArray(t.selected_attractions) ? t.selected_attractions : [])
@@ -578,19 +567,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Advance the real recommend -> strategy -> communication -> route flow.
-    function generateItineraryFromChat(data) {
+    // `autoPick` is only used by the explicit "Let AI Choose" action: without
+    // it, an empty selection sends the user back to Explore instead of
+    // silently adding places they never chose.
+    function generateItineraryFromChat(data, autoPick = false) {
         if (state.generating) { showToast('Already planning your itinerary…', 'info'); return; }
         const recs = (data && data.recommended_attractions) || state.attractions || [];
-        if (state.selectedAttractionIds.size === 0) {
-            recs.forEach(a => { const id = a && (a.id || a.attraction_id); if (id) state.selectedAttractionIds.add(id); });
+        if (recs.length && state.attractions.length === 0) state.attractions = recs;
+
+        if (autoPick) {
+            // Explicit "Let AI Choose": ignore whatever is ticked and let the
+            // backend select the top-rated places for the trip length.
+            state.generating = true;
+            switchTab('chat');
+            triggerBackend('recommend', 'go ahead', {});
+            return;
         }
+
         if (state.selectedAttractionIds.size === 0) {
-            showToast('Select at least one attraction first.', 'error');
+            showToast('Select the attractions you want, then generate your itinerary.', 'info');
             switchTab('explore');
             return;
         }
+
         const ids = Array.from(state.selectedAttractionIds);
-        const params = { selected_attraction_ids: JSON.stringify(ids), force_continue: 'true' };
+        const params = {
+            selected_attraction_ids: JSON.stringify(ids),
+            // This entry point is the explicit "generate" action from chat, so
+            // fewer-than-suggested selections proceed only after the user was
+            // shown the recommendation grid.
+            force_continue: 'true'
+        };
         if (state.selectedAccommodationId) params.selected_accommodation_id = state.selectedAccommodationId;
         state.generating = true;
         switchTab('chat');
@@ -617,6 +624,11 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         if (hasRecs) {
+            wrap.appendChild(mk('View Attractions', 'fa-compass', () => {
+                switchTab('explore');
+                renderRecommendations(state.attractions.length ? state.attractions : data.recommended_attractions);
+                showToast('Choose the attractions you want to include.', 'info');
+            }));
             wrap.appendChild(mk('View on Map', 'fa-map', () => {
                 switchTab('map');
                 if (state.map && state.itinerary) renderMap(state.itinerary);
@@ -639,6 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }));
         if (hasRecs) {
             wrap.appendChild(mk('Generate Itinerary', 'fa-magic', () => generateItineraryFromChat(data)));
+            wrap.appendChild(mk('Let AI Choose', 'fa-wand-magic-sparkles', () => generateItineraryFromChat(data, true)));
         }
         bubble.appendChild(wrap);
     }
@@ -696,21 +709,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     uiMsg = "Analyzing your request and fetching destination information...";
                 } else if (data.agent === 'recommend') {
                     uiMsg = "Finding personalized attractions...";
-                    // User must not stare at Chat. Automatically open explore while loading.
-                    switchTab('explore');
+                    // Progress is shown in the Explore grid when the user opens
+                    // it; never yank them away from the tab they are reading.
                     showRecommendationSkeletons();
                 } else if (data.agent === 'strategy') {
                     uiMsg = "Generating optimal daily strategy...";
-                    switchTab('map'); // Switch to Plan/route progress
                 } else if (data.agent === 'budget') {
                     uiMsg = "Calculating budget and transport costs...";
-                    switchTab('map');
                 } else if (data.agent === 'route') {
                     uiMsg = "Planning route and assigning times...";
-                    switchTab('map');
                 } else if (data.agent === 'communication') {
                     uiMsg = "Finalizing itinerary details...";
-                    switchTab('itinerary');
                 }
                 
                 if (msgDiv && !fullText) msgDiv.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> ${uiMsg}`;
@@ -812,6 +821,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleComplete(data) {
         const ns = data.next_step;
+        // Record backend progress for the journey indicator/assistant. This is
+        // deliberately decoupled from navigation: only explicit user actions
+        // (tab click, chat action, map/itinerary button) may change tabs.
+        if (ns) state.workflowStep = ns;
 
         // Capture weather/accommodation/user_info from state whenever any step
         // provides it (the final route step does not return `state`, but
@@ -834,9 +847,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.provider_status) state.providerStatus = data.provider_status;
         renderScopeDisclosure();
 
-        // Recommendations ready -> render + let the user choose.
+        // Recommendations ready -> render + let the user choose. Stay on the
+        // current tab; the chat message offers an explicit "View Attractions".
         if (data.ui_action === 'OPEN_EXPLORE' || ns === 'recommend' || (Array.isArray(data.recommended_attractions) && data.recommended_attractions.length)) {
             state.attractions = data.recommended_attractions || state.attractions || [];
+            state.attractionsVisible = 12;
             if (state.attractions.length) {
                 renderRecommendations(state.attractions);
             }
@@ -844,9 +859,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.accommodations = data.accommodations;
                 renderAccommodations(state.accommodations);
             }
-            switchTab('explore');
             const count = state.attractions.length;
-            showToast(`${count} recommendations found. Select the places you'd like to visit.`, 'success');
+            showToast(`${count} recommendations found. Open Explore to select the places you'd like to visit.`, 'success');
         } else if (['chat', 'information', 'retrieval'].includes(ns)) {
             // Still conversing / gathering info — drop the placeholder skeletons.
             clearRecommendationSkeletons();
@@ -854,6 +868,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Selection validation warning from the recommend step.
         if (data.validation_warning) {
+            // Arm the explicit override: the next click on Generate Itinerary
+            // will continue with the smaller selection.
+            state.allowInsufficientSelection = true;
             addChatMessage(
                 `You selected ${data.selected_count} attraction(s); a ${data.required_count || '?'}-minimum is recommended. ` +
                 `Select a few more, or click "Generate Itinerary" again to continue anyway.`, 'ai');
@@ -898,14 +915,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (data.transit_options) { state.transport = data.transit_options; renderTransport(data.transit_options); }
 
+        // The plan is ready. Do not navigate automatically; the chat message
+        // already carries explicit "View on Map" / "View Itinerary" actions.
         if (ns === 'route') {
-            switchTab('map');
+            showToast('Route data updated. Open Map to review it.', 'info');
         }
 
         if (ns === 'itinerary' || data.itinerary) {
             state.generating = false;
-            switchTab('itinerary');
-            showToast('Your itinerary, budget and route are ready.', 'success');
+            showToast('Your itinerary, budget and route are ready. Open Itinerary to review.', 'success');
         }
         // Whatever step just finished, the assistant rail re-reads the persisted
         // state - it does not re-run any planning agent.
@@ -936,19 +954,88 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         return fee;
     }
+    function travelCardImage(name, place) {
+        const title = String(name || 'Attraction').trim() || 'Attraction';
+        const subtitle = String(place || 'ExploreX').trim() || 'ExploreX';
+        const palettes = [
+            ['#0f766e', '#0ea5e9', '#ecfeff'],
+            ['#7c3aed', '#db2777', '#fdf2f8'],
+            ['#b45309', '#ea580c', '#fff7ed'],
+            ['#1d4ed8', '#0891b2', '#eff6ff'],
+            ['#166534', '#65a30d', '#f7fee7'],
+            ['#9f1239', '#f59e0b', '#fff1f2'],
+        ];
+        let seed = 0;
+        for (const ch of `${title}|${subtitle}`) seed = (seed + ch.charCodeAt(0)) % palettes.length;
+        const [start, end, ink] = palettes[seed];
+        const words = title.split(/\s+/);
+        const lines = [];
+        let current = '';
+        for (const word of words) {
+            const candidate = current ? `${current} ${word}` : word;
+            if (candidate.length <= 28 || !current) current = candidate;
+            else {
+                lines.push(current);
+                current = word;
+                if (lines.length === 1) break;
+            }
+        }
+        if (current && lines.length < 2) lines.push(current);
+        if (!lines.length) lines.push(title.slice(0, 28));
+        if (lines[lines.length - 1].length > 28) {
+            lines[lines.length - 1] = lines[lines.length - 1].slice(0, 27).trimEnd() + '…';
+        }
+        const titleY = 286 - (lines.length - 1) * 23;
+        const titleSvg = lines.map((line, index) =>
+            `<tspan x="56" dy="${index === 0 ? 0 : 46}">${escapeHtml(line)}</tspan>`
+        ).join('');
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">'
+            + '<defs><linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">'
+            + `<stop offset="0%" stop-color="${start}"/><stop offset="100%" stop-color="${end}"/>`
+            + '</linearGradient><linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">'
+            + '<stop offset="0%" stop-color="#000000" stop-opacity="0"/>'
+            + '<stop offset="100%" stop-color="#000000" stop-opacity="0.62"/></linearGradient></defs>'
+            + '<rect width="800" height="450" fill="url(#sky)"/>'
+            + `<circle cx="640" cy="92" r="46" fill="${ink}" opacity="0.28"/>`
+            + `<path d="M0 300 L120 220 L230 286 L340 190 L470 292 L590 214 L720 282 L800 238 L800 450 L0 450 Z" fill="${ink}" opacity="0.16"/>`
+            + `<path d="M0 352 L110 292 L225 344 L350 268 L485 348 L610 288 L735 338 L800 310 L800 450 L0 450 Z" fill="${ink}" opacity="0.22"/>`
+            + '<rect y="250" width="800" height="200" fill="url(#fade)"/>'
+            + '<g font-family="Segoe UI, Arial, sans-serif" fill="#ffffff">'
+            + '<text x="56" y="60" font-size="16" font-weight="600" letter-spacing="3" opacity="0.9">EXPLOREX</text>'
+            + `<text x="56" y="${titleY}" font-size="38" font-weight="700">${titleSvg}</text>`
+            + `<text x="56" y="376" font-size="19" opacity="0.92">${escapeHtml(subtitle)}</text>`
+            + '<text x="56" y="414" font-size="13" letter-spacing="2" opacity="0.7">TRAVEL CARD</text>'
+            + '</g></svg>';
+        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+    }
+
+    const PLACEHOLDER_IMG = travelCardImage('ExploreX', 'Your next journey');
+
     function fieldImage(a) {
         const img = a && (a.image_url || a.image || a.photo);
-        if (img && (String(img).startsWith('http') || String(img).startsWith('data:image'))) {
-            return img;
+        if (img && (/^https:\/\//i.test(String(img)) || /^data:image\/svg\+xml[;,]/i.test(String(img)))) {
+            return String(img);
         }
-        // No photo was reported. Never borrow a random stock photo of a
-        // different place just to fill the card; show an explicit neutral
-        // placeholder instead.
-        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450">'
-            + '<rect width="100%" height="100%" fill="#e2e8f0"/>'
-            + '<text x="50%" y="50%" fill="#64748b" font-family="sans-serif" font-size="28" '
-            + 'text-anchor="middle" dominant-baseline="middle">No photo available</text></svg>';
-        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+        // Every card must render a visual. If the backend did not supply one,
+        // generate a travel card carrying this attraction's own name.
+        return travelCardImage(
+            a && (a.name || a.title),
+            a && (a.city || a.state_city || a.address || a.location_name || a.country)
+        );
+    }
+    // Verified photos render first; representative/generated cards follow. The
+    // underlying recommendation order (and auto-selection) is unchanged.
+    function imageFirstAttractions(list) {
+        if (!Array.isArray(list)) return [];
+        const verified = [];
+        const representative = [];
+        list.forEach(a => {
+            const img = a && (a.image_url || a.image || a.photo);
+            const isUrl = typeof img === 'string' && /^https:\/\//i.test(img);
+            if (isUrl && !a.image_is_representative) verified.push(a);
+            else representative.push(a);
+        });
+        return verified.concat(representative);
     }
     function escapeHtml(s) {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1019,23 +1106,33 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        attrs.forEach((a, idx) => {
+        const PAGE_SIZE = 12;
+        const ordered = imageFirstAttractions(attrs);
+        const visibleCount = Math.max(PAGE_SIZE, Number(state.attractionsVisible) || PAGE_SIZE);
+        const visible = ordered.slice(0, Math.min(visibleCount, ordered.length));
+
+        visible.forEach((a, idx) => {
             if (!a) return;
             const id = a.id || `attr-${idx}`;
             const div = document.createElement('div');
             div.className = 'bento-card';
-            const testIdName = a.name ? a.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'attraction';
+            const testIdName = a.name ? String(a.name).toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'attraction';
             div.setAttribute('data-testid', `attraction-card-${testIdName}`);
 
             const selected = state.selectedAttractionIds.has(id);
             const primaryImg = escapeHtml(fieldImage(a));
+            const representativeBadge = a.image_is_representative
+                ? '<span style="position:absolute;left:10px;bottom:10px;z-index:2;padding:3px 8px;border-radius:999px;background:rgba(15,23,42,0.72);color:#fff;font-size:0.7rem;letter-spacing:0.3px;">Representative image</span>'
+                : '';
 
             div.innerHTML = `
                 <div class="skeleton-img-loader" style="width:100%; height:180px; background:var(--bg-alt); position:relative;">
                     <img src="${primaryImg}" class="bento-img" alt="${escapeHtml(a.name || 'Attraction')}"
+                        loading="lazy" decoding="async" referrerpolicy="no-referrer"
                         style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover;"
                         onload="this.parentElement.style.background='none';"
-                        onerror="this.style.display='none';">
+                        onerror="this.onerror=null;this.src='${PLACEHOLDER_IMG}';">
+                    ${representativeBadge}
                 </div>
                 <div class="bento-content">
                     <div class="d-flex justify-content-between align-items-start mb-2">
@@ -1086,6 +1183,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const toggleBtn = div.querySelector('.toggle-select-btn');
             toggleBtn.addEventListener('click', e => { e.stopPropagation(); toggleSelect(a, id, toggleBtn); });
         });
+
+        if (ordered.length > visible.length) {
+            const remaining = ordered.length - visible.length;
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'grid-column: 1 / -1; display: flex; justify-content: center; padding: 12px 0;';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-outline-primary rounded-pill px-4';
+            btn.setAttribute('data-testid', 'attractions-load-more');
+            btn.innerHTML = `<i class="fas fa-chevron-down me-2"></i>Load ${Math.min(PAGE_SIZE, remaining)} more (${remaining} remaining)`;
+            btn.addEventListener('click', () => {
+                state.attractionsVisible = visible.length + PAGE_SIZE;
+                renderRecommendations(attrs);
+            });
+            wrap.appendChild(btn);
+            recContainer.appendChild(wrap);
+        }
     }
 
     let fetchDestinationsTimeout = null;
@@ -1128,7 +1242,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const div = document.createElement('div');
                 div.className = 'bento-card';
                 div.innerHTML = `
-                    <img src="${escapeHtml(d.image)}" class="bento-img" onerror="this.style.display='none'">
+                    <img src="${escapeHtml(d.image)}" class="bento-img" alt="${escapeHtml(d.name || 'Destination')}"
+                        loading="lazy" decoding="async" referrerpolicy="no-referrer"
+                        onerror="this.onerror=null;this.src='${PLACEHOLDER_IMG}';">
                     <div class="bento-content">
                         <div class="d-flex justify-content-between align-items-start mb-2">
                             <h5 class="Bricolage mb-0">${escapeHtml(d.name)}, ${escapeHtml(d.country)}</h5>
@@ -1175,6 +1291,212 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let currentAttractionModal = null;
+    // Nearby Eats is fetched on demand. The token + AbortController prevent a
+    // slow response for attraction A from painting over attraction B.
+    let nearbyEatsAbort = null;
+    let nearbyEatsToken = 0;
+
+    function _haversineMeters(lat1, lng1, lat2, lng2) {
+        const toRad = (deg) => deg * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLng = toRad(lng2 - lng1);
+        const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+        return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function _formatNearbyDistance(meters) {
+        const value = Number(meters);
+        if (!Number.isFinite(value) || value < 0) return null;
+        const rounded = Math.round(value);
+        if (rounded < 1000) return rounded + ' m';
+        return (rounded / 1000).toFixed(rounded < 10000 ? 1 : 0) + ' km';
+    }
+
+    function _hasUsableCoordinates(lat, lng) {
+        const latNum = Number(lat);
+        const lngNum = Number(lng);
+        if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) return false;
+        // (0, 0) is the "coordinates missing" sentinel in this codebase, not a
+        // real attraction location for any supported destination.
+        return !(latNum === 0 && lngNum === 0);
+    }
+
+    function _nearbyItemDistance(attractionLat, attractionLng, item) {
+        const itemLat = Number(item && (item.latitude != null ? item.latitude : item.lat));
+        const itemLng = Number(item && (item.longitude != null ? item.longitude : item.lon));
+        if (Number.isFinite(itemLat) && Number.isFinite(itemLng)) {
+            // Recompute from the two real coordinate pairs; never trust a
+            // pre-formatted string from a provider.
+            return _haversineMeters(attractionLat, attractionLng, itemLat, itemLng);
+        }
+        const serverDistance = Number(item && item.distance_m);
+        return Number.isFinite(serverDistance) ? serverDistance : null;
+    }
+
+    function _nearbyEatsMessage(panel, message, a, lat, lng, retryable) {
+        panel.classList.remove('d-none');
+        panel.innerHTML = `
+            <div class="d-flex align-items-start gap-2 text-muted small" data-testid="nearby-eats-message">
+                <i class="fas fa-info-circle mt-1"></i>
+                <div class="flex-grow-1">${escapeHtml(message)}</div>
+                ${retryable ? '<button type="button" class="btn btn-sm btn-outline-secondary rounded-pill flex-shrink-0" data-nearby-retry>Retry</button>' : ''}
+            </div>`;
+        const retry = panel.querySelector('[data-nearby-retry]');
+        if (retry) {
+            retry.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                _loadNearbyEats(a, lat, lng, panel, null);
+            };
+        }
+    }
+
+    function _renderNearbyEats(panel, data, a, lat, lng) {
+        const items = Array.isArray(data && data.restaurants) ? data.restaurants : [];
+        const attractionName = (a && a.name) || 'this attraction';
+        if (!items.length) {
+            const radius = Number(data && data.radius_m) || 1000;
+            const unavailable = data && data.status === 'unavailable';
+            const message = unavailable
+                ? ((data && data.message) || 'Nearby restaurant data is temporarily unavailable. Please try again.')
+                : ((data && data.message) || `No eateries were found within ${_formatNearbyDistance(radius) || radius + ' m'} of ${attractionName}.`);
+            _nearbyEatsMessage(panel, message, a, lat, lng, unavailable);
+            return;
+        }
+
+        const rows = items.map((item) => {
+            const distance = _nearbyItemDistance(lat, lng, item);
+            const distanceText = _formatNearbyDistance(distance);
+            const type = escapeHtml(item.type || item.category || 'Eatery');
+            const cuisine = item.cuisine ? ' · ' + escapeHtml(item.cuisine) : '';
+            const hours = item.opening_hours ? ' · ' + escapeHtml(item.opening_hours) : '';
+            const address = item.address
+                ? `<div class="text-muted" style="font-size: 0.78rem;"><i class="fas fa-map-marker-alt me-1"></i>${escapeHtml(item.address)}</div>`
+                : '';
+            let mapUrl = item.map_url || '';
+            const itemLat = Number(item.latitude != null ? item.latitude : item.lat);
+            const itemLng = Number(item.longitude != null ? item.longitude : item.lon);
+            if (!mapUrl && Number.isFinite(itemLat) && Number.isFinite(itemLng)) {
+                mapUrl = `https://www.openstreetmap.org/?mlat=${itemLat}&mlon=${itemLng}#map=18/${itemLat}/${itemLng}`;
+            }
+            const mapLink = mapUrl
+                ? `<a class="small text-decoration-none" target="_blank" rel="noopener noreferrer" href="${escapeHtml(mapUrl)}"><i class="fas fa-map-marked-alt me-1"></i>Map</a>`
+                : '';
+            const distanceBadge = distanceText
+                ? `<span class="badge bg-alt text-accent" title="Straight-line distance from ${escapeHtml(attractionName)}">${escapeHtml(distanceText)}</span>`
+                : '<span class="badge bg-alt text-muted">Distance unavailable</span>';
+            return `
+                <li class="list-group-item px-0 bg-transparent d-flex justify-content-between align-items-start gap-2">
+                    <div class="me-auto">
+                        <div class="fw-bold">${escapeHtml(item.name || 'Unnamed eatery')}</div>
+                        <div class="small text-muted">${type}${cuisine}${hours}</div>
+                        ${address}
+                    </div>
+                    <div class="text-end flex-shrink-0">
+                        ${distanceBadge}
+                        <div class="mt-1">${mapLink}</div>
+                    </div>
+                </li>`;
+        }).join('');
+
+        const attribution = data.source === 'geoapify'
+            ? 'Food data © Geoapify / OpenStreetMap contributors.'
+            : (data.source === 'osm' ? 'Food data © OpenStreetMap contributors.' : '');
+        panel.classList.remove('d-none');
+        panel.innerHTML = `
+            <div class="d-flex align-items-center justify-content-between mb-1">
+                <div class="fw-bold small"><i class="fas fa-utensils text-warning me-1"></i>Nearby Eats</div>
+                <button type="button" class="btn btn-sm btn-link text-muted p-0" data-nearby-close>Close</button>
+            </div>
+            <ul class="list-group list-group-flush mb-1" data-testid="nearby-eats-results">${rows}</ul>
+            <div class="text-muted" style="font-size: 0.72rem;">
+                Distances are straight-line (haversine) from ${escapeHtml(attractionName)} — not walking or road distance.
+                ${attribution}
+            </div>`;
+        const closeBtn = panel.querySelector('[data-nearby-close]');
+        if (closeBtn) {
+            closeBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                panel.classList.add('d-none');
+                panel.innerHTML = '';
+            };
+        }
+    }
+
+    async function _loadNearbyEats(a, lat, lng, panel, triggerBtn) {
+        if (!panel || !_hasUsableCoordinates(lat, lng)) return;
+        const token = ++nearbyEatsToken;
+        if (nearbyEatsAbort) nearbyEatsAbort.abort();
+        const controller = new AbortController();
+        nearbyEatsAbort = controller;
+        const timer = setTimeout(() => controller.abort(), 45000);
+
+        panel.classList.remove('d-none');
+        panel.dataset.attractionId = (a && (a.id || a.name)) || '';
+        panel.innerHTML = '<div class="text-muted small" data-testid="nearby-eats-loading"><i class="fas fa-circle-notch fa-spin me-2"></i>Finding nearby eateries within 1 km…</div>';
+        if (triggerBtn) triggerBtn.disabled = true;
+
+        try {
+            const url = new URL(`/api/nearby/${encodeURIComponent(lat + ',' + lng)}`, window.location.origin);
+            url.searchParams.set('radius', '1000');
+            const resp = await fetch(url.toString(), {
+                credentials: 'same-origin',
+                signal: controller.signal,
+                headers: { 'Accept': 'application/json' }
+            });
+            let data = null;
+            try { data = await resp.json(); } catch (e) { data = null; }
+
+            if (token !== nearbyEatsToken) return;
+            const enrichWrap = document.getElementById('modal-enrichment');
+            const activeId = enrichWrap ? enrichWrap.dataset.attractionId : '';
+            if (activeId && panel.dataset.attractionId !== activeId) return;
+
+            if (!resp.ok) {
+                const message = (data && (data.error || data.message)) ||
+                    'Nearby eateries could not be loaded right now. Please try again.';
+                _nearbyEatsMessage(panel, message, a, lat, lng, true);
+                return;
+            }
+            _renderNearbyEats(panel, data || {}, a, lat, lng);
+        } catch (err) {
+            if (token !== nearbyEatsToken) return;
+            const message = (err && err.name === 'AbortError')
+                ? 'The nearby-eatery lookup timed out. Please try again.'
+                : 'Nearby eateries could not be loaded right now. Please try again.';
+            if (err && err.name !== 'AbortError') console.warn('nearby eats fetch failed', err);
+            _nearbyEatsMessage(panel, message, a, lat, lng, true);
+        } finally {
+            clearTimeout(timer);
+            if (token === nearbyEatsToken && triggerBtn) triggerBtn.disabled = false;
+            if (nearbyEatsAbort === controller) nearbyEatsAbort = null;
+        }
+    }
+
+    function _appendNearbyEatsButton(linksWrap, a, lat, lng) {
+        if (!linksWrap) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-sm btn-outline-dark rounded-pill';
+        btn.dataset.testid = 'nearby-eats-btn';
+        btn.innerHTML = '<i class="fas fa-utensils me-1"></i> Nearby Eats';
+        if (!_hasUsableCoordinates(lat, lng)) {
+            btn.disabled = true;
+            btn.title = 'This attraction has no usable coordinates, so nearby places cannot be verified.';
+            btn.innerHTML = '<i class="fas fa-utensils me-1"></i> Nearby Eats unavailable';
+        } else {
+            btn.title = 'Show eateries with verified straight-line distances from this attraction';
+            btn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                _loadNearbyEats(a, Number(lat), Number(lng), document.getElementById('modal-nearby'), btn);
+            };
+        }
+        linksWrap.appendChild(btn);
+    }
+
 
     /**
      * Requirement 2: query /api/attraction-details (Wikipedia-backed) and render
@@ -1184,6 +1506,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function _fetchAttractionDetails(a, slots, lat, lng) {
         const { enrichWrap, sourceBadge, hoursWrap, hoursVal, linksWrap } = slots;
         if (!a || !a.name) { if (enrichWrap) enrichWrap.classList.add('d-none'); return; }
+        const requestedKey = String(a.id || a.name || '');
         const url = new URL('/api/attraction-details', window.location.origin);
         url.searchParams.set('name', a.name);
         if (lat != null) url.searchParams.set('lat', String(lat));
@@ -1196,7 +1519,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.warn('attraction-details fetch failed', e);
         }
         // Guard against a late response arriving after the user switched POIs.
-        if (enrichWrap && enrichWrap.dataset.attractionId && a.id && enrichWrap.dataset.attractionId !== a.id) return;
+        if (enrichWrap && String(enrichWrap.dataset.attractionId || '') !== requestedKey) return;
 
         const merged = data || {};
         const source = String(merged.source || a.source || '').toLowerCase();
@@ -1224,7 +1547,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (officialSite) {
             linkBits.push(`<a class="btn btn-sm btn-outline-success rounded-pill" target="_blank" rel="noopener noreferrer" href="${encodeURI(officialSite)}"><i class="fas fa-globe me-1"></i> Official website</a>`);
         }
-        if (linksWrap) linksWrap.innerHTML = linkBits.join(' ');
+        if (linksWrap) {
+            linksWrap.innerHTML = linkBits.join(' ');
+            // Requirement: "Nearby Eats" sits beside the existing Wikipedia link
+            // and is wired to this attraction's own coordinates.
+            _appendNearbyEatsButton(linksWrap, a, lat, lng);
+        }
 
         // If Wikipedia returned a richer description than what we already had,
         // swap it in — but only when the backend flagged it as sourced.
@@ -1268,7 +1596,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const hoursWrap = document.getElementById('modal-hours');
         const hoursVal  = document.getElementById('modal-hours-value');
         const linksWrap = document.getElementById('modal-links');
-        if (enrichWrap) { enrichWrap.classList.remove('d-none'); enrichWrap.dataset.attractionId = id || ''; }
+        if (enrichWrap) { enrichWrap.classList.remove('d-none'); enrichWrap.dataset.attractionId = id || a.name || ''; }
+        // A new attraction must never inherit the previous attraction's eateries
+        // or an in-flight response from it.
+        nearbyEatsToken += 1;
+        if (nearbyEatsAbort) { nearbyEatsAbort.abort(); nearbyEatsAbort = null; }
+        const nearbyPanel = document.getElementById('modal-nearby');
+        if (nearbyPanel) {
+            nearbyPanel.classList.add('d-none');
+            nearbyPanel.innerHTML = '';
+            delete nearbyPanel.dataset.attractionId;
+        }
         if (sourceBadge) sourceBadge.innerHTML = '<i class="fas fa-circle-notch fa-spin me-1"></i> Looking up verified details…';
         if (hoursWrap) hoursWrap.classList.add('d-none');
         if (linksWrap) linksWrap.innerHTML = '';
@@ -1288,17 +1626,9 @@ document.addEventListener('DOMContentLoaded', () => {
         img.style.display = 'block';
         img.src = fieldImage(a);
         img.onerror = function() {
-            const hash = a.name ? a.name.charCodeAt(0) % 6 : 0;
-            const fallbacks = [
-                "https://images.unsplash.com/photo-1502602898657-3e9076113801",
-                "https://images.unsplash.com/photo-1564507592333-c60657eea523",
-                "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf",
-                "https://images.unsplash.com/photo-1537996194471-e657df975ab4",
-                "https://images.unsplash.com/photo-1512453979798-5ea266f8880c",
-                "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9"
-            ];
-            this.src = fallbacks[hash] + '?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80';
+            // Never substitute a stock photo of a different place.
             this.onerror = null;
+            this.src = PLACEHOLDER_IMG;
         };
 
         const addBtn = document.getElementById('modal-add-btn');
@@ -1442,7 +1772,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             card.innerHTML = `
                 <div class="position-relative">
-                    <img src="${escapeHtml(acc.image_url || fieldImage(acc))}" class="bento-img" onerror="this.style.display='none'">
+                    <img src="${escapeHtml(acc.image_url || fieldImage(acc))}" class="bento-img" alt="${escapeHtml(acc.name || 'Accommodation')}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${PLACEHOLDER_IMG}';">
                     ${tierBadge}
                 </div>
                 <div class="bento-content">
@@ -1583,7 +1913,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             card.innerHTML = `
                 <div class="position-relative">
-                    <img src="${escapeHtml(s.image_url || fieldImage(s))}" class="bento-img" onerror="this.style.display='none'">
+                    <img src="${escapeHtml(s.image_url || fieldImage(s))}" class="bento-img" alt="${escapeHtml(s.name || 'Stop')}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${PLACEHOLDER_IMG}';">
                     ${badgeHtml}
                 </div>
                 <div class="bento-content">
@@ -1778,7 +2108,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="timeline-dot cursor-grab"></div>
                     <div class="timeline-time">${escapeHtml(spot.start_time || '09:00 AM')}</div>
                     <div class="timeline-content">
-                        ${spot.category !== 'Food' ? `<img src="${escapeHtml(fieldImage(spot))}" class="timeline-img" onerror="this.style.display='none'">` : ''}
+                        ${spot.category !== 'Food' ? `<img src="${escapeHtml(fieldImage(spot))}" class="timeline-img" alt="${escapeHtml(spot.name || 'Attraction')}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${PLACEHOLDER_IMG}';">` : ''}
                         <div>
                             <h5 class="Bricolage mb-1">${escapeHtml(spot.name || '')}</h5>
                             <p class="text-secondary small mb-2"><i class="fas fa-map-marker-alt text-accent me-1"></i> ${escapeHtml(spot.category || 'Attraction')}</p>
@@ -2786,7 +3116,11 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         const ids = Array.from(state.selectedAttractionIds);
-        const params = { selected_attraction_ids: JSON.stringify(ids), force_continue: 'true' };
+        // First click asks the backend to validate the selection. A second
+        // click (after the warning) is the user's explicit override.
+        const forceContinue = state.allowInsufficientSelection ? 'true' : 'false';
+        state.allowInsufficientSelection = false;
+        const params = { selected_attraction_ids: JSON.stringify(ids), force_continue: forceContinue };
         if (state.selectedAccommodationId) params.selected_accommodation_id = state.selectedAccommodationId;
 
         state.generating = true;
@@ -2896,6 +3230,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const auth = currentUser();
     const params = new URLSearchParams(window.location.search);
     const dest = params.get('dest') || (function () { try { return sessionStorage.getItem('explorex_dest'); } catch (e) { return null; } })();
+    // Remember the tab the *user* last chose before enterApp() opens Chat.
+    const savedTab = (function () { try { return sessionStorage.getItem('explorex_tab'); } catch (e) { return null; } })();
 
     if (auth.authenticated) {
         enterApp(auth.userName);
@@ -2906,9 +3242,12 @@ document.addEventListener('DOMContentLoaded', () => {
             startTrip(dest);
         } else {
             // Refresh with no pending destination: pull the current trip back
-            // from the backend so the session survives a page reload.
+            // from the backend so the session survives a page reload. Restoring
+            // data must not navigate; only re-open a tab the user chose before.
             restoreFromServer().then(hadTrip => {
-                if (hadTrip && state.itinerary) switchTab('itinerary');
+                if (hadTrip && savedTab && savedTab !== 'landing' && savedTab !== 'chat') {
+                    switchTab(savedTab, { persist: false });
+                }
             });
         }
     } else {
@@ -3137,7 +3476,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    if (state.currentTab && state.currentTab !== 'landing') { updateAssistantVisibility(); refreshAssistant(false); }
+    if (state.currentTab && state.currentTab !== 'landing') { updateAssistantVisibility(); }
+    // Prime the assistant rail on every view, including the anonymous landing.
+    // Otherwise the static "Loading your trip…" placeholder in index.html can
+    // stay forever when there is no session yet.
+    refreshAssistant(false);
     syncEarth();
 });
 

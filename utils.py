@@ -6,6 +6,30 @@ import dotenv
 
 dotenv.load_dotenv()
 
+# The supported Google GenAI SDK (``from google import genai``).  The retired
+# ``google.generativeai`` package must not be imported anywhere in this project.
+_GENAI_CLIENTS: Dict[str, Any] = {}
+
+
+def _get_genai_client():
+    """Return a cached ``google.genai.Client`` or ``None`` when unconfigured.
+
+    The key is read from the environment only (``GEMINI_API_KEY`` first, then
+    ``GOOGLE_API_KEY``) and is never printed or embedded in an exception.
+    """
+    api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+    if not api_key:
+        print("[GENAI] No GEMINI_API_KEY/GOOGLE_API_KEY configured; skipping request.")
+        return None
+    client = _GENAI_CLIENTS.get(api_key)
+    if client is None:
+        from google import genai
+
+        client = genai.Client(api_key=api_key)
+        _GENAI_CLIENTS[api_key] = client
+    return client
+
+
 # Use Google Gemini to ask questions
 def ask_openai(
     prompt: str,
@@ -13,22 +37,34 @@ def ask_openai(
     temperature: float = 0.7,
     max_tokens: int = 600  # Reduced for India-only scope — faster & cheaper LLM calls
 ) -> Optional[Dict[str, Any]]:
-    """Wrapper kept as ask_openai for compatibility, now uses Gemini under the hood."""
+    """Compatibility wrapper that now calls the supported ``google-genai`` SDK.
+
+    The name is historical (the app once used OpenAI); callers keep the same
+    ``{"answer": ...}`` contract.  Prompts, model selection, temperature and
+    output-token limits are unchanged.
+    """
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        gemini_model = genai.GenerativeModel(model)
-        response = gemini_model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
+        client = _get_genai_client()
+        if client is None:
+            return None
+        from google.genai import types
+
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 temperature=temperature,
-                max_output_tokens=max_tokens
-            )
+                max_output_tokens=max_tokens,
+            ),
         )
-        answer = response.text
+        answer = getattr(response, "text", None)
+        if not answer:
+            print("[GENAI] Empty response from model.")
+            return None
         return {"answer": answer}
     except Exception as e:
-        print(f"❌ fail in ask_openai (Gemini): {str(e)}")
+        # Never echo the API key or the full request payload.
+        print(f"[GENAI] ask_openai failed: {type(e).__name__}: {str(e)[:300]}")
         return None
 
 

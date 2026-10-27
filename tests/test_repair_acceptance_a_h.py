@@ -648,7 +648,7 @@ def _japan_information_agent():
         "No additional background knowledge found."
     )
 
-    def _provider(lat, lng, radius, hobbies, poi_type):
+    def _provider(lat, lng, radius, hobbies, poi_type, city=None):
         # Only Tokyo, Kyoto and Osaka have live data; the other proposed cities
         # fail (provider outage) and must simply contribute nothing.
         if abs(lat - 35.6762) < 0.1:
@@ -837,3 +837,128 @@ def test_h_mocked_japan_trip_end_to_end():
     assert normalized["within_budget"] is False
     assert normalized["budget_infeasible"] is True
     assert normalized["min_viable_cost"] > 40000
+
+
+def test_h2_final_client_payload_and_email_use_the_same_itinerary(monkeypatch):
+    """The last mile: /api/state and /api/email must serve the final plan.
+
+    This extends the mocked Japan trip above through the two contracts the SPA
+    actually consumes, so a Python/runtime upgrade cannot silently change the
+    itinerary shape, drop map coordinates, or email a different budget.
+    """
+    import main as main_module
+
+    wf = _japan_workflow()
+    info_result = wf._process_information()
+    wf.state["selected_attractions"] = [dict(a) for a in info_result["attractions"]]
+    wf.state["email_sent"] = False
+    wf.state.pop("email_sent_to", None)
+
+    # 1. Map markers are built from the same attraction records.
+    map_data = wf.recommend_agent.generate_map_data(wf.state["attractions"])
+    assert len(map_data) == 6
+    assert all(m.get("lat") is not None and m.get("lng") is not None
+               for m in map_data), "every map marker needs real coordinates"
+
+    wf._process_communication(user_input="continue")
+    # The strategy agent is mocked in this fixture (no live LLM); supply the
+    # planner output it would have produced, including a repeat and a
+    # hallucinated name that the route stage must normalise away.
+    wf.state["daily_plan"] = {
+        "day1": ["Tokyo Skytree", "Senso-ji", "Tokyo Skytree", "Hallucinated Palace"],
+        "day2": ["Fushimi Inari Taisha", "Kiyomizu-dera"],
+        "day3": ["Dotonbori", "Osaka Castle", "Senso-ji"],
+    }
+
+    from agents.route_agent import RouteAgent
+
+    route_agent = RouteAgent.__new__(RouteAgent)
+    route_agent.api_key = None
+    route_agent.distances_cache = {}
+    route_agent._restaurant_cache = {}
+    route_agent._last_routing = {"source": "none", "optimized": False,
+                                 "status": "not_attempted"}
+    route_agent.info_agent = None
+    wf.route_agent = route_agent
+
+    route_result = wf._process_route()
+    assert route_result["next_step"] == "complete"
+
+    expected = {
+        "Tokyo Skytree", "Senso-ji", "Fushimi Inari Taisha",
+        "Kiyomizu-dera", "Dotonbori", "Osaka Castle",
+    }
+
+    # 2. The client state endpoint returns the final itinerary + budget.
+    main_module.workflows["py313-e2e"] = wf
+    client = main_module.app.test_client()
+    with client.session_transaction() as s:
+        s["session_id"] = "py313-e2e"
+        s["user_email"] = "asha@example.com"
+
+    api = client.get("/api/state").get_json()
+    assert api["status"] == "success"
+    trip = api["trip"]
+    assert trip["destination"] == "Japan"
+    assert trip["destination_scope"]["kind"] == "country"
+    assert trip["provider_status"]["overpass"]["state"] == "error"
+
+    days = trip["itinerary"]["days"]
+    assert [d["day"] for d in days] == [1, 2, 3]
+    scheduled = [
+        spot["name"] for d in days for spot in d["activities"]
+        if spot.get("entry_type") == "attraction"
+    ]
+    assert sorted(scheduled) == sorted(expected)
+    assert all(spot.get("day") == d["day"]
+               for d in days for spot in d["activities"]
+               if spot.get("entry_type") == "attraction")
+
+    assert trip["budget"]["budget_limit"] == 40000
+    normalized = trip["budget_normalized"]
+    assert normalized["budget_limit"] == 40000
+    assert normalized["budget_infeasible"] is True
+    # The page and the email must quote the same total.
+    assert round(float(normalized["total"]), 2) == round(
+        float(trip["budget"]["estimated_total"]), 2
+    )
+
+    # 3. The email payload is built from server-side state, not the request body.
+    monkeypatch.setenv("MAIL_SERVER", "smtp.example.com")
+    monkeypatch.setenv("MAIL_USERNAME", "explorex@example.com")
+    captured = {}
+
+    def fake_send(email, user_name, city, itinerary, budget, confirmation,
+                  notes=None, trip_context=None):
+        captured.update({
+            "email": email, "city": city, "itinerary": itinerary,
+            "budget": budget, "trip_context": trip_context,
+        })
+        return True
+
+    monkeypatch.setattr(main_module, "send_trip_email", fake_send)
+    response = client.post("/api/email", json={
+        "email": "asha@example.com",
+        # A tampered body must not replace the server's itinerary.
+        "itinerary": [{"day": 1, "activities": [{"name": "Injected Place"}]}],
+    })
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+
+    assert captured["email"] == "asha@example.com"
+    assert captured["city"] == "Japan"
+    assert captured["itinerary"] == wf.state["itinerary"]
+    assert captured["budget"]["budget_limit"] == 40000
+    assert captured["trip_context"]["people"] == 2
+    assert captured["trip_context"]["origin"] == "Hyderabad"
+    emailed = [
+        act["name"] for day in captured["itinerary"]
+        for act in day.get("activities", [])
+        if act.get("entry_type") == "attraction"
+    ]
+    assert sorted(emailed) == sorted(expected)
+    assert "Injected Place" not in emailed
+    assert wf.state["email_sent"] is True
+
+    # Keep the module-level store clean for other tests.
+    main_module.workflows.pop("py313-e2e", None)

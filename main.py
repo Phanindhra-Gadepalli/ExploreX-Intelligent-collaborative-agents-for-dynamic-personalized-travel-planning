@@ -292,6 +292,12 @@ def normalize_itinerary_for_client(raw_itinerary):
             "spots": raw_spots,
             "unscheduled": day.get("unscheduled") or [],
         }
+        # Routing provenance is computed per day by the route agent. Dropping it
+        # here would make the client contract less informative than the state it
+        # projects, so carry it through unchanged (including explicit nulls).
+        for field in ("routing_source", "routing_status", "routing_optimized", "routing_note"):
+            if field in day:
+                d[field] = day[field]
         for seq, spot in enumerate(raw_spots, start=1):
             # Every activity carries its day + position so the map, the itinerary
             # page and the email can all reference the same stop unambiguously.
@@ -547,7 +553,7 @@ def get_state():
 
     Read-only: never mutates the workflow. Returns trip=None when there is no
     active session/workflow yet (e.g. immediately after New Trip)."""
-    session_id = session.get('session_id')
+    session_id = request.args.get('session_id') or session.get('session_id')
     if not session_id or session_id not in workflows:
         return jsonify({"status": "success", "session_id": session_id, "trip": None})
 
@@ -1184,29 +1190,97 @@ def stream():
 
 @app.route('/api/nearby/<attraction_id>')
 def get_nearby_places(attraction_id):
-    """Get nearby restaurants and street information for an attraction"""
-    session_id = session.get('session_id')
-    
-    if not session_id or session_id not in workflows:
-        return jsonify({"error": "Session not found"}), 404
-    
-    workflow = workflows[session_id]
-    info_agent = workflow.info_agent
-    
-    # Parse coordinates from attraction_id
+    """Return real eateries around one attraction coordinate.
+
+    ``attraction_id`` is the ``lat,lng`` pair of the selected attraction (the
+    same contract as before). The response keeps the existing ``restaurants``
+    list and adds verified straight-line distances, coordinates and map links.
+    A session is no longer required, so the modal also works for guests.
+    """
     try:
-        lat_str, lng_str = attraction_id.split(',')
+        lat_str, lng_str = attraction_id.split(',', 1)
         lat, lng = float(lat_str), float(lng_str)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return jsonify({"error": "Invalid coordinates format. Use 'lat,lng'."}), 400
-    
+
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+        return jsonify({"error": "Coordinates are outside the valid latitude/longitude range."}), 400
+
     try:
-        result = info_agent.search_nearby_places(lat, lng)
+        radius = int(request.args.get('radius', 1000))
+    except (TypeError, ValueError):
+        radius = 1000
+
+    poi_manager = None
+    session_id = session.get('session_id')
+    if session_id:
+        workflow = workflows.get(session_id)
+        if workflow is not None:
+            info_agent = getattr(workflow, 'info_agent', None)
+            poi_manager = getattr(info_agent, 'poi_manager', None)
+    if poi_manager is None:
+        from services.poi_fallback import get_shared_poi_manager
+        poi_manager = get_shared_poi_manager()
+
+    try:
+        result = poi_manager.get_nearby_eateries(lat, lng, radius=radius)
         return jsonify(result)
     except Exception as e:
         return error_response(e, "api/nearby",
                               fallback="Nearby places could not be loaded for this stop right now.")
-    
+
+@app.route('/api/attraction-image', methods=['GET'])
+def get_attraction_image_endpoint():
+    """Resolve one attraction image on demand.
+
+    Query params: ``name`` (required), ``city``, ``country``, ``lat``, ``lng``.
+    Returns ``image_url`` from a provider image, a verified Wikimedia source, a
+    relevant Pexels photo, or the guaranteed representative fallback (category
+    photo / nearby Commons / destination / generated travel card).  ``source``
+    reports which stage supplied it; ``image_is_representative`` is true when
+    the image is not a verified photo of the exact attraction.
+    """
+    from services.attraction_images import get_image_resolver
+
+    name = (request.args.get('name') or '').strip()
+    if not name:
+        return jsonify({'status': 'error', 'error': 'name parameter is required'}), 400
+
+    city = (request.args.get('city') or '').strip()
+    country = (request.args.get('country') or '').strip()
+
+    def _coord(key):
+        try:
+            value = float(request.args.get(key))
+        except (TypeError, ValueError):
+            return None
+        return value
+
+    poi = {
+        'name': name,
+        'city': city,
+        'country': country,
+        'latitude': _coord('lat'),
+        'longitude': _coord('lng'),
+    }
+    try:
+        resolver = get_image_resolver()
+        image_url = resolver.resolve(poi, city=city or None, guarantee=True)
+        source = None
+        if image_url:
+            source = poi.get('image_source') or 'verified'
+        return jsonify({
+            'status': 'success',
+            'image_url': image_url,
+            'source': source,
+            'image_is_representative': bool(poi.get('image_is_representative')),
+            'diagnostics': dict(resolver.last_status),
+        })
+    except Exception as e:
+        return error_response(e, "api/attraction-image",
+                              fallback="The attraction image could not be resolved right now.")
+
+
 @app.route('/api/attraction-details', methods=['GET'])
 def get_attraction_details_endpoint():
     """

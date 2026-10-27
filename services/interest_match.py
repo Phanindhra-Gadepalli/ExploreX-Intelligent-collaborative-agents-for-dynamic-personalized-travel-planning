@@ -62,23 +62,28 @@ INTEREST_GROUPS: Dict[str, Dict[str, Sequence[str]]] = {
     "nature": {
         "aliases": (
             "nature", "outdoors", "outdoor", "parks", "park", "garden", "gardens",
-            "wildlife", "forest", "lake", "waterfall", "beach", "island",
+            "wildlife", "forest", "lake", "waterfall", "beach", "beaches", "island",
+            "seaside", "coast", "backwaters",
         ),
         "evidence": (
             "nature", "park", "garden", "forest", "woodland", "wildlife", "sanctuary",
-            "national park", "lake", "river", "waterfall", "beach", "coast", "island",
+            "national park", "lake", "river", "waterfall", "beach", "beaches", "coast",
+            "coastline", "seaside", "shore", "island", "backwater", "backwaters",
             "mountain", "valley", "meadow", "woods", "自然", "公園", "庭園", "森",
             "湖", "滝", "川", "海", "島", "山",
         ),
     },
     "mountains": {
         "aliases": (
-            "mountain", "mountains", "mountain range", "peak", "summit", "alpine",
-            "highland", "highlands", "hiking trail",
+            "mountain", "mountains", "mountain range", "peak", "peaks", "summit",
+            "alpine", "highland", "highlands", "hill", "hills", "hill station",
+            "hill stations", "hiking trail",
         ),
         "evidence": (
-            "mountain", "mount", "peak", "summit", "alpine", "highland", "ridge",
-            "volcano", "crater", "山", "岳", "峰", "連峰", "高原",
+            "mountain", "mountains", "mount", "peak", "summit", "alpine", "highland",
+            "highlands", "ridge", "volcano", "crater", "hill", "hills", "hill station",
+            "tea garden", "tea plantation", "plantation", "ghat", "山", "岳", "峰",
+            "連峰", "高原",
         ),
     },
     "temples": {
@@ -208,6 +213,9 @@ _OSM_TAG_EVIDENCE: Dict[Tuple[str, str], Set[str]] = {
     ("natural", "lake"): {"nature", "photography"},
     ("natural", "wood"): {"nature"},
     ("natural", "beach"): {"nature", "photography"},
+    ("natural", "hill"): {"mountains", "nature", "viewpoints"},
+    ("leisure", "beach_resort"): {"nature", "photography"},
+    ("natural", "water"): {"nature", "photography"},
     ("historic", "castle"): {"history", "architecture"},
     ("historic", "temple"): {"temples", "history"},
     ("historic", "shrine"): {"temples", "history"},
@@ -228,6 +236,12 @@ _CATEGORY_GROUP_HINTS: Dict[str, Set[str]] = {
     "park": {"nature", "family"},
     "garden": {"nature", "photography"},
     "mountain": {"mountains", "nature", "viewpoints"},
+    "hill": {"mountains", "nature", "viewpoints"},
+    "beach": {"nature", "photography"},
+    "waterfall": {"nature", "photography"},
+    "backwater": {"nature"},
+    "lake": {"nature", "photography"},
+    "view point": {"viewpoints", "photography"},
     "temple": {"temples", "history"},
     "shrine": {"temples", "history"},
     "spiritual": {"temples"},
@@ -330,10 +344,27 @@ def _term_present(term: str, haystack: str) -> bool:
     term = str(term).strip().lower()
     if not term:
         return False
-    # Word-boundary match for ASCII, substring match for CJK (no spaces).
+    # Substring match for CJK (no spaces) keeps working without word boundaries.
     if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", term):
         return term in haystack
-    return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", haystack) is not None
+
+    # Accept the common plural forms so "beaches" matches the "beach" group and
+    # "galleries" matches "gallery" without maintaining every spelling by hand.
+    variants = {term}
+    if term.endswith("y") and len(term) > 2:
+        variants.add(term[:-1] + "ies")
+    elif term.endswith(("ch", "sh", "x", "z", "ss")):
+        variants.add(term + "es")
+    elif term.endswith("s") and len(term) > 3:
+        variants.add(term[:-1])
+    else:
+        variants.add(term + "s")
+
+    for variant in variants:
+        pattern = r"(?<![a-z0-9])" + re.escape(variant) + r"(?![a-z0-9])"
+        if re.search(pattern, haystack):
+            return True
+    return False
 
 
 def attraction_text_pool(attr: Dict[str, Any]) -> str:

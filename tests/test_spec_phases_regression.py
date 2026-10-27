@@ -290,7 +290,8 @@ def test_normalize_itinerary_coerces_day_labels_and_stamps_the_contract():
     import main
 
     raw = [
-        {"day": "day1", "date": "2026-11-01", "activities": [
+        {"day": "day1", "date": "2026-11-01", "routing_source": "osrm_trip",
+         "routing_status": "ok", "routing_optimized": True, "activities": [
             {"name": "Tiger Hill", "id": "g1", "location": {"lat": 27.0, "lng": 88.27}},
             {"name": "Batasia Loop", "id": 42, "latitude": 27.01, "longitude": 88.26},
         ]},
@@ -304,6 +305,9 @@ def test_normalize_itinerary_coerces_day_labels_and_stamps_the_contract():
 
     assert [d["day"] for d in out] == [1, 2, 3], "every day label must become an int"
     assert len(out) == 3, "ALL days must be delivered, not just the active one"
+    assert out[0]["routing_source"] == "osrm_trip"
+    assert out[0]["routing_status"] == "ok"
+    assert out[0]["routing_optimized"] is True
     first = out[0]["activities"]
     assert [a["sequence"] for a in first] == [1, 2]
     assert first[0]["attraction_id"] == "g1" and first[1]["attraction_id"] == "42"

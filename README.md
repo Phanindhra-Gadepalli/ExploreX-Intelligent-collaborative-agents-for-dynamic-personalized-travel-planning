@@ -8,14 +8,17 @@ ExploreX is an autonomous, multi-agent travel planning system that generates hig
 - **100% Free-Tier Architecture:** Built without paid geospatial dependencies (no Google Maps billing). Uses a robust fallback cascade (Geoapify → Nominatim → OSM Overpass).
 - **RAG-Powered Accuracy:** Uses a local vector database to ground recommendations in factual, localized travel guides.
 - **Weather-Aware:** Dynamically adjusts recommendations based on real-time weather forecasts.
-- **Holistic Itineraries:** Automatically generates daily plans, routes, transit methods, and budget estimates.
+- **Holistic Itineraries:** Automatically generates daily plans, routes, transit methods, and budget estimates, including an honest advisory when a strict budget cannot be met.
+- **Guaranteed Imagery:** Attraction cards use provider/Wikipedia/Wikidata/Commons images first, then a relevance-checked Pexels photo. If no verified photo exists, the card still gets a real representative image (category + destination Pexels, a nearby Commons photo, or the destination image) and, as a final guarantee, a generated ExploreX travel card carrying the attraction's name. Representative images are labelled as such; cards with verified photos render first.
+- **Nearby Eats:** The attraction modal lists real OSM/Geoapify eateries (restaurants, cafes, food stalls, bakeries) with cuisine, address, a map link and a straight-line (haversine) distance computed from that attraction's own coordinates - never the user's location and never a walking/road estimate.
+- **Non-Intrusive UI:** Backend progress never moves the user between tabs; only explicit user actions (tab click, "View Attractions", chat action) change the view.
 
 ## Technology Stack
 - **Backend:** Flask, Python
 - **AI & ML:** LangChain, Google Gemini LLM, HuggingFace Embeddings
 - **Vector Database:** ChromaDB
 - **Geospatial & APIs:** Geoapify, Nominatim, OpenStreetMap (Overpass API), RapidAPI
-- **Frontend:** HTML, CSS, Vanilla JavaScript, Folium (Maps)
+- **Frontend:** HTML, CSS, Vanilla JavaScript, Leaflet (Maps)
 
 ## Architecture Overview
 ExploreX relies on a state machine (`TravelGraph`) to orchestrate a sequence of specialized AI agents:
@@ -40,19 +43,34 @@ ExploreX relies on a state machine (`TravelGraph`) to orchestrate a sequence of 
    cd ExploreX-Intelligent-collaborative-agents-for-dynamic-personalized-travel-planning
    ```
 
-2. **Set up a virtual environment:**
+2. **Set up a virtual environment (Python 3.13):**
    ```bash
-   python -m venv venv
-   # Windows
-   venv\Scripts\activate
-   # Mac/Linux
-   source venv/bin/activate
+   # Windows (this repository is verified on CPython 3.13 x64)
+   py -3.13 -m venv .venv313
+   .\.venv313\Scripts\Activate.ps1
+   python --version    # must report Python 3.13.x
+
+   # macOS / Linux
+   python3.13 -m venv .venv313
+   source .venv313/bin/activate
    ```
+   `requirements.txt` is also kept installable on CPython 3.11 (NumPy 2.1+,
+   ChromaDB 1.x and the LangChain 0.3 stack all ship wheels for both).
 
 3. **Install dependencies:**
    ```bash
+   python -m pip install --upgrade pip
    pip install -r requirements.txt
    ```
+
+4. **Build the local vector database (RAG knowledge base):**
+   ```bash
+   python services/document_ingestion.py --rebuild
+   ```
+   ChromaDB's on-disk schema is version-specific. After changing the ChromaDB
+   major version (as the Python 3.13 migration does), rebuild it once rather
+   than pointing the client at an older `data/vector_db`. The folder is
+   gitignored and regenerated from `services/document_ingestion.py`.
 
 ## Environment Variables
 Create a `.env` file in the root directory. Never commit this file to version control.
@@ -68,11 +86,31 @@ PYTHONIOENCODING=utf-8
 
 ## Running Locally
 
-Execute the following command to start the Flask development server:
-```bash
+Start the Flask development server from the Python 3.13 environment:
+```powershell
+.\.venv313\Scripts\python.exe main.py
+# or, with the environment activated:
 python main.py
 ```
-Access the application in your browser at `http://127.0.0.1:8000`.
+Access the application at `http://127.0.0.1:8000`.
+
+Production-style start (Waitress, no debug/reloader):
+```powershell
+$env:PRODUCTION = "1"
+$env:HOST = "127.0.0.1"
+$env:PORT = "8000"
+.\.venv313\Scripts\python.exe main.py
+```
+
+Health check (no credentials or provider calls required):
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/health
+```
+
+Run the test suite (external providers/LLMs are mocked):
+```powershell
+.\.venv313\Scripts\python.exe -m pytest tests -q
+```
 
 ## Usage
 1. Open the web interface.
@@ -82,10 +120,11 @@ Access the application in your browser at `http://127.0.0.1:8000`.
 5. ExploreX will compute the optimal daily route, transit options, and overall budget.
 
 ## API / External Services
-- **Gemini (Google Generative AI):** Core LLM inference.
+- **Gemini (via the supported `google-genai` SDK):** Core LLM inference.
 - **ChromaDB:** Local vector storage for RAG.
-- **Geoapify & Nominatim (OSM):** Location validation and geocoding.
-- **Overpass API (OSM):** POI and attraction fetching.
+- **Geoapify & Nominatim (OSM):** Location validation, geocoding and the primary Places POI source.
+- **Overpass API (OSM):** Additional POI coverage (cached, time-budgeted, circuit-broken).
+- **Wikipedia / Wikidata:** Optional notability enrichment and verified attraction images.
 - **RapidAPI:** Weather and regional fuel data.
 
 ## Limitations

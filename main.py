@@ -1,10 +1,56 @@
 import sys
-import io
-# Fix Windows console encoding - prevents UnicodeEncodeError from non-ASCII Gemini responses
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-if sys.stderr.encoding != 'utf-8':
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+# ---------------------------------------------------------------------------
+# Console safety
+# ---------------------------------------------------------------------------
+# (1) Fix the Windows console encoding so non-ASCII provider text cannot raise
+#     UnicodeEncodeError.  This must use ``reconfigure``: wrapping
+#     ``sys.stdout.buffer`` in a second TextIOWrapper leaves the original
+#     wrapper unreferenced when a launcher/IDE replaced the streams, so the
+#     garbage collector closes the shared buffer.  Every later flush then
+#     fails with ``OSError: [Errno 22] Invalid argument`` - typically inside
+#     tqdm while the embedding model loads, which surfaced as a 500 on the
+#     landing page.
+# (2) Never let a broken/closed console turn a handled error into a crash.
+#     ``safe_print``/``log_exception`` swallow stream errors so logging can
+#     never take down a request.
+def _configure_console_encoding():
+    """Re-encode the console streams in place, never by proxying their buffer."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        try:
+            encoding = (getattr(stream, "encoding", "") or "").lower()
+            if encoding in ("utf-8", "utf8"):
+                continue
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is not None:
+                reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
+_configure_console_encoding()
+
+
+def safe_print(*args, **kwargs):
+    """``print`` that can never raise because the console was closed."""
+    try:
+        print(*args, **kwargs)
+    except (OSError, ValueError, UnicodeError, AttributeError):
+        pass
+
+
+def log_exception(context=""):
+    """Print the active traceback without depending on a working console."""
+    try:
+        text = traceback.format_exc()
+    except Exception:  # noqa: BLE001 - logging must never raise
+        text = "traceback unavailable"
+    if context:
+        safe_print(f"[ERROR] {context}")
+    safe_print(text)
 
 # Definitive fix for chromadb posthog telemetry errors and SQLite threading issues
 from unittest.mock import MagicMock
@@ -208,8 +254,8 @@ _INTERNAL_MARKERS = (
 def log_error(context, exc):
     """Log a full server-side trace and return a short correlation reference."""
     ref = uuid.uuid4().hex[:8]
-    print(f"[ERROR][{context}][ref={ref}] {type(exc).__name__}: {exc}")
-    traceback.print_exc()
+    safe_print(f"[ERROR][{context}][ref={ref}] {type(exc).__name__}: {exc}")
+    log_exception()
     return ref
 
 
@@ -473,9 +519,8 @@ def index():
             workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
             print(f"[DEBUG] Restored workflow on page reload: {session_id}")
         except Exception as e:
-            print(f"[ERROR] Failed to restore TravelGraph for {session_id}: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            safe_print(f"[ERROR] Failed to restore TravelGraph for {session_id}: {str(e)}")
+            log_exception()
     
     # Restore auth data
     if is_auth:
@@ -490,9 +535,8 @@ def index():
             workflows[session_id] = TravelGraph(user_name=u_name, user_email=u_email)
             print(f"[DEBUG] Created fresh session on page load: {session_id}")
         except Exception as e:
-            print(f"[ERROR] Failed to create TravelGraph: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            safe_print(f"[ERROR] Failed to create TravelGraph: {str(e)}")
+            log_exception()
     
     # Load popular attractions
     try:
@@ -901,9 +945,8 @@ def send_email_api():
         )
     except Exception as exc:
         # Log detail server-side only; never leak it to the client.
-        import traceback
-        print(f"[EMAIL][ERROR] Unexpected failure sending to {email}: {exc}")
-        traceback.print_exc()
+        safe_print(f"[EMAIL][ERROR] Unexpected failure sending to {email}: {exc}")
+        log_exception()
         success = False
     finally:
         _EMAIL_INFLIGHT.pop(session_id, None)
@@ -956,9 +999,8 @@ def stream():
         except Exception as e:
             # The exception text can contain absolute paths or provider detail;
             # log it here and give the client a generic, safe message instead.
-            print(f"[ERROR] Failed to create TravelGraph: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
+            safe_print(f"[ERROR] Failed to create TravelGraph: {type(e).__name__}: {e}")
+            log_exception()
             return Response('data: {"type": "error", "error": "Failed to initialize workflow. Please refresh and try again."}', mimetype='text/event-stream')
     else:
         print(f"[DEBUG] Reusing existing session: {session_id}")
@@ -1056,14 +1098,12 @@ def stream():
                                         if text:
                                             step_queue.put(('chunk', text))
                             except Exception as stream_err:
-                                import traceback
-                                print(f"[ERROR] Exception while consuming stream for step '{step}': {stream_err}")
-                                traceback.print_exc()
+                                safe_print(f"[ERROR] Exception while consuming stream for step '{step}': {stream_err}")
+                                log_exception()
                         step_box['result'] = r
                     except Exception as step_err:
-                        import traceback
-                        print(f"[ERROR] Step '{step}' failed: {step_err}")
-                        traceback.print_exc()
+                        safe_print(f"[ERROR] Step '{step}' failed: {step_err}")
+                        log_exception()
                         step_box['error'] = step_err
                     finally:
                         step_queue.put(('done', None))
@@ -1164,9 +1204,7 @@ def stream():
                 completion_json = json.dumps(completion_data)
                 yield f"data: {completion_json}\n\n"
             except TypeError as e:
-                import traceback
-                traceback.print_exc()
-                print(f"[DIAGNOSTIC] JSON serialization failed! Error: {e}")
+                log_exception(f"JSON serialization failed: {e}")
                 for k, v in completion_data.items():
                     try:
                         json.dumps(v)

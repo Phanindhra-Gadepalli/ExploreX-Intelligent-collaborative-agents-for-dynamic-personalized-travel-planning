@@ -13,11 +13,91 @@ regardless of source, so all downstream agents work without modification.
 import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Weight loading draws a tqdm bar. tqdm flushes sys.stderr on every update, and
+# on Windows a console that a launcher/IDE has replaced or closed raises
+# "OSError: [Errno 22] Invalid argument" from that flush - which aborted model
+# loading and surfaced as a 500 on the landing page. Progress bars add nothing
+# here, so disable them before transformers/sentence-transformers are imported.
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+import sys
 import time
 import hashlib
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from chromadb.config import Settings
+
+
+def _safe_print(*args, **kwargs):
+    """Print without letting a closed/replaced console raise OSError."""
+    try:
+        print(*args, **kwargs)
+    except (OSError, ValueError, UnicodeError, AttributeError):
+        pass
+
+
+def _disable_progress_bars():
+    """Turn off tqdm output for the heavy transformers/sentence-transformers load."""
+    try:
+        from transformers.utils import logging as hf_logging
+        hf_logging.disable_progress_bar()
+        hf_logging.set_verbosity_error()
+    except Exception:  # noqa: BLE001 - optional dependency
+        pass
+    try:
+        import tqdm
+        tqdm.tqdm.monitor_interval = 0
+    except Exception:  # noqa: BLE001 - optional dependency
+        pass
+
+
+class _GuardedStream:
+    """Proxy that swallows stream errors from libraries that flush as they log.
+
+    tqdm (used while the embedding weights load) flushes ``sys.stderr`` on every
+    update. If the console was replaced or closed by a launcher, that flush
+    raises ``OSError: [Errno 22] Invalid argument`` and aborts model loading.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        try:
+            return self._stream.write(text)
+        except (OSError, ValueError, UnicodeError, AttributeError):
+            return len(text) if text else 1
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        except (OSError, ValueError, UnicodeError, AttributeError):
+            pass
+
+    def isatty(self):
+        try:
+            return bool(self._stream.isatty())
+        except Exception:  # noqa: BLE001 - closed handle
+            return False
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def _load_embeddings():
+    """Construct the shared embedding model, tolerating a broken console."""
+    _disable_progress_bars()
+    original_stderr = sys.stderr
+    if original_stderr is not None:
+        sys.stderr = _GuardedStream(original_stderr)
+    try:
+        return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    finally:
+        sys.stderr = original_stderr
+
+
 
 # ---------------------------------------------------------------------------
 # Known Indian cities / states for instant O(1) lookup — derived from
@@ -103,9 +183,16 @@ class RetrievalAgent:
     @classmethod
     def _get_embeddings(cls):
         if cls._shared_embeddings is None:
-            print("[STARTUP] Initializing embedding model (all-MiniLM-L6-v2)…")
-            cls._shared_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-            print("[STARTUP] Embedding model ready.")
+            _safe_print("[STARTUP] Initializing embedding model (all-MiniLM-L6-v2)...")
+            try:
+                cls._shared_embeddings = _load_embeddings()
+            except OSError as exc:
+                # A console flush error (Errno 22) must not abort startup: retry
+                # once with progress output already disabled.
+                _safe_print(f"[WARN] Embedding load hit a console error ({exc}); retrying quietly.")
+                _disable_progress_bars()
+                cls._shared_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            _safe_print("[STARTUP] Embedding model ready.")
         return cls._shared_embeddings
     # ────────────────────────────────────────────────────────────────────────
 

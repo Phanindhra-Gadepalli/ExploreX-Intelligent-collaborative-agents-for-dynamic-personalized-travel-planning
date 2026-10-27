@@ -985,16 +985,16 @@ def test_enrich_guarantees_an_image_when_every_lookup_misses(monkeypatch):
     assert resolver.last_status["state"] == "ok"
 
 
-def test_representative_pexels_uses_a_destination_photo(monkeypatch):
-    """A category + city photo is accepted only by the representative stage."""
+def test_representative_pexels_requires_category_and_destination(monkeypatch):
+    """A representative photo needs the right kind *and* the right place."""
     resolver = _pexels_resolver(monkeypatch)
     resolver._session.get = MagicMock(return_value=_json_response({"photos": [
         _pexels_photo(1212, "A white church in Kerala, India", "church-kerala"),
     ]}))
-    monkeypatch.setattr(resolver, "_resolve_commons_text_search", lambda *args, **kwargs: None)
-    monkeypatch.setattr(resolver, "_resolve_commons_nearby", lambda *args, **kwargs: None)
+    monkeypatch.setattr(resolver, "_resolve_commons_text_search", MagicMock())
     monkeypatch.setattr(resolver, "_destination_image", lambda *args, **kwargs: None)
-    poi = {"name": "St Marys Church", "city": "Kochi", "country": "India"}
+    poi = {"name": "St Marys Church", "city": "Kochi", "state": "Kerala",
+           "country": "India"}
 
     resolver._resolve_representative([poi], "Kochi")
 
@@ -1002,7 +1002,92 @@ def test_representative_pexels_uses_a_destination_photo(monkeypatch):
     assert poi["image_source"] == "pexels_representative"
     assert poi["image_is_representative"] is True
     query = resolver._session.get.call_args.kwargs["params"]["query"]
-    assert "church" in query.lower() and "kochi" in query.lower()
+    # The attraction's own name must stay in the query: a bare "church Kochi"
+    # query is what returned unrelated tourism photos before.
+    assert "st marys church" in query.lower() and "kochi" in query.lower()
+
+
+def test_representative_pexels_rejects_the_same_category_in_another_place(monkeypatch):
+    """A church in Rome must not illustrate a Kochi church, labelled or not."""
+    resolver = _pexels_resolver(monkeypatch)
+    resolver._session.get = MagicMock(return_value=_json_response({"photos": [
+        _pexels_photo(1299, "A beautiful church in Rome, Italy", "church-rome"),
+    ]}))
+    monkeypatch.setattr(resolver, "_resolve_commons_text_search", MagicMock())
+    monkeypatch.setattr(resolver, "_destination_image", lambda *args, **kwargs: None)
+    poi = {"name": "St Marys Church", "city": "Kochi", "state": "Kerala",
+           "country": "India"}
+
+    resolver._resolve_representative([poi], "Kochi")
+
+    assert poi["image_source"] == "generated"
+    assert poi["image_url"].startswith("data:image/svg+xml;base64,")
+    assert poi["image_is_representative"] is True
+
+
+def test_representative_pexels_never_adopts_an_arbitrary_photo(monkeypatch):
+    """A photo unrelated to this attraction stays a generated card."""
+    resolver = _pexels_resolver(monkeypatch)
+    resolver._session.get = MagicMock(return_value=_json_response({"photos": [
+        _pexels_photo(1213, "A lighthouse at sunset", "lighthouse-sunset"),
+    ]}))
+    monkeypatch.setattr(resolver, "_resolve_commons_text_search", MagicMock())
+    monkeypatch.setattr(resolver, "_destination_image", lambda *args, **kwargs: None)
+    poi = {"name": "St Marys Church", "city": "Kochi", "state": "Kerala",
+           "country": "India"}
+
+    resolver._resolve_representative([poi], "Kochi")
+
+    assert poi["image_source"] == "generated"
+    assert poi["image_url"].startswith("data:image/svg+xml;base64,")
+    assert poi["image_is_representative"] is True
+
+
+def test_representative_images_are_never_cached_as_verified(monkeypatch):
+    """A representative photo cannot be re-served as a verified image."""
+    resolver = _pexels_resolver(monkeypatch)
+    url = "https://images.pexels.com/photos/1212/pexels-photo-1212.jpeg?w=940"
+    # Mappings a legacy run stored under the attraction key, but only ever
+    # supplied by a representative/destination fallback.
+    resolver._cache_put(resolver._cache_key("St Marys Church", "Kochi India"),
+                        url, "pexels_representative")
+    resolver._cache_put(resolver._cache_key("Some Other Place", "Kochi India"),
+                        url, "destination")
+    resolver._session.get = MagicMock(return_value=_json_response({"photos": []}))
+    resolver._search_wikipedia = MagicMock(return_value=(None, True))
+    for stage in (
+        "_hydrate_osm_tags", "_resolve_wikipedia_titles", "_resolve_wikidata",
+        "_resolve_commons_values", "_resolve_geosearch", "_resolve_commons_geosearch",
+        "_resolve_commons_text_search", "_resolve_commons_nearby",
+    ):
+        monkeypatch.setattr(resolver, stage, lambda pois, *args, **kwargs: None)
+
+    # The unverified mappings are ignored instead of being returned as-is.
+    assert resolver.resolve({"name": "St Marys Church", "city": "Kochi",
+                             "country": "India"}, city="Kochi") is None
+    assert resolver.resolve({"name": "Some Other Place", "city": "Kochi",
+                             "country": "India"}, city="Kochi") is None
+
+    # And enrich() re-hydrates only verified sources: the card is an honest
+    # generated placeholder, never the old generic photo presented as fact.
+    resolver2 = _pexels_resolver(monkeypatch)
+    resolver2._session.get = MagicMock(return_value=_json_response({"photos": []}))
+    for stage in (
+        "_hydrate_osm_tags", "_resolve_wikipedia_titles", "_resolve_wikidata",
+        "_resolve_commons_values", "_resolve_geosearch", "_resolve_commons_geosearch",
+        "_resolve_commons_text_search", "_resolve_commons_nearby",
+    ):
+        monkeypatch.setattr(resolver2, stage, lambda pois, *args, **kwargs: None)
+    resolver2._cache_put(resolver2._cache_key("St Marys Church", "Kochi India"),
+                         url, "pexels_representative")
+    items = [{"name": "St Marys Church", "city": "Kochi", "country": "India"}]
+    resolver2.enrich(items, city="Kochi", max_lookups=0)
+    assert items[0].get("image_url") != url
+    assert items[0]["image_source"] == "generated"
+    # Every Pexels call this run made used the attraction's own name.
+    assert resolver2._session.get.call_args_list
+    for call in resolver2._session.get.call_args_list:
+        assert "st marys church" in call.kwargs["params"]["query"].lower()
 
 
 def test_generated_travel_card_is_unique_and_escapes_markup(monkeypatch):
@@ -1118,21 +1203,46 @@ def test_enrich_uses_pexels_after_the_wikimedia_stages(monkeypatch):
     assert resolver.last_status["sources"]["pexels"] == 1
 
 
-def test_resolve_prefers_a_verified_wikipedia_image_over_pexels(monkeypatch):
+def test_resolve_runs_pexels_before_the_wikipedia_name_search(monkeypatch):
+    """Pexels is the primary stock source: its name-based query runs first."""
     resolver = _pexels_resolver(monkeypatch)
     for stage in (
         "_hydrate_osm_tags", "_resolve_wikipedia_titles", "_resolve_wikidata",
         "_resolve_commons_values", "_resolve_geosearch", "_resolve_commons_geosearch",
     ):
         monkeypatch.setattr(resolver, stage, lambda pois, *args, **kwargs: None)
-    resolver._search_wikipedia = MagicMock(
-        return_value=("https://upload.wikimedia.org/taj.jpg", True)
-    )
-    resolver._session.get = MagicMock()
-    poi = {"name": "Taj Mahal", "city": "Agra", "country": "India"}
+    resolver._search_wikipedia = MagicMock(return_value=(None, True))
+    resolver._session.get = MagicMock(return_value=_json_response({"photos": [
+        _pexels_photo(707, "The Taj Mahal in Agra, India", "taj-mahal-agra"),
+    ]}))
+    poi = {"name": "Taj Mahal", "city": "Agra", "state": "Uttar Pradesh",
+           "country": "India"}
 
-    assert resolver.resolve(poi, city="Agra") == "https://upload.wikimedia.org/taj.jpg"
-    resolver._session.get.assert_not_called()
+    url = resolver.resolve(poi, city="Agra")
+
+    assert url and url.startswith("https://images.pexels.com/photos/707/")
+    assert poi["image_source"] == "pexels"
+    assert not poi.get("image_is_representative")
+    resolver._search_wikipedia.assert_not_called()
+
+
+def test_pexels_queries_always_carry_the_attraction_name():
+    """City-only or category-only queries are what surfaced wrong photos."""
+    from services.attraction_images import AttractionImageResolver
+
+    resolver = AttractionImageResolver(min_interval=0.0, timeout=0.1, pexels_key="k")
+    poi = {"name": "Marine Drive", "city": "Kochi", "state": "Kerala",
+           "country": "India"}
+    queries = resolver._pexels_queries("Marine Drive", "Kochi", poi)
+    assert len(queries) <= 2
+    assert queries[0] == "Marine Drive Kochi"
+    assert queries[1] == "Marine Drive Kerala"
+    assert all("Marine Drive" in q for q in queries)
+    # A name that already contains the place must not repeat it endlessly.
+    nested = resolver._pexels_queries("Agra Fort", "Agra, India",
+                                      {"name": "Agra Fort", "city": "Agra"})
+    assert all("Agra" in q for q in nested)
+    assert all("agra fort" in q.lower() for q in nested)
 
 
 def test_resolve_uses_pexels_when_the_wikipedia_search_is_rate_limited(monkeypatch):

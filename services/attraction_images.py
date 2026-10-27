@@ -10,40 +10,39 @@ This module resolves an image in a *verifiable* way, in stages:
 
 1. Keep a genuine provider image when one exists (``image_url`` / ``image`` /
    ``photo`` / ``thumbnail`` / ``wiki_thumbnail``), normalising the URL.
-2. Use the identifiers the providers already give us:
-   * an OSM ``image`` / ``wikimedia_commons`` / ``wikipedia`` / ``wikidata`` tag,
-   * Geoapify's ``wikidata`` / ``wikipedia`` fields.
+2. Use the exact identifiers the providers already give us (OSM ``image`` /
+   ``wikimedia_commons`` / ``wikipedia`` / ``wikidata`` tags, Geoapify's
+   ``wikidata`` / ``wikipedia`` fields, Wikipedia/GeoSearch article matches).
    Exact identifiers are trusted; their image is the place's own photo.
-3. Batch-query Wikipedia GeoSearch for nearby notable articles and match by
-   title + a tight distance check.
-4. Search Wikipedia by name + destination for places GeoSearch missed.  The
-   article title must match and, when coordinates are known, the article must
-   be close to the attraction.
-5. As the final, request-hungry fallback, batch-query Wikimedia Commons
-   GeoSearch around clusters of the remaining places.  A Commons file is
-   accepted only when it is geotagged within a few hundred metres *and* its
-   name shares a distinctive token with the attraction.  This is what gives
-   small temples, churches and local landmarks a real photo.
-6. Only after every Wikimedia identifier/batch source has been exhausted, ask
-   Pexels for a landscape stock photo.  A result is preferred when its alt text
-   or photo slug contains the attraction's distinctive name tokens (or, for a
-   partial match, the city).  A generic "temple" or city skyline is accepted
-   only by the representative fallback below, never as a verified match.
-7. Guarantee a visual for every displayed attraction.  If no verified or
-   name-matched photo exists, the resolver tries, in order: a category + city
-   Pexels photo, a nearby geotagged Commons photo, the destination's Wikipedia
-   image, and finally a deterministic ExploreX travel card (an inline SVG).
-   These fallbacks set ``image_is_representative=True`` so callers can label
-   them honestly; they are never presented as verified photos of the place.
+3. Pexels stock photography, searched with the *attraction's own name* plus
+   the city/state/country where available (at most two name-based queries per
+   attraction).  A photo is accepted as verified when its own text (alt text
+   or URL slug) names the attraction; a mere category match is accepted only
+   when the destination corroborates it, and is labelled representative.  An
+   unrelated first search result is never taken just to fill a card.  Valid
+   results are cached per name+location and rate-limit aware.
+4. Guarantee a visual for every displayed attraction.  If no verified or
+   name-matched photo exists, the resolver tries a Commons file whose title
+   names the place, then the same name-based Pexels search with the looser
+   (representative) acceptance above.  When nothing passes, a deterministic
+   ExploreX travel card carrying the attraction's name is used as an honest
+   placeholder.  Representative and generated visuals set
+   ``image_is_representative=True`` so callers can label them honestly; they
+   are never presented as verified photos of the place, and a generic photo
+   of a city, forest or landmark type is never attached to a specific
+   attraction.
 
-The ExploreX contract is therefore: an attraction card always has an image,
-and that image is either verified, explicitly marked representative, or a
-generated travel card.  ``None`` is only returned by the low-level lookup when
-the caller opts out of the guarantee (``guarantee=False``).
+The ExploreX contract is therefore: an attraction card always has a visual,
+and that visual is either verified, name-matched Pexels, explicitly marked
+representative, or a generated placeholder card.  ``None`` is only returned by
+the low-level lookup when the caller opts out of the guarantee
+(``guarantee=False``).
 
 Operational guarantees
 ----------------------
-* Positive and negative TTL caches keyed by name + destination.
+* Positive and negative TTL caches keyed by name + full destination context
+  (city, state/region and country), so similar names in different places
+  never share a mapping.
 * A shared request throttle, short timeouts and batch API calls (not one call
   per place) so a 60-place state search stays within a few seconds.
 * One HTTP 429 never discards the rest of the batch: the affected stage pauses,
@@ -64,6 +63,7 @@ import re
 import threading
 import time
 import unicodedata
+from collections import OrderedDict
 from difflib import SequenceMatcher
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
@@ -130,6 +130,16 @@ _PEXELS_AMBIGUOUS_TOKENS = {
 }
 
 _COMPLETED = object()
+
+# Sources that supply a genuine, attraction-specific photo.  Only these may be
+# reused straight from the shared cache; representative/destination images are
+# attraction-agnostic and live in their own cache namespaces instead, so a
+# generic city photo can never be rehydrated as a verified attraction image.
+_VERIFIED_CACHE_SOURCES = frozenset({
+    "provider", "metadata", "exact", "osm", "wikipedia_title", "wikidata",
+    "commons", "geosearch", "commons_geosearch", "wikipedia", "search",
+    "pexels", "cache",
+})
 
 # Category words used only by the representative-image fallback.  A verified
 # photo still has to name the attraction; these terms merely ask a stock or
@@ -655,8 +665,8 @@ class AttractionImageResolver:
         self.pexels_enabled = (
             os.environ.get("ATTRACTION_IMAGE_PEXELS", "1").strip() != "0"
         )
-        # Every Explore card must render an image.  Verified photos still win;
-        # this only controls the representative/generated fallback chain.
+        # The guaranteed visual is an honest placeholder card whenever no
+        # relevant photo exists; only the representative *photos* are optional.
         self.guarantee_images = (
             os.environ.get("ATTRACTION_IMAGE_GUARANTEE", "1").strip() != "0"
         )
@@ -673,9 +683,12 @@ class AttractionImageResolver:
         self._pexels_calls = 0
         self._pexels_disabled_reason = ""
         self._pexels_cooldown_until = 0.0
-        # A stock photo may only represent one attraction.  Track ownership by
-        # cache key so a cached positive answer for the same place is reusable.
-        self._pexels_owners: Dict[str, str] = {}
+        # A stock photo may only represent one attraction.  Ownership is
+        # checked on use (not insertion), so the map is pruned by real usage:
+        # an entry is touched whenever its photo is accepted again, and the
+        # oldest unused entries are dropped first.  This keeps the process
+        # memory bounded while never letting a photo illustrate two places.
+        self._pexels_owners: "OrderedDict[str, str]" = OrderedDict()
         # The MediaWiki search generator is much more expensive than the batch
         # APIs.  Space those requests out; a burst of 2/s is what triggered the
         # HTTP 429s in live runs.
@@ -735,8 +748,33 @@ class AttractionImageResolver:
             return default
 
     # -- cache -------------------------------------------------------------
-    def _cache_key(self, name: str, city: Optional[str]) -> str:
-        return f"{str(name or '').strip().lower()}|{str(city or '').strip().lower()}"
+    def _cache_key(self, name: str, location: Optional[str]) -> str:
+        """Attraction key that carries the *whole* location context.
+
+        Two temples called "Krishna Temple" in different towns must never
+        share a mapping, so callers pass the location string (city, state and
+        country joined) rather than the bare city.
+        """
+        return (
+            f"{str(name or '').strip().lower()}"
+            f"|{str(location or '').strip().lower()}"
+        )
+
+    @staticmethod
+    def _poi_location(poi: Dict[str, Any], city: Optional[str] = None) -> str:
+        """City + state/region + country for a POI, de-duplicated."""
+        city_text = _coerce_text(poi.get("city") or poi.get("state_city")) or _coerce_text(city)
+        parts: List[str] = []
+        for value in (
+            city_text,
+            poi.get("state"),
+            poi.get("region"),
+            poi.get("country"),
+        ):
+            text = _coerce_text(value)
+            if text and text.lower() not in {part.lower() for part in parts}:
+                parts.append(text)
+        return " ".join(parts)
 
     def _cache_get(self, key: str) -> Tuple[bool, Optional[str], str]:
         now = time.time()
@@ -774,12 +812,35 @@ class AttractionImageResolver:
         self._stage_status = {}
         self._source_counts = {}
         self._pexels_calls = 0
+        # Prune photo ownership by real usage: entries that were not re-used
+        # since the last run are older than the recent ones and are dropped so
+        # the map stays bounded without ever releasing a photo that is still
+        # displayed by some attraction in the cache.
+        with self._cache_lock:
+            while len(self._pexels_owners) > 2048:
+                self._pexels_owners.popitem(last=False)
         self.last_status = {
             "state": "idle",
             "resolved": 0,
             "lookups": 0,
             "budget": self._remaining_lookups,
         }
+
+    def _pexels_own_photo(self, photo_key: str, owner_key: str) -> bool:
+        """Claim (or re-confirm) a Pexels photo for one attraction.
+
+        Returns False when the photo already belongs to a different
+        attraction: a single stock image may never illustrate two places.
+        Entries are touched on use and the map is pruned by age in
+        ``reset_budget``, so a long-running process cannot leak memory.
+        """
+        with self._cache_lock:
+            owner = self._pexels_owners.get(photo_key)
+            if owner and owner != owner_key:
+                return False
+            self._pexels_owners[photo_key] = owner_key
+            self._pexels_owners.move_to_end(photo_key)
+            return True
 
     def _take_lookup(self) -> bool:
         with self._budget_lock:
@@ -1569,26 +1630,40 @@ class AttractionImageResolver:
 
     def _pexels_queries(self, name: str, city: Optional[str],
                         poi: Dict[str, Any]) -> List[str]:
-        """Build at most two attraction-specific queries."""
+        """Build at most two attraction-specific queries.
+
+        Every query must contain the attraction's own name: a query of just a
+        city or a category word returns generic tourism photos, which is what
+        attached unrelated images to specific attractions.  The first attempt
+        pairs the name with the tightest location (city, else state, else
+        country); the retry widens to the next location context.
+        """
         contexts: List[str] = []
+        seen_tokens: set = set()
         for value in (
             city,
+            poi.get("city"),
+            poi.get("state_city"),
             poi.get("state"),
             poi.get("region"),
             poi.get("country"),
         ):
             text = _coerce_text(value)
-            if text and _norm_title(text) not in {_norm_title(c) for c in contexts}:
-                contexts.append(text)
+            if not text:
+                continue
+            tokens = _tokens(text)
+            # Already covered by a wider context, or a stopword-only string.
+            if not tokens or tokens <= seen_tokens:
+                continue
+            # A name that already contains the place adds nothing.
+            if _norm_title(text) in _norm_title(name):
+                continue
+            contexts.append(text)
+            seen_tokens |= tokens
 
         queries: List[str] = []
-        name_norm = _norm_title(name)
         for context in contexts:
-            if _norm_title(context) in name_norm:
-                continue
-            query = f"{name} {context}".strip()
-            if _norm_title(query) not in {_norm_title(q) for q in queries}:
-                queries.append(query)
+            queries.append(f"{name} {context}".strip())
             if len(queries) >= 2:
                 break
         if not queries:
@@ -1601,8 +1676,10 @@ class AttractionImageResolver:
 
         ``strict`` keeps the verified behaviour: the photo text must name the
         attraction (plus destination corroboration for ambiguous names).  The
-        representative fallback calls with ``strict=False`` and accepts the
-        best unused landscape result, preferring a text match when one exists.
+        representative fallback calls with ``strict=False`` and accepts only a
+        photo that at least shows the right *kind* of place *and* names the
+        destination in its own text; a rank that low is never taken, because
+        Pexels returns travel photos, not photos of arbitrary attractions.
 
         ``completed`` is False for configuration, transport and rate-limit
         failures, so a transient outage is never cached as a permanent miss.
@@ -1669,39 +1746,58 @@ class AttractionImageResolver:
             return None, False
 
         # In representative mode, a photo whose own text names the attraction
-        # is still preferred.  Next prefer one that at least shows the right
-        # category in the right destination, so "church Kottayam" does not
-        # return a lighthouse just because it was the first result.
+        # is still preferred.  Next we accept only a photo that shows the
+        # right category *and* names the destination ("church Kochi"), so a
+        # random first result (a lighthouse, a street, a skyline) can never
+        # illustrate this attraction.  Location-only matches are not enough:
+        # any Kerala photo would win otherwise.
         ordered_photos = photos
         if not strict:
             category = _category_term({"name": name})
             location_tokens = {
                 token for token in _tokens(location) if len(token) > 2
             }
+            name_tokens = _distinctive_tokens(name)
+            ambiguous_name = bool(name_tokens & _PEXELS_AMBIGUOUS_TOKENS)
 
             def _representative_rank(photo: Any) -> int:
                 if not isinstance(photo, dict):
                     return 9
-                if _pexels_photo_matches(name, location, photo):
-                    return 0
-                text = _pexels_photo_text(photo).lower()
-                category_hit = category != "landmark" and category in text
-                location_hit = any(token in text for token in location_tokens)
+                text_tokens = _tokens(_pexels_photo_text(photo))
+                exact = _pexels_photo_matches(name, location, photo)
+                if exact:
+                    # A same-named place elsewhere still needs corroboration.
+                    if not ambiguous_name or any(
+                        _token_matches_text(token, text_tokens)
+                        for token in _distinctive_tokens(location)
+                    ):
+                        return 0
+                    return 9
+                category_hit = category != "landmark" and any(
+                    token in text_tokens for token in _tokens(category)
+                )
+                location_hit = any(token in text_tokens for token in location_tokens)
                 if category_hit and location_hit:
                     return 1
-                if category_hit:
+                # The name matches only partially but the destination
+                # corroborates it: still this place's kind in this place.
+                if location_hit and name_tokens and all(
+                    _token_matches_text(token, text_tokens) for token in name_tokens
+                ):
                     return 2
-                if location_hit:
-                    return 3
-                return 4
+                return 9
 
             ordered_photos = sorted(photos, key=_representative_rank)
 
         for photo in ordered_photos:
             if not isinstance(photo, dict):
                 continue
-            if strict and not _pexels_photo_matches(name, location, photo):
-                continue
+            if strict:
+                if not _pexels_photo_matches(name, location, photo):
+                    continue
+            elif not strict and _representative_rank(photo) >= 9:
+                # Nothing in this result set is relevant enough to display.
+                break
             src = photo.get("src") if isinstance(photo.get("src"), dict) else {}
             # Identify the photo independently of its size-specific URL.  Large
             # and medium renditions are the same stock image and must not be
@@ -1712,19 +1808,15 @@ class AttractionImageResolver:
                 or _coerce_text(src.get("large"))
                 or _coerce_text(src.get("medium"))
             )
-            if photo_key:
-                with self._cache_lock:
-                    owner = self._pexels_owners.get(photo_key)
-                if owner and owner != owner_key:
-                    # The same stock photo must not illustrate two attractions.
-                    continue
+            if photo_key and not self._pexels_own_photo(photo_key, owner_key):
+                # The same stock photo must not illustrate two attractions.
+                continue
             for size in ("large", "landscape", "medium", "original"):
                 url = normalize_image_url(src.get(size))
                 if not url:
                     continue
                 if photo_key:
-                    with self._cache_lock:
-                        self._pexels_owners[photo_key] = owner_key
+                    self._pexels_own_photo(photo_key, owner_key)
                 if strict:
                     self._stage("pexels", "ok", "relevant_match")
                 else:
@@ -1774,31 +1866,22 @@ class AttractionImageResolver:
             if not name or not _distinctive_tokens(name):
                 # "Temple" / "Beach" cannot identify a specific stock photo.
                 continue
-            lookup_city = (
-                _coerce_text(poi.get("city") or poi.get("state_city"))
-                or _coerce_text(city)
-            )
-            location = " ".join(
-                part for part in (
-                    lookup_city,
-                    _coerce_text(poi.get("state")),
-                    _coerce_text(poi.get("region")),
-                    _coerce_text(poi.get("country")),
-                ) if part
-            )
-            key = self._cache_key(name, lookup_city)
-            pexels_key = self._pexels_cache_key(name, lookup_city)
+            # The cache key carries the whole location context (city, state,
+            # country), so two attractions with the same name in different
+            # places never share a mapping.
+            location = self._poi_location(poi, city)
+            key = self._cache_key(name, location)
+            pexels_key = self._pexels_cache_key(name, location)
 
             hit, cached_url, _source = self._cache_get(pexels_key)
             if hit:
                 if cached_url:
                     self._set_image(poi, cached_url, "pexels")
-                    with self._cache_lock:
-                        self._pexels_owners.setdefault(cached_url, pexels_key)
-                        resolved_here += 1
+                    self._pexels_owners.setdefault(cached_url, pexels_key)
+                    resolved_here += 1
                 continue
 
-            queries = self._pexels_queries(name, lookup_city, poi)
+            queries = self._pexels_queries(name, location, poi)
             found_url = None
             attempted = 0
             completed_count = 0
@@ -1823,10 +1906,10 @@ class AttractionImageResolver:
                 self._set_image(poi, found_url, "pexels")
                 self._cache_put(pexels_key, found_url, "pexels")
                 # Also populate the normal lookup cache so /api/attraction-image
-                # and a later enrich() do not repeat the request.
+                # and a later enrich() do not repeat the request.  Only this
+                # attraction-specific verified URL is stored there.
                 self._cache_put(key, found_url, "pexels")
-                with self._cache_lock:
-                    self._pexels_owners[found_url] = pexels_key
+                self._pexels_owners[found_url] = pexels_key
                 resolved_here += 1
             elif attempted and completed_count == attempted:
                 # Every query completed with no relevant photo: a real miss.
@@ -1844,22 +1927,35 @@ class AttractionImageResolver:
 
     # -- guaranteed representative images ---------------------------------
     def _representative_query(self, poi: Dict[str, Any], city: Optional[str]) -> str:
-        """Build a category + destination query for a representative photo."""
-        lookup_city = (
-            _coerce_text(poi.get("city") or poi.get("state_city") or poi.get("region"))
+        """Name-based fallback query: the attraction's own name plus location.
+
+        A category + city query ("church Kochi") asks Pexels for generic
+        tourism photos and was the source of unrelated "representative"
+        images.  The attraction's name must stay in the query; the category
+        term only disambiguates "St Marys Church Kochi church" style searches
+        when it is not already part of the name.
+        """
+        name = _coerce_text(poi.get("name"))
+        city_text = (
+            _coerce_text(poi.get("city") or poi.get("state_city"))
             or _coerce_text(city)
         )
-        country = _coerce_text(poi.get("country"))
+        parts: List[str] = []
+        for value in (
+            name,
+            city_text,
+            _coerce_text(poi.get("state") or poi.get("region")),
+            _coerce_text(poi.get("country")),
+        ):
+            if value and value.lower() not in {p.lower() for p in parts}:
+                if value.lower() in " ".join(parts).lower():
+                    continue
+                parts.append(value)
+        query = " ".join(parts)
         term = _category_term(poi)
-        name = _coerce_text(poi.get("name"))
-        if term == "landmark" and not lookup_city:
-            return name
-        parts = [term, lookup_city, country]
-        seen: List[str] = []
-        for part in parts:
-            if part and part.lower() not in {item.lower() for item in seen}:
-                seen.append(part)
-        return " ".join(seen)
+        if term != "landmark" and term not in name.lower():
+            query = f"{query} {term}".strip()
+        return query or name
 
     def _resolve_commons_text_search(self, pois: List[Dict[str, Any]],
                                      city: Optional[str] = None,
@@ -1978,6 +2074,10 @@ class AttractionImageResolver:
         This is a *representative* fallback: the file does not need to name the
         attraction, but it must be a real geotagged photo within the cluster's
         radius (MediaWiki caps that at 10 km).  Each file is used at most once.
+
+        Kept for explicit callers only: the guarantee chain no longer uses it,
+        because a photo of *some* nearby place is not a photo of this
+        attraction, whatever label is attached to it.
         """
         pending = [poi for poi in (pois or []) if not _is_display_image(poi.get("image_url"))]
         if not pending:
@@ -2074,7 +2174,11 @@ class AttractionImageResolver:
         )
 
     def _destination_image(self, city: Optional[str], country: Optional[str]) -> Optional[str]:
-        """Return a cached Wikipedia image for the destination itself."""
+        """Return a cached Wikipedia image for the destination itself.
+
+        Not part of the guarantee chain: a town's own article image must not be
+        presented as a picture of a specific attraction inside that town.
+        """
         targets = [
             _coerce_text(city),
             _coerce_text(country),
@@ -2127,13 +2231,22 @@ class AttractionImageResolver:
                                  allow_network: bool = True) -> None:
         """Guarantee a visual for every POI, in descending order of relevance.
 
-        1. category + destination Pexels photo (real stock photo),
-        2. nearest geotagged Wikimedia Commons photo,
-        3. the destination's own Wikipedia image,
-        4. a generated ExploreX travel card.
+        1. a Commons file whose title names this place (city-corroborated),
+        2. a name-based Pexels search with the looser representative
+           acceptance (the photo text must still carry the category *and*
+           the destination - never an arbitrary first result),
+        3. a generated ExploreX travel card as an honest placeholder.
 
-        Every result is marked ``image_is_representative`` so the UI can label
-        it and no caller mistakes it for a verified photo of the attraction.
+        A nearby geotagged Commons photo and the destination's Wikipedia
+        image are deliberately *not* used any more: a generic picture of the
+        town or of some neighbouring landmark is not a photo of this
+        attraction, however well-meaning the label.
+
+        Every non-verified result is marked ``image_is_representative`` so the
+        UI can label it and no caller mistakes it for a verified photo of the
+        attraction.  Representative photos are cached only in their own
+        per-attraction namespace and claimed per photo, so one image is never
+        reused for a different attraction.
         """
         pending = [
             poi for poi in (pois or [])
@@ -2150,8 +2263,8 @@ class AttractionImageResolver:
         if allow_network:
             self._resolve_commons_text_search(pending, city, max_requests=8)
 
-        # 2. Representative stock photo: ask for the right kind of place in the
-        #    right destination.  Text matches are still preferred by the search.
+        # 2. Representative stock photo: the same name-based query, with the
+        #    looser (but still category + destination corroborated) acceptance.
         can_pexels = bool(
             allow_network
             and self.pexels_enabled
@@ -2178,16 +2291,12 @@ class AttractionImageResolver:
                 name = _coerce_text(poi.get("name"))
                 if not name:
                     continue
-                lookup_city = (
-                    _coerce_text(poi.get("city") or poi.get("state_city") or poi.get("region"))
-                    or _coerce_text(city)
-                )
-                country = _coerce_text(poi.get("country"))
-                location = " ".join(
-                    part for part in (lookup_city, country) if part
-                )
-                query = self._representative_query(poi, lookup_city)
-                owner_key = f"representative:{_norm_title(name)}|{_norm_title(lookup_city)}"
+                # One location context for the owner key, the query and the
+                # relevance check, so a representative answer is only ever
+                # reused for this exact attraction in this exact place.
+                location = self._poi_location(poi, city)
+                query = self._representative_query(poi, city)
+                owner_key = f"representative:{_norm_title(name)}|{_norm_title(location)}"
                 cache_key = f"pexels_rep:{owner_key}"
                 hit, cached_url, _source = self._cache_get(cache_key)
                 if hit and cached_url:
@@ -2206,26 +2315,9 @@ class AttractionImageResolver:
                     )
                     self._cache_put(cache_key, url, "pexels_representative")
 
-        # 2. Real nearby photo from Commons, then the destination's own image.
-        still_missing = [poi for poi in pending if not _is_display_image(poi.get("image_url"))]
-        if still_missing and allow_network:
-            self._resolve_commons_nearby(still_missing)
-
-        for poi in pending:
-            if _is_display_image(poi.get("image_url")):
-                continue
-            if not allow_network:
-                break
-            lookup_city = (
-                _coerce_text(poi.get("city") or poi.get("state_city") or poi.get("region"))
-                or _coerce_text(city)
-            )
-            url = self._destination_image(lookup_city, _coerce_text(poi.get("country")))
-            if url:
-                self._set_image(poi, url, "destination", representative=True)
-
         # 3. Last resort: a generated card.  Always succeeds and always carries
-        #    the attraction's name, so the card is never an empty grey box.
+        #    the attraction's name, so the card is an honest placeholder rather
+        #    than somebody else's photo.
         generated = 0
         for poi in pending:
             if _is_display_image(poi.get("image_url")):
@@ -2247,12 +2339,13 @@ class AttractionImageResolver:
                 allow_lookup: bool = True, guarantee: bool = False) -> Optional[str]:
         """Return an image URL for one POI, or ``None``.
 
-        Provider and Wikimedia sources are tried first; a relevance-checked
-        Pexels photo is the next fallback.  With ``guarantee=True`` the
-        representative chain (category photo, nearby Commons, destination
-        image, generated travel card) runs last, so the caller always gets a
-        renderable value.  The low-level default stays ``None`` so callers can
-        still distinguish "no verified photo" when they need to.
+        Exact provider/Wikimedia identifiers are tried first, then a
+        relevance-checked Pexels photo (the primary stock source, searched
+        with the attraction's own name).  With ``guarantee=True`` the
+        representative chain (name-corroborated Commons file, representative
+        Pexels photo, generated travel card) runs last, so the caller always
+        gets a renderable value.  The low-level default stays ``None`` so
+        callers can still distinguish "no verified photo" when they need to.
         """
         if not isinstance(poi, dict):
             return None
@@ -2271,10 +2364,15 @@ class AttractionImageResolver:
         if not name:
             return None
 
+        # The cache key carries the full location context; a mapping is only
+        # reused for the exact attraction in the exact place.
+        location = self._poi_location(poi, city)
         lookup_city = city or _coerce_text(poi.get("city") or poi.get("state_city") or poi.get("region"))
-        key = self._cache_key(name, lookup_city)
-        hit, url, _source = self._cache_get(key)
-        if hit:
+        key = self._cache_key(name, location)
+        hit, url, source = self._cache_get(key)
+        if hit and (not url or source in _VERIFIED_CACHE_SOURCES):
+            # A representative/destination image was never an answer to *this*
+            # attraction, so it must not be served as a verified URL.
             return url
 
         if not allow_lookup or not self.enabled:
@@ -2300,6 +2398,22 @@ class AttractionImageResolver:
         if poi.get("image_url"):
             self._cache_put(key, poi["image_url"], "commons")
             return poi["image_url"]
+
+        # Pexels is the primary *stock* source: it runs with an attraction-
+        # specific query before the loose geosearch heuristics, so a nearby
+        # article or a generic Commons file cannot pre-empt a relevant photo
+        # of this attraction.
+        self._resolve_pexels(one, location or None)
+        if poi.get("image_url"):
+            self._cache_put(key, poi["image_url"], "pexels")
+            self.last_status.update({
+                "state": "ok",
+                "detail": "pexels",
+                "resolved": self.last_status.get("resolved", 0) + 1,
+                "sources": dict(self._source_counts),
+                "stages": dict(self._stage_status),
+            })
+            return poi["image_url"]
         self._resolve_geosearch(one)
         if poi.get("image_url"):
             self._cache_put(key, poi["image_url"], "geosearch")
@@ -2309,9 +2423,7 @@ class AttractionImageResolver:
             self._cache_put(key, poi["image_url"], "commons_geosearch")
             return poi["image_url"]
 
-        # 1) Wikimedia name search: a verified article lead image is preferred
-        #    over any stock photo.  A rate-limited or exhausted search does not
-        #    block the Pexels fallback below.
+        # 2) Wikimedia name search: a verified article lead image.
         url = None
         if time.time() < self._search_cooldown_until:
             self._stage("search", "rate_limited", "cooldown")
@@ -2352,28 +2464,14 @@ class AttractionImageResolver:
             if url:
                 return url
 
-        # 2) Last resort: a stock photo whose own text names this attraction.
-        #    Runs even when the Wikimedia search endpoint is rate-limited.
-        self._resolve_pexels(one, lookup_city)
-        if poi.get("image_url"):
-            self._cache_put(key, poi["image_url"], "pexels")
-            self.last_status.update({
-                "state": "ok",
-                "detail": "pexels",
-                "resolved": self.last_status.get("resolved", 0) + 1,
-                "sources": dict(self._source_counts),
-                "stages": dict(self._stage_status),
-            })
-            return poi["image_url"]
-
         # 3) Opt-in guarantee used by the UI endpoints: never return an empty
-        #    image for an attraction that will be displayed.
+        #    image for an attraction that will be displayed.  Representative
+        #    visuals are cached only in their own namespace - never under this
+        #    attraction's verified key, where a later run could serve them as a
+        #    genuine photo of the place.
         if guarantee and self.guarantee_images:
             self._resolve_representative(one, lookup_city)
             if _is_display_image(poi.get("image_url")):
-                self._cache_put(
-                    key, poi["image_url"], poi.get("image_source") or "representative"
-                )
                 self.last_status.update({
                     "state": "ok",
                     "detail": poi.get("image_source") or "representative",
@@ -2388,8 +2486,10 @@ class AttractionImageResolver:
                max_lookups: Optional[int] = None) -> list:
         """Set ``image_url`` on POIs that lack one, within a lookup budget.
 
-        Existing valid URLs are preserved.  Verified photos are preferred, but
-        the final guarantee stage fills every remaining item with an explicitly
+        Existing valid URLs are preserved.  Exact identifier sources run
+        first, then Pexels (primary stock source, attraction-specific
+        queries), then the remaining Wikimedia heuristics.  The final
+        guarantee stage fills every remaining item with an explicitly
         representative photo or a generated travel card, so a displayed
         attraction never has an empty image area.  Set
         ``ATTRACTION_IMAGE_GUARANTEE=0`` to restore the old ``None`` behaviour.
@@ -2451,17 +2551,18 @@ class AttractionImageResolver:
             pending.append(poi)
 
         # 2. Reuse successful mappings from earlier requests before touching the
-        #    network again.  Only positive cache entries are hydrated; a cached
-        #    negative answer must never suppress a provider that may now work.
+        #    network again.  Only positive *verified* entries are hydrated: a
+        #    representative or destination image is not a photo of this
+        #    attraction and must never be re-served as one (an unlabelled
+        #    card was exactly how unrelated images reached the Explore page).
+        #    A cached negative answer must not suppress a provider that may
+        #    now work either.
         hydrated: List[Dict[str, Any]] = []
         for poi in pending:
             name = _coerce_text(poi.get("name"))
-            lookup_city = (
-                _coerce_text(poi.get("city") or poi.get("state_city"))
-                or _coerce_text(city)
-            )
-            hit, cached_url, source = self._cache_get(self._cache_key(name, lookup_city))
-            if hit and cached_url and name:
+            location = self._poi_location(poi, city)
+            hit, cached_url, source = self._cache_get(self._cache_key(name, location))
+            if hit and cached_url and name and source in _VERIFIED_CACHE_SOURCES:
                 self._set_image(poi, cached_url, source or "cache")
             else:
                 hydrated.append(poi)
@@ -2480,6 +2581,14 @@ class AttractionImageResolver:
 
         self._resolve_commons_values(pending)
         pending = [poi for poi in pending if not poi.get("image_url")]
+
+        # 3b. Pexels is the primary stock-photo source and runs with
+        #     attraction-specific queries *before* the loose geosearch
+        #     heuristics, so a nearby article or a generic Commons file cannot
+        #     pre-empt a relevant photo of this attraction.  It has its own
+        #     budget, deadline and relevance gate.
+        self._resolve_pexels(pending, city)
+        pending = [poi for poi in pending if not _is_display_image(poi.get("image_url"))]
 
         self._resolve_geosearch(pending)
         pending = [poi for poi in pending if not poi.get("image_url")]
@@ -2516,7 +2625,8 @@ class AttractionImageResolver:
             if not name or not _distinctive_tokens(name):
                 continue
             lookup_city = _coerce_text(poi.get("city") or poi.get("state_city")) or city
-            normalized = (_norm_title(name), _norm_title(lookup_city))
+            location = self._poi_location(poi, city)
+            normalized = (_norm_title(name), _norm_title(location))
             if normalized in searched_names:
                 continue
             searched_names.add(normalized)
@@ -2525,7 +2635,7 @@ class AttractionImageResolver:
             lat = _coerce_coord(poi.get("latitude", poi.get("lat")))
             lng = _coerce_coord(poi.get("longitude", poi.get("lng")))
             url, completed = self._search_wikipedia(name, lookup_city, lat, lng)
-            key = self._cache_key(name, lookup_city)
+            key = self._cache_key(name, location)
             if url:
                 self._set_image(poi, url, "search")
                 self._cache_put(key, url, "wikipedia")
@@ -2540,18 +2650,20 @@ class AttractionImageResolver:
         else:
             self._resolve_commons_geosearch(still_missing)
 
-        # 6. Pexels stock-photo fallback for places that no Wikimedia source
-        #    could verify.  It has its own budget, deadline and relevance gate.
+        # 6. Safety net: POIs that the strict Pexels stage had to skip (their
+        #    budget, cooldown or deadline came up mid-run) still get their
+        #    attraction-specific Pexels query before any looser fallback.
         still_missing = [poi for poi in items if not _is_display_image(poi.get("image_url"))]
-        if _past_deadline():
-            self._stage("pexels", "skipped", "deadline")
-        else:
-            self._resolve_pexels(still_missing, city)
+        if still_missing:
+            if _past_deadline():
+                self._stage("pexels", "skipped", "deadline")
+            else:
+                self._resolve_pexels(still_missing, city)
 
-        # 7. Guarantee: every displayed attraction gets an image.  Prefer a
-        #    representative category photo / nearby Commons / destination image;
-        #    fall back to a generated card.  Near the wall-clock deadline we skip
-        #    further network calls and generate cards immediately.
+        # 7. Guarantee: every displayed attraction gets a visual - either a
+        #    name-corroborated representative photo or an honest generated
+        #    card.  Near the wall-clock deadline we skip further network calls
+        #    and generate cards immediately.
         still_missing = [poi for poi in items if not _is_display_image(poi.get("image_url"))]
         if still_missing:
             self._resolve_representative(

@@ -253,10 +253,21 @@ def get_attraction_details(
             try:
                 poi = {'name': name, 'latitude': lat, 'longitude': lng}
                 if existing_data and isinstance(existing_data, dict):
-                    poi['city'] = existing_data.get('city') or existing_data.get('state_city')
+                    # Carry the full location context: the resolver's queries
+                    # and cache keys distinguish same-named places by it.
+                    for field in ('city', 'state_city', 'state', 'region', 'country'):
+                        value = existing_data.get(field)
+                        if value:
+                            poi[field] = value
                 image = get_image_resolver().resolve(poi, city=poi.get('city'))
                 if image:
                     result['image_url'] = image
+                    # The card must label a representative photo honestly; the
+                    # resolver records that on the POI it was given.
+                    if poi.get('image_source'):
+                        result['image_source'] = poi['image_source']
+                    if poi.get('image_is_representative'):
+                        result['image_is_representative'] = True
             except Exception as exc:
                 print(f"[ATTRACTION_DETAILS] Image resolution failed: {type(exc).__name__}")
         return result

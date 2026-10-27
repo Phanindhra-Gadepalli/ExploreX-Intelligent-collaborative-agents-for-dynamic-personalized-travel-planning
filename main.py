@@ -1272,11 +1272,13 @@ def get_attraction_image_endpoint():
     """Resolve one attraction image on demand.
 
     Query params: ``name`` (required), ``city``, ``country``, ``lat``, ``lng``.
-    Returns ``image_url`` from a provider image, a verified Wikimedia source, a
-    relevant Pexels photo, or the guaranteed representative fallback (category
-    photo / nearby Commons / destination / generated travel card).  ``source``
-    reports which stage supplied it; ``image_is_representative`` is true when
-    the image is not a verified photo of the exact attraction.
+    Returns ``image_url`` from a provider image, a verified Wikimedia source or
+    an attraction-specific Pexels photo.  Only when none of those exists does
+    the representative chain run (a name-corroborated Commons file, a
+    Pexels photo whose own text carries both the place's category and its
+    destination, or a generated travel card).  ``source`` reports which stage
+    supplied it; ``image_is_representative`` is true when the image is not a
+    verified photo of the exact attraction.
     """
     from services.attraction_images import get_image_resolver
 
@@ -1286,6 +1288,7 @@ def get_attraction_image_endpoint():
 
     city = (request.args.get('city') or '').strip()
     country = (request.args.get('country') or '').strip()
+    state = (request.args.get('state') or '').strip()
 
     def _coord(key):
         try:
@@ -1297,6 +1300,7 @@ def get_attraction_image_endpoint():
     poi = {
         'name': name,
         'city': city,
+        'state': state,
         'country': country,
         'latitude': _coord('lat'),
         'longitude': _coord('lng'),
